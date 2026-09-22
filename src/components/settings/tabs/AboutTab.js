@@ -30,7 +30,7 @@ const AboutTab = ({ backgroundType }) => {
     <div className={`settings-section about-section ${getBackgroundClass()}`}>
       <h3>{t('settings.about', 'About')}</h3>
       <div className="about-content">
-        <h2 className="about-app-title">One-click Subtitles Generator</h2>
+        <h2 className="about-app-title">One-sub-tool</h2>
         <div className="creator-info">
           <p><strong>{t('settings.creator', 'Creator')}:</strong> nganlinh4</p>
           <p>
@@ -59,7 +59,7 @@ const AboutTab = ({ backgroundType }) => {
           </p>
         </div>
         <div className="app-description">
-          <p>{t('settings.appDescription', 'One-click Subtitles Generator is a tool that helps you generate, edit, and translate subtitles for your videos with just one click.')}</p>
+          <p>{t('settings.appDescription', 'One-sub-tool helps you create, edit, translate, and narrate subtitles for your videos.')}</p>
         </div>
 
         {/* Replay Onboarding Button */}

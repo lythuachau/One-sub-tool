@@ -236,7 +236,7 @@
   "version": "Version",
   "creator": "Creator",
   "youtube": "YouTube",
-  "appDescription": "One-click Subtitles Generator is a tool that helps you generate, edit, and translate subtitles for your videos with just one click.",
+  "appDescription": "One-sub-tool helps you create, edit, translate, and narrate subtitles for your videos.",
   "replayOnboarding": "Replay Welcome Animation",
   "replayOnboardingTooltip": "Show the welcome animation again",
   "modelManagement": "Narration Models",

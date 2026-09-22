@@ -1,5 +1,5 @@
 {
-  "title": "Welcome to Subtitles Generator",
+  "title": "Welcome to One-sub-tool",
   "promptSelectionSubtitle": "First, let's select a prompt preset for your transcriptions",
   "modelSelectionSubtitle": "Now, let's select a Gemini model for your transcriptions",
   "promptSelectionInstruction": "Choose a preset that best fits your needs. You can always change this later in the settings.",

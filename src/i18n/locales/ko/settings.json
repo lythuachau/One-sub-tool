@@ -238,7 +238,7 @@
   "version": "버전",
   "creator": "제작자",
   "youtube": "YouTube",
-  "appDescription": "원클릭 자막 생성기는 한 번의 클릭으로 비디오에 대한 자막을 생성, 편집 및 번역할 수 있는 도구입니다.",
+  "appDescription": "One-sub-tool은 동영상 자막을 생성, 편집, 번역하고 내레이션을 만드는 도구입니다.",
   "replayOnboarding": "환영 애니메이션 다시보기",
   "replayOnboardingTooltip": "환영 애니메이션을 다시 표시합니다",
   "modelManagement": "내레이션 모델",

@@ -1,6 +1,6 @@
 {
-  "short_name": "Subtitles Generator",
-  "name": "Subtitles Generator with Gemini AI",
+  "short_name": "One-sub-tool",
+  "name": "One-sub-tool - Video subtitles and narration",
   "icons": [
     {
       "src": "favicon.png",
