@@ -63,6 +63,7 @@ subtitles/
 narration/output/
 narration/temp/
 narration/reference/
+/benchmark_outputs/
 
 # Temporary files
 .tmp/

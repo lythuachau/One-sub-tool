@@ -6,11 +6,11 @@ import { useState, useEffect } from 'react';
  * @returns {Object} - Narration state and setters
  */
 const useNarrationState = (initialReferenceAudio) => {
-  // Narration Method state - load from localStorage or default to Gemini
+  // Narration Method state - load from localStorage or default to VieNeu-TTS
   const [narrationMethod, setNarrationMethod] = useState(() => {
-    // Try to load from localStorage
     const savedMethod = localStorage.getItem('narration_method');
-    return savedMethod || 'gemini'; // Default to Gemini if not set
+    if (savedMethod === 'chatterbox' || savedMethod === 'omnivoice') return 'chatterbox';
+    return 'f5tts';
   });
   const [isGeminiAvailable, setIsGeminiAvailable] = useState(true); // Assume Gemini is available by default
   const [isChatterboxAvailable, setIsChatterboxAvailable] = useState(false); // Start as unavailable, will be updated by availability check
@@ -43,6 +43,22 @@ const useNarrationState = (initialReferenceAudio) => {
     // Default to 0.3 for better pacing with expressive speech as recommended in Chatterbox README
     return savedCfgWeight ? parseFloat(savedCfgWeight) : 0.3;
   });
+
+  const [omnivoiceMode, setOmnivoiceMode] = useState(() => (
+    localStorage.getItem('omnivoice_voice_mode') || 'reference'
+  ));
+
+  const [omnivoiceInstruct, setOmnivoiceInstruct] = useState(() => (
+    localStorage.getItem('omnivoice_voice_instruct') || 'female, young adult, moderate pitch'
+  ));
+
+  const [vieneuVoiceMode, setVieneuVoiceMode] = useState(() => (
+    localStorage.getItem('vieneu_voice_mode') || 'preset'
+  ));
+
+  const [vieneuVoice, setVieneuVoice] = useState(() => (
+    localStorage.getItem('vieneu_voice') || 'Ngọc Linh'
+  ));
 
   // Edge TTS-specific settings
   const [edgeTTSVoice, setEdgeTTSVoice] = useState(() => {
@@ -208,6 +224,22 @@ const useNarrationState = (initialReferenceAudio) => {
     localStorage.setItem('gtts_slow', gttsSlow.toString());
   }, [gttsSlow]);
 
+  useEffect(() => {
+    localStorage.setItem('omnivoice_voice_mode', omnivoiceMode);
+  }, [omnivoiceMode]);
+
+  useEffect(() => {
+    localStorage.setItem('omnivoice_voice_instruct', omnivoiceInstruct);
+  }, [omnivoiceInstruct]);
+
+  useEffect(() => {
+    localStorage.setItem('vieneu_voice_mode', vieneuVoiceMode);
+  }, [vieneuVoiceMode]);
+
+  useEffect(() => {
+    localStorage.setItem('vieneu_voice', vieneuVoice);
+  }, [vieneuVoice]);
+
   // Update local state when initialReferenceAudio changes
   const updateReferenceAudio = (newReferenceAudio) => {
     if (newReferenceAudio) {
@@ -238,6 +270,16 @@ const useNarrationState = (initialReferenceAudio) => {
     setExaggeration,
     cfgWeight,
     setCfgWeight,
+    omnivoiceMode,
+    setOmnivoiceMode,
+    omnivoiceInstruct,
+    setOmnivoiceInstruct,
+
+    // VieNeu-specific voice settings
+    vieneuVoiceMode,
+    setVieneuVoiceMode,
+    vieneuVoice,
+    setVieneuVoice,
 
     // Edge TTS-specific settings
     edgeTTSVoice,

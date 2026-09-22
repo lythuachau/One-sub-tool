@@ -11,48 +11,57 @@ const http = require('http');
 const { VIDEOS_DIR } = require('../../config');
 const { setDownloadProgress } = require('../shared/progressTracker');
 
-// Cache for browser instance to avoid repeated launches
-let browserInstance = null;
-let browserContext = null;
+function normalizeExtractedVideoUrl(videoUrl) {
+  if (typeof videoUrl !== 'string') return '';
+
+  const normalized = videoUrl
+    .trim()
+    .replace(/\\(["'])/g, '$1')
+    .replace(/[\\]+$/, '');
+
+  try {
+    return new URL(normalized).toString();
+  } catch {
+    return '';
+  }
+}
 
 /**
- * Get or create a browser instance
  */
 async function getBrowserInstance() {
-  if (!browserInstance || !browserInstance.isConnected()) {
-    console.log('[PlaywrightDouyin] Launching browser...');
-    browserInstance = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-features=VizDisplayCompositor'
-      ]
-    });
+  console.log('[PlaywrightDouyin] Launching ephemeral Chromium session...');
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=VizDisplayCompositor'
+    ]
+  });
 
-    // Create a new context with realistic user agent and headers
-    browserContext = await browserInstance.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-      viewport: { width: 1920, height: 1080 },
-      locale: 'zh-CN',
-      extraHTTPHeaders: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      }
-    });
-  }
-  
-  return { browser: browserInstance, context: browserContext };
+  // A non-persistent context keeps cookies, cache and storage in memory only.
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+    viewport: { width: 1920, height: 1080 },
+    locale: 'zh-CN',
+    serviceWorkers: 'block',
+    extraHTTPHeaders: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1'
+    }
+  });
+
+  return { browser, context };
 }
 
 /**
@@ -62,7 +71,7 @@ async function getBrowserInstance() {
  * @returns {Promise<Object>} - Video information including download URLs
  */
 async function extractVideoInfo(douyinUrl, useCookies = false) {
-  const { context } = await getBrowserInstance();
+  const { browser, context } = await getBrowserInstance();
   const page = await context.newPage();
   
   try {
@@ -209,6 +218,11 @@ async function extractVideoInfo(douyinUrl, useCookies = false) {
       };
     });
     
+    videoInfo.currentSrc = normalizeExtractedVideoUrl(videoInfo.currentSrc);
+    videoInfo.sources = videoInfo.sources
+      .map(source => ({ ...source, src: normalizeExtractedVideoUrl(source.src) }))
+      .filter(source => source.src);
+
     console.log('[PlaywrightDouyin] Extracted video info:', {
       title: videoInfo.title,
       videoId: videoInfo.videoId,
@@ -222,7 +236,22 @@ async function extractVideoInfo(douyinUrl, useCookies = false) {
     console.error('[PlaywrightDouyin] Error extracting video info:', error);
     throw error;
   } finally {
-    await page.close();
+    try {
+      await page.close();
+    } catch (closeError) {
+      console.warn('[PlaywrightDouyin] Page cleanup warning:', closeError.message);
+    }
+    try {
+      await context.clearCookies();
+    } catch (clearError) {
+      console.warn('[PlaywrightDouyin] Cookie cleanup warning:', clearError.message);
+    }
+    try {
+      await context.close();
+    } finally {
+      await browser.close();
+    }
+    console.log('[PlaywrightDouyin] Ephemeral Chromium session closed; cache and cookies discarded');
   }
 }
 
@@ -235,12 +264,18 @@ async function extractVideoInfo(douyinUrl, useCookies = false) {
  */
 async function downloadVideoFromUrl(videoUrl, outputPath, videoId) {
   return new Promise((resolve, reject) => {
-    console.log('[PlaywrightDouyin] Starting download from:', videoUrl);
+    const normalizedVideoUrl = normalizeExtractedVideoUrl(videoUrl);
+    if (!normalizedVideoUrl) {
+      reject(new Error('Extracted video URL is invalid'));
+      return;
+    }
+
+    console.log('[PlaywrightDouyin] Starting download from:', normalizedVideoUrl);
     
-    const protocol = videoUrl.startsWith('https:') ? https : http;
+    const protocol = normalizedVideoUrl.startsWith('https:') ? https : http;
     const file = fs.createWriteStream(outputPath);
     
-    const request = protocol.get(videoUrl, {
+    const request = protocol.get(normalizedVideoUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
         'Referer': 'https://www.douyin.com/',
@@ -436,14 +471,7 @@ async function getAvailableQualities(douyinUrl, useCookies = false) {
  * Cleanup browser resources
  */
 async function cleanup() {
-  if (browserContext) {
-    await browserContext.close();
-    browserContext = null;
-  }
-  if (browserInstance) {
-    await browserInstance.close();
-    browserInstance = null;
-  }
+  // Browser sessions are scoped to extractVideoInfo and closed immediately.
 }
 
 // Cleanup on process exit

@@ -35,6 +35,16 @@ export const listGeminiModels = async (apiKey) => {
 // Cache for supported models
 let supportedModelsCache = null;
 
+const isLiveAudioModel = (model) => {
+  const methods = model.supportedGenerationMethods || [];
+  const name = (model.name || '').toLowerCase();
+  const hasAudioIdentity = ['native-audio', 'tts', 'audio'].some(marker => name.includes(marker));
+  const isTranscriptionOnly = name.includes('transcribe');
+  const supportsLiveTransport = methods.includes('bidiGenerateContent') || methods.includes('streamGenerateContent');
+
+  return hasAudioIdentity && !isTranscriptionOnly && supportsLiveTransport;
+};
+
 /**
  * Find a suitable model for audio generation
  * @param {string} apiKey - Gemini API key
@@ -42,27 +52,8 @@ let supportedModelsCache = null;
  */
 export const findSuitableAudioModel = async (apiKey) => {
   try {
-    // Known working model for WebSocket API with audio
-    // Use the exact same model format as in the live-api-web-console
-    const knownWorkingModel = 'models/gemini-2.0-flash-exp';
-
-    // If we already have a list of supported models, check if our known working model is in it
     if (supportedModelsCache) {
-      const knownModel = supportedModelsCache.find(model =>
-        model.name.includes(knownWorkingModel)
-      );
-
-      if (knownModel) {
-
-        // Return the full model path as used in the live-api-web-console
-        return knownWorkingModel;
-      }
-
-      // If not, find any model that supports audio generation
-      const audioModel = supportedModelsCache.find(model =>
-        model.supportedGenerationMethods?.includes('generateContent') &&
-        model.supportedGenerationMethods?.includes('streamGenerateContent')
-      );
+      const audioModel = supportedModelsCache.find(isLiveAudioModel);
 
       if (audioModel) {
 
@@ -75,26 +66,10 @@ export const findSuitableAudioModel = async (apiKey) => {
     supportedModelsCache = models;
 
 
-    // First, check if our known working model is available
-    const knownModel = models.find(model =>
-      model.name.includes(knownWorkingModel)
-    );
-
-    if (knownModel) {
-
-      // Return the full model path as used in the live-api-web-console
-      return knownWorkingModel;
-    }
-
-    // Find models that support both generateContent and streamGenerateContent
-    // These are likely to work with the WebSocket API
-    const potentialModels = models.filter(model =>
-      model.supportedGenerationMethods?.includes('generateContent') &&
-      model.supportedGenerationMethods?.includes('streamGenerateContent')
-    );
+    const potentialModels = models.filter(isLiveAudioModel);
 
     if (potentialModels.length === 0) {
-      throw new Error('No suitable models found for audio generation');
+      throw new Error('No Gemini Live audio model is available for this API key');
     }
 
     // Look for models with "live" in the name as they're more likely to support WebSocket
@@ -128,7 +103,6 @@ export const findSuitableAudioModel = async (apiKey) => {
     return modelName;
   } catch (error) {
     console.error('Error finding suitable audio model:', error);
-    // Fallback to our known working model with the full path
-    return 'models/gemini-2.0-flash-exp';
+    throw error;
   }
 };

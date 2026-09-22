@@ -12,6 +12,12 @@ const LEGACY_KEY_STORAGE = 'gemini_api_key';
 // Blacklist timeout in milliseconds (5 minutes)
 const BLACKLIST_TIMEOUT = 5 * 60 * 1000;
 
+const notifyKeyChange = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('gemini-api-key-changed'));
+  }
+};
+
 // In-memory storage for blacklisted keys
 const blacklistedKeys = new Map();
 
@@ -85,6 +91,8 @@ export const saveAllKeys = (keys) => {
   if (currentIndex >= validKeys.length && validKeys.length > 0) {
     setActiveKeyIndex(0);
   }
+
+  notifyKeyChange();
 };
 
 /**
@@ -156,6 +164,7 @@ export const setActiveKeyIndex = (index) => {
   const keys = getAllKeys();
   if (keys.length > 0 && index < keys.length) {
     localStorage.setItem(LEGACY_KEY_STORAGE, keys[index]);
+    notifyKeyChange();
   }
 };
 

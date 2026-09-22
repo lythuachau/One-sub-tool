@@ -73,14 +73,15 @@ export const downloadDouyinVideoPlaywright = async (douyinUrl, progressCallback 
         const result = await downloadResponse.json();
         console.log('[DouyinPlaywright] Download started:', result);
 
-        // If file already exists, return immediately
-        if (result.alreadyExists) {
+        // Native and yt-dlp strategies may finish before the polling phase.
+        if (result.alreadyExists || result.completed) {
           downloadQueue[videoId].status = 'completed';
           downloadQueue[videoId].progress = 100;
           progressCallback(100);
           
           const videoUrl = `${SERVER_URL}${result.path}`;
-          console.log('[DouyinPlaywright] File already exists:', videoUrl);
+          downloadQueue[videoId].method = result.method || 'download';
+          console.log('[DouyinPlaywright] Download completed:', videoUrl, result.method || 'download');
           resolve(videoUrl);
           return;
         }
@@ -121,8 +122,9 @@ export const downloadDouyinVideoPlaywright = async (douyinUrl, progressCallback 
               if (!progressData.isActive && !progressData.completed) {
                 clearInterval(pollInterval);
                 downloadQueue[videoId].status = 'failed';
-                console.error('[DouyinPlaywright] Download failed - no longer active');
-                reject(new Error('Download failed'));
+                const detail = progressData.error || 'Download failed';
+                console.error('[DouyinPlaywright] Download failed - no longer active:', detail);
+                reject(new Error(detail));
                 return;
               }
             }

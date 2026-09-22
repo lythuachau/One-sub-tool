@@ -19,9 +19,11 @@ import useWindowStateManager from './hooks/useWindowStateManager';
 // Import modular components
 import ReferenceAudioSection from './components/ReferenceAudioSection';
 import AudioControls from './components/AudioControls';
+import VieNeuVoiceControls from './components/VieNeuVoiceControls';
 import SubtitleSourceSelection from './components/SubtitleSourceSelection';
 import GeminiSubtitleSourceSelection from './components/GeminiSubtitleSourceSelection';
 import ChatterboxControls from './components/ChatterboxControls';
+import OmniVoiceModeControls from './components/OmniVoiceModeControls';
 import EdgeTTSControls from './components/EdgeTTSControls';
 import GTTSControls from './components/GTTSControls';
 import GeminiVoiceSelection from './components/GeminiVoiceSelection';
@@ -83,6 +85,10 @@ const UnifiedNarrationSection = ({
     // Chatterbox-specific settings
     exaggeration, setExaggeration,
     cfgWeight, setCfgWeight,
+    omnivoiceMode, setOmnivoiceMode,
+    omnivoiceInstruct, setOmnivoiceInstruct,
+    vieneuVoiceMode, setVieneuVoiceMode,
+    vieneuVoice, setVieneuVoice,
 
     // Edge TTS-specific settings
     edgeTTSVoice, setEdgeTTSVoice,
@@ -139,6 +145,14 @@ const UnifiedNarrationSection = ({
     t
   });
 
+  useEffect(() => {
+    const legacyMethod = ['gemini', 'edge-tts', 'gtts'].includes(narrationMethod);
+    if (legacyMethod) {
+      setNarrationMethod('f5tts');
+      localStorage.setItem('narration_method', 'f5tts');
+    }
+  }, [narrationMethod, setNarrationMethod]);
+
   // Use Gemini narration hook
   const {
     handleGeminiNarration,
@@ -190,7 +204,10 @@ const UnifiedNarrationSection = ({
     translatedLanguage,
     exaggeration,
     cfgWeight,
+    omnivoiceMode,
+    omnivoiceInstruct,
     referenceAudio,
+    referenceText,
     useGroupedSubtitles,
     setUseGroupedSubtitles,
     groupedSubtitles,
@@ -443,6 +460,8 @@ const UnifiedNarrationSection = ({
     t,
     subtitleSource,
     translatedSubtitles,
+    vieneuVoiceMode,
+    vieneuVoice,
     isPlaying,
     selectedNarrationModel,
     originalLanguage,
@@ -453,8 +472,7 @@ const UnifiedNarrationSection = ({
     groupedSubtitles
   });
 
-  // Only show the unavailable message if both F5-TTS and Gemini are unavailable
-  if (!isAvailable && !isGeminiAvailable) {
+  if (!isAvailable && !isChatterboxAvailable) {
     return (
       <div className="narration-section unavailable" ref={sectionRef}>
         <div className="narration-header">
@@ -474,7 +492,7 @@ const UnifiedNarrationSection = ({
             </svg>
           </div>
           <div className="message">
-            {t('narration.allServicesUnavailableMessage', "Both F5-TTS and Gemini narration services are unavailable. For F5-TTS, please run with npm run dev:cuda. For Gemini, please check your API key in settings.")}
+            {t('narration.allServicesUnavailableMessage', 'VieNeu-TTS and OmniVoice are unavailable. Install both local engines and start the narration services with npm run dev:cuda.')}
           </div>
         </div>
       </div>
@@ -486,7 +504,7 @@ const UnifiedNarrationSection = ({
       <div className="narration-header">
         <h3>{t('narration.title', 'Generate Narration')}</h3>
         <p className="narration-description">
-          {t('narration.description', 'Generate spoken audio from your subtitles using the reference voice.')}
+          {t('narration.description', 'Generate spoken audio from your subtitles using a VieNeu preset, a reference voice, or OmniVoice voice design.')}
         </p>
       </div>
 
@@ -497,9 +515,6 @@ const UnifiedNarrationSection = ({
         isGenerating={isGenerating}
         isF5Available={isAvailable}
         isChatterboxAvailable={isChatterboxAvailable}
-        isGeminiAvailable={isGeminiAvailable}
-        isEdgeTTSAvailable={true}
-        isGTTSAvailable={true}
       />
 
       {/* Error Message - only show when there's an actual error message */}
@@ -509,31 +524,45 @@ const UnifiedNarrationSection = ({
       {narrationMethod === 'f5tts' ? (
         // F5-TTS UI
         <div className="f5tts-content">
-          {/* Audio Controls */}
-          <AudioControls
-            handleFileUpload={handleFileUpload}
-            fileInputRef={fileInputRef}
-            isRecording={isRecording}
-            startRecording={startRecording}
-            stopRecording={stopRecording}
+          <VieNeuVoiceControls
+            mode={vieneuVoiceMode}
+            setMode={setVieneuVoiceMode}
+            voice={vieneuVoice}
+            setVoice={setVieneuVoice}
+            isGenerating={isGenerating}
             isAvailable={isAvailable}
             referenceAudio={referenceAudio}
-            clearReferenceAudio={clearReferenceAudio}
-            onExampleSelect={handleExampleSelect}
+            referenceText={referenceText}
+            speechRate={advancedSettings.speechRate}
           />
 
-          {/* Reference Audio Section */}
-          <ReferenceAudioSection
-            referenceAudio={referenceAudio}
-            autoRecognize={autoRecognize}
-            setAutoRecognize={setAutoRecognize}
-            isRecognizing={isRecognizing}
-            referenceText={referenceText}
-            setReferenceText={setReferenceTextWithCache}
-            clearReferenceAudio={clearReferenceAudio}
-            isRecording={isRecording}
-            isExtractingSegment={isExtractingSegment}
-          />
+          {vieneuVoiceMode === 'reference' && (
+            <>
+              <AudioControls
+                handleFileUpload={handleFileUpload}
+                fileInputRef={fileInputRef}
+                isRecording={isRecording}
+                startRecording={startRecording}
+                stopRecording={stopRecording}
+                isAvailable={isAvailable}
+                referenceAudio={referenceAudio}
+                clearReferenceAudio={clearReferenceAudio}
+                onExampleSelect={handleExampleSelect}
+              />
+
+              <ReferenceAudioSection
+                referenceAudio={referenceAudio}
+                autoRecognize={autoRecognize}
+                setAutoRecognize={setAutoRecognize}
+                isRecognizing={isRecognizing}
+                referenceText={referenceText}
+                setReferenceText={setReferenceTextWithCache}
+                clearReferenceAudio={clearReferenceAudio}
+                isRecording={isRecording}
+                isExtractingSegment={isExtractingSegment}
+              />
+            </>
+          )}
 
           {/* Subtitle Source Selection */}
           <SubtitleSourceSelection
@@ -604,6 +633,7 @@ const UnifiedNarrationSection = ({
             cancelGeneration={cancelGeneration}
             subtitleSource={subtitleSource}
             isServiceAvailable={isAvailable}
+            requiresReferenceAudio={vieneuVoiceMode === 'reference'}
             serviceUnavailableMessage={t('narration.serviceUnavailableMessage', 'Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được.')}
           />
 
@@ -639,18 +669,33 @@ const UnifiedNarrationSection = ({
       ) : narrationMethod === 'chatterbox' ? (
         // Chatterbox UI
         <div className="chatterbox-content">
-          {/* Audio Controls - for reference audio upload */}
-          <AudioControls
-            handleFileUpload={handleFileUpload}
-            fileInputRef={fileInputRef}
-            isRecording={isRecording}
-            startRecording={startRecording}
-            stopRecording={stopRecording}
+          <OmniVoiceModeControls
+            mode={omnivoiceMode}
+            setMode={setOmnivoiceMode}
+            instruct={omnivoiceInstruct}
+            setInstruct={setOmnivoiceInstruct}
+            isGenerating={isGenerating}
             isAvailable={isChatterboxAvailable}
             referenceAudio={referenceAudio}
-            clearReferenceAudio={clearReferenceAudio}
-            onExampleSelect={handleExampleSelect}
+            referenceText={referenceText}
+            exaggeration={exaggeration}
+            cfgWeight={cfgWeight}
+            language={subtitleSource === 'translated' ? translatedLanguage : originalLanguage}
           />
+
+          {omnivoiceMode === 'reference' && (
+            <AudioControls
+              handleFileUpload={handleFileUpload}
+              fileInputRef={fileInputRef}
+              isRecording={isRecording}
+              startRecording={startRecording}
+              stopRecording={stopRecording}
+              isAvailable={isChatterboxAvailable}
+              referenceAudio={referenceAudio}
+              clearReferenceAudio={clearReferenceAudio}
+              onExampleSelect={handleExampleSelect}
+            />
+          )}
 
           {/* Subtitle Source Selection - reuse from F5-TTS */}
           <SubtitleSourceSelection
@@ -700,6 +745,7 @@ const UnifiedNarrationSection = ({
             downloadAlignedAudio={downloadAlignedAudio}
             generationResults={generationResults}
             isServiceAvailable={isChatterboxAvailable}
+            requiresReferenceAudio={omnivoiceMode === 'reference'}
             serviceUnavailableMessage={t('narration.chatterboxUnavailableMessage', 'Chatterbox API is not available. Please start the Chatterbox service.')}
           />
 

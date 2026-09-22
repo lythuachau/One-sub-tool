@@ -40,7 +40,7 @@ const DownloadOptionsModal = ({
   const [fileFormat, setFileFormat] = useState('srt');
   const [processType, setProcessType] = useState(null); // Initialize to null so only Download Files tab is active
   const [selectedModel, setSelectedModel] = useState(() => {
-    return localStorage.getItem('gemini_model') || 'gemini-2.5-flash';
+    return localStorage.getItem('gemini_model') || 'gemini-flash-latest';
   });
   const [isPromptEditorOpen, setIsPromptEditorOpen] = useState(false);
   const [customPrompts, setCustomPrompts] = useState({

@@ -170,7 +170,7 @@
   "subtitleGroupingTitle": "자막 그룹화 비교",
   "subtitleGroupingExplanation": "이 표는 원본 자막이 더 나은 나레이션을 위해 어떻게 더 완전한 문장으로 그룹화되었는지 보여줍니다. 각 행은 원본 자막을 나타내며, 그룹화된 열은 이들이 어떻게 결합되었는지 보여줍니다.",
 
-  "chatterboxMethod": "Chatterbox",
+  "chatterboxMethod": "OmniVoice",
   "chatterboxUnavailable": "(사용 불가 - npm run dev:cuda로 실행)",
   "chatterboxUnavailableMessage": "Chatterbox 서비스가 시작되지 않았습니다 (npm run dev:cuda 사용)",
   "exaggeration": "감정 강도",
@@ -225,5 +225,10 @@
   "cancel": "취소",
   "clear": "지우기",
   "recommendedVoices": "{{language}}에 추천",
-  "recommendedLanguage": "{{language}}에 추천"
+  "recommendedLanguage": "{{language}}에 추천",
+  "voicePreview": "음성 미리 듣기",
+  "voicePreviewLoading": "미리 듣기 생성 중...",
+  "voicePreviewText": "안녕하세요. 현재 내레이션 음성 미리 듣기입니다.",
+  "voicePreviewEmpty": "미리 듣기 오디오가 반환되지 않았습니다.",
+  "voicePreviewError": "음성 미리 듣기를 만들 수 없습니다."
 }

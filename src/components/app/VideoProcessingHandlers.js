@@ -563,6 +563,7 @@ export const downloadAndPrepareYouTubeVideo = async (
         message: t('errors.videoProcessingFailed', 'Video processing failed: {{message}}', { message: error.message }),
         type: 'error'
       });
+      throw error;
     }
   } catch (error) {
     console.error('Error downloading video:', error);
@@ -570,5 +571,6 @@ export const downloadAndPrepareYouTubeVideo = async (
     setIsDownloading(false);
     setDownloadProgress(0);
     setStatus({ message: `${t('errors.videoDownloadFailed', 'Video download failed')}: ${error.message}`, type: 'error' });
+    throw error;
   }
 };

@@ -24,6 +24,8 @@
   "seconds": "giây",
   "noRest": "Không",
   "waitingForNextChunk": "Đang chờ {{seconds}} giây trước khi dịch phần tiếp theo...",
+  "retryingModel": "Model {{model}} đang quá tải. Thử lại sau {{seconds}} giây...",
+  "switchingModel": "Đang chuyển sang model dịch dự phòng...",
   "modelGemini25Pro": "độ dài output 65536 tokens (thường không cần chia)",
   "modelGemini25Flash": "độ dài output 65536 tokens (thường không cần chia)",
   "modelGemini25FlashLite": "độ dài output 65536 tokens (thường không cần chia)",

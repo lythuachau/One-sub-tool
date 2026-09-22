@@ -6,6 +6,7 @@ import { getTranscriptionRulesSync } from '../../utils/transcriptionRulesStore';
 import { hasValidTokens } from '../../services/youtubeApiService';
 import { PROMPT_PRESETS } from '../../services/geminiService';
 import { cleanupInvalidBlobUrls } from '../../utils/videoUtils';
+import { getSubtitleEngine } from '../../services/subtitleEngineService';
 
 /**
  * Custom hook for managing application state
@@ -115,7 +116,7 @@ export const useAppState = () => {
 
     // Set default model if not already set
     if (!localStorage.getItem('gemini_model')) {
-      localStorage.setItem('gemini_model', 'gemini-2.0-flash');
+      localStorage.setItem('gemini_model', 'gemini-flash-latest');
     }
 
     // Set default transcription prompt if not already set
@@ -216,6 +217,7 @@ export const useAppState = () => {
 
   // Reactively update status messages based on API key changes
   useEffect(() => {
+    if (getSubtitleEngine() === 'whisper') return;
     // If we have a Gemini API key and the current status is an API key required message, clear it
     if (apiKeysSet.gemini && status?.message && status.type === 'info') {
       const isApiKeyRequiredMessage =

@@ -4,6 +4,7 @@
  */
 
 // import { addResponseSchema } from '../../utils/schemaUtils'; // No longer needed if schema is removed
+import { resolveGeminiModel } from './modelDiscovery';
 
 // createSubtitleGroupingSchema can be removed or commented out if not used.
 
@@ -15,7 +16,7 @@
  * @param {string} intensity - Grouping intensity level (minimal, moderate, aggressive)
  * @returns {Promise<Object>} - Object with grouped subtitles and mapping
  */
-export const groupSubtitlesForNarration = async (subtitles, language = 'en', model = 'gemini-2.5-flash-lite-preview-06-17', intensity = 'moderate') => {
+export const groupSubtitlesForNarration = async (subtitles, language = 'en', model = '', intensity = 'moderate') => {
   if (!subtitles || subtitles.length === 0) {
     return {
       success: false,
@@ -30,6 +31,8 @@ export const groupSubtitlesForNarration = async (subtitles, language = 'en', mod
     if (!apiKey) {
       throw new Error('Gemini API key not found');
     }
+
+    model = await resolveGeminiModel(model || localStorage.getItem('gemini_model') || '');
 
     const subtitleText = subtitles.map((sub, index) =>
       `ID: ${sub.subtitle_id || sub.id || (index + 1)}, Text: "${sub.text}"`

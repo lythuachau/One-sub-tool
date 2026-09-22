@@ -46,7 +46,7 @@ let narrationProcesses;
 const isDevCuda = process.env.START_PYTHON_SERVER === 'true';
 
 if (isDevCuda) {
-  console.log('🚀 Starting narration services (F5-TTS + Chatterbox)...');
+  console.log('🚀 Starting narration services (VieNeu-TTS + OmniVoice)...');
 
   try {
     narrationProcesses = startNarrationService();
@@ -59,8 +59,8 @@ if (isDevCuda) {
       app.set('chatterboxActualPort', CHATTERBOX_PORT);
 
       console.log('✅ Narration services startup completed');
-      console.log(`📍 F5-TTS service: http://localhost:${NARRATION_PORT}`);
-      console.log(`📍 Chatterbox service: http://localhost:${CHATTERBOX_PORT}`);
+      console.log(`📍 VieNeu-TTS service: http://localhost:${NARRATION_PORT}`);
+      console.log(`📍 OmniVoice service: http://localhost:${CHATTERBOX_PORT}`);
     } else {
       throw new Error('Failed to start narration services');
     }
@@ -114,12 +114,12 @@ process.on('SIGINT', async () => {
       // Kill the narration service processes
       if (narrationProcesses) {
         if (narrationProcesses.narrationProcess) {
-          console.log('🔄 Stopping F5-TTS narration service...');
+          console.log('🔄 Stopping VieNeu-TTS narration service...');
           narrationProcesses.narrationProcess.kill();
         }
 
         if (narrationProcesses.chatterboxProcess) {
-          console.log('🔄 Stopping Chatterbox service...');
+          console.log('🔄 Stopping OmniVoice service...');
           narrationProcesses.chatterboxProcess.kill();
         }
       }

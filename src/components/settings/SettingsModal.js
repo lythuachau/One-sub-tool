@@ -6,6 +6,7 @@ import '../../styles/components/tab-content-animations.css';
 import { DEFAULT_TRANSCRIPTION_PROMPT } from '../../services/geminiService';
 import { getClientCredentials, hasValidTokens } from '../../services/youtubeApiService';
 import { getAllKeys, saveAllKeys, getCurrentKey } from '../../services/gemini/keyManager';
+import { checkGeminiModels, getGeminiModelLabel } from '../../services/gemini/modelDiscovery';
 import LanguageSelector from '../LanguageSelector';
 import CloseButton from '../common/CloseButton';
 import { API_BASE_URL } from '../../config';
@@ -20,6 +21,7 @@ import ModelManagementTab from './ModelManagementTab';
 
 // Import icons
 import { ApiKeyIcon, ProcessingIcon, PromptIcon, CacheIcon, AboutIcon, ModelIcon } from './icons/TabIcons';
+import { FiAlertCircle, FiCheckCircle, FiRefreshCw, FiX } from 'react-icons/fi';
 
 // Import theme utilities
 import { toggleTheme as toggleThemeUtil, getThemeIcon, getThemeLabel, initializeTheme, setupSystemThemeListener } from './utils/themeUtils';
@@ -126,18 +128,20 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
   const [showClientSecret, setShowClientSecret] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [segmentDuration, setSegmentDuration] = useState(5); // Default to 5 minutes
-  const [geminiModel, setGeminiModel] = useState('gemini-2.0-flash'); // Default model
+  const [subtitleEngine, setSubtitleEngine] = useState('gemini');
+  const [geminiModel, setGeminiModel] = useState('gemini-flash-latest'); // Default model
   const [timeFormat, setTimeFormat] = useState('hms'); // Default to HH:MM:SS format
   const [showWaveform, setShowWaveform] = useState(true); // Default to showing waveform
   const [segmentOffsetCorrection, setSegmentOffsetCorrection] = useState(-3.0); // Default offset correction for second segment
   const [useVideoAnalysis, setUseVideoAnalysis] = useState(true); // Default to using video analysis
-  const [videoAnalysisModel, setVideoAnalysisModel] = useState('gemini-2.0-flash'); // Default to Gemini 2.0 Flash
+  const [videoAnalysisModel, setVideoAnalysisModel] = useState('gemini-flash-latest'); // Resolved against the active API key
   const [videoAnalysisTimeout, setVideoAnalysisTimeout] = useState('20'); // Default to 20 seconds timeout
   const [autoSelectDefaultPreset, setAutoSelectDefaultPreset] = useState(false); // Default to false
   const [optimizeVideos, setOptimizeVideos] = useState(true); // Default to optimizing videos
   const [optimizedResolution, setOptimizedResolution] = useState('360p'); // Default to 360p
   const [useOptimizedPreview, setUseOptimizedPreview] = useState(false); // Default to original video in preview
   const [isFactoryResetting, setIsFactoryResetting] = useState(false); // State for factory reset process
+  const [modelCheckState, setModelCheckState] = useState({ status: 'idle', result: null, error: null });
 
   // Thinking budget settings for each model
   const [thinkingBudgets, setThinkingBudgets] = useState({
@@ -187,7 +191,8 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
     youtubeApiKey: '',
     geniusApiKey: '',
     segmentDuration: 5,
-    geminiModel: 'gemini-2.5-flash',
+    subtitleEngine: 'gemini',
+    geminiModel: 'gemini-flash-latest',
     timeFormat: 'hms',
     showWaveform: true,
     segmentOffsetCorrection: -3.0,
@@ -196,7 +201,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
     youtubeClientId: '',
     youtubeClientSecret: '',
     useVideoAnalysis: true,
-    videoAnalysisModel: 'gemini-2.0-flash',
+    videoAnalysisModel: 'gemini-flash-latest',
     videoAnalysisTimeout: '20',
     autoSelectDefaultPreset: false,
     optimizeVideos: true,
@@ -233,7 +238,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
         const currentVideoAnalysisModel = localStorage.getItem('video_analysis_model');
         // If user has the old default, update it to the new default
         if (currentVideoAnalysisModel === 'gemini-2.0-flash') {
-          localStorage.setItem('video_analysis_model', 'gemini-2.5-flash-lite-preview-06-17');
+          localStorage.setItem('video_analysis_model', 'gemini-flash-latest');
         }
         // Update settings version
         localStorage.setItem('settings_version', '1.1');
@@ -244,12 +249,13 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       const savedYoutubeKey = localStorage.getItem('youtube_api_key') || '';
       const savedGeniusKey = localStorage.getItem('genius_token') || '';
       const savedSegmentDuration = parseInt(localStorage.getItem('segment_duration') || '5');
-      const savedGeminiModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash';
+      const savedSubtitleEngine = localStorage.getItem('subtitle_engine') === 'whisper' ? 'whisper' : 'gemini';
+      const savedGeminiModel = localStorage.getItem('gemini_model') || 'gemini-flash-latest';
       const savedTimeFormat = localStorage.getItem('time_format') || 'hms';
       const savedShowWaveform = localStorage.getItem('show_waveform') !== 'false'; // Default to true if not set
       const savedOffsetCorrection = parseFloat(localStorage.getItem('segment_offset_correction') || '-3.0');
       const savedUseVideoAnalysis = localStorage.getItem('use_video_analysis') !== 'false'; // Default to true if not set
-      const savedVideoAnalysisModel = localStorage.getItem('video_analysis_model') || 'gemini-2.0-flash'; // Default to 2.0 Flash
+      const savedVideoAnalysisModel = localStorage.getItem('video_analysis_model') || 'gemini-flash-latest';
       const savedVideoAnalysisTimeout = localStorage.getItem('video_analysis_timeout') || '20'; // Default to 20 seconds timeout
       const savedAutoSelectDefaultPreset = localStorage.getItem('auto_select_default_preset') === 'true'; // Default to false
       const savedTranscriptionPrompt = localStorage.getItem('transcription_prompt') || DEFAULT_TRANSCRIPTION_PROMPT;
@@ -286,6 +292,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       setYoutubeApiKey(savedYoutubeKey);
       setGeniusApiKey(savedGeniusKey);
       setSegmentDuration(savedSegmentDuration);
+      setSubtitleEngine(savedSubtitleEngine);
       setGeminiModel(savedGeminiModel);
       setTimeFormat(savedTimeFormat);
       setShowWaveform(savedShowWaveform);
@@ -312,6 +319,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
         youtubeApiKey: savedYoutubeKey,
         geniusApiKey: savedGeniusKey,
         segmentDuration: savedSegmentDuration,
+        subtitleEngine: savedSubtitleEngine,
         geminiModel: savedGeminiModel,
         timeFormat: savedTimeFormat,
         showWaveform: savedShowWaveform,
@@ -404,6 +412,30 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
     }
   };
 
+  const handleCheckModels = async () => {
+    setModelCheckState({ status: 'checking', result: null, error: null });
+
+    try {
+      const apiKey = geminiApiKey.trim() || getCurrentKey();
+      const result = await checkGeminiModels({ force: true, apiKey });
+      setModelCheckState({
+        status: result.hasApiKey ? 'complete' : 'missing-key',
+        result,
+        error: null
+      });
+    } catch (error) {
+      setModelCheckState({
+        status: 'error',
+        result: null,
+        error: error.message || t('settings.modelCheckFailed', 'Model check failed')
+      });
+    }
+  };
+
+  const closeModelCheckResults = () => {
+    setModelCheckState({ status: 'idle', result: null, error: null });
+  };
+
   // Effect to check for changes in settings
   useEffect(() => {
     // Only check for changes if settings have been loaded
@@ -415,6 +447,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       youtubeApiKey !== originalSettings.youtubeApiKey ||
       geniusApiKey !== originalSettings.geniusApiKey ||
       segmentDuration !== originalSettings.segmentDuration ||
+      subtitleEngine !== originalSettings.subtitleEngine ||
       geminiModel !== originalSettings.geminiModel ||
       timeFormat !== originalSettings.timeFormat ||
       showWaveform !== originalSettings.showWaveform ||
@@ -435,7 +468,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
 
     setHasChanges(settingsChanged);
   }, [isSettingsLoaded, geminiApiKey, youtubeApiKey, geniusApiKey, segmentDuration, geminiModel, timeFormat, showWaveform,
-      segmentOffsetCorrection, transcriptionPrompt, useOAuth, youtubeClientId,
+      segmentOffsetCorrection, subtitleEngine, transcriptionPrompt, useOAuth, youtubeClientId,
       youtubeClientSecret, useVideoAnalysis, videoAnalysisModel, videoAnalysisTimeout, autoSelectDefaultPreset,
       optimizeVideos, optimizedResolution, useOptimizedPreview, useCookiesForDownload, thinkingBudgets, originalSettings]);
 
@@ -443,6 +476,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
   const handleSave = async () => {
     // Save settings to localStorage
     localStorage.setItem('segment_duration', segmentDuration.toString());
+    localStorage.setItem('subtitle_engine', subtitleEngine);
     localStorage.setItem('gemini_model', geminiModel);
     localStorage.setItem('genius_token', geniusApiKey);
     localStorage.setItem('time_format', timeFormat);
@@ -511,6 +545,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       youtubeApiKey,
       geniusApiKey,
       segmentDuration,
+      subtitleEngine,
       geminiModel,
       timeFormat,
       showWaveform,
@@ -689,6 +724,8 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
             <VideoProcessingTab
               segmentDuration={segmentDuration}
               setSegmentDuration={setSegmentDuration}
+              subtitleEngine={subtitleEngine}
+              setSubtitleEngine={setSubtitleEngine}
               geminiModel={geminiModel}
               setGeminiModel={setGeminiModel}
               timeFormat={timeFormat}
@@ -771,6 +808,86 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
                 t('settings.factoryReset', 'Factory Reset')
               )}
             </button>
+
+            <div className="model-check-area">
+              {modelCheckState.status !== 'idle' && (
+                <div className={`model-check-results model-check-results-${modelCheckState.status}`} role="status">
+                  <div className="model-check-results-header">
+                    <strong>{t('settings.modelCheckTitle', 'Model availability')}</strong>
+                    <button
+                      type="button"
+                      className="model-check-results-close"
+                      onClick={closeModelCheckResults}
+                      aria-label={t('common.close', 'Close')}
+                    >
+                      <FiX />
+                    </button>
+                  </div>
+
+                  {modelCheckState.status === 'checking' && (
+                    <div className="model-check-message">
+                      <FiRefreshCw className="model-check-spin" />
+                      {t('settings.modelCheckRunning', 'Checking models with the active API key...')}
+                    </div>
+                  )}
+
+                  {modelCheckState.status === 'missing-key' && (
+                    <div className="model-check-message model-check-message-error">
+                      <FiAlertCircle />
+                      {t('settings.modelCheckMissingKey', 'Add a Gemini API key before checking models.')}
+                    </div>
+                  )}
+
+                  {modelCheckState.status === 'error' && (
+                    <div className="model-check-message model-check-message-error">
+                      <FiAlertCircle />
+                      {modelCheckState.error}
+                    </div>
+                  )}
+
+                  {modelCheckState.status === 'complete' && modelCheckState.result && (
+                    <>
+                      <div className="model-check-summary-line">
+                        <FiCheckCircle />
+                        <span>
+                          {modelCheckState.result.usableModels.length}/
+                          {modelCheckState.result.models.length}{' '}
+                          {t('settings.modelsAvailable', 'models available')}
+                        </span>
+                      </div>
+                      <div className="model-check-model-list">
+                        {modelCheckState.result.models.map((model) => (
+                          <div className={`model-check-model model-check-model-${model.status}`} key={model.id}>
+                            <span>{getGeminiModelLabel(model)}</span>
+                            {model.status === 'usable' ? <FiCheckCircle /> : <FiAlertCircle />}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="button"
+                className={`model-check-btn ${modelCheckState.status === 'complete' ? 'checked' : ''}`}
+                onClick={handleCheckModels}
+                disabled={modelCheckState.status === 'checking'}
+                title={t('settings.checkModelsTooltip', 'Check which Gemini models are available with the active API key')}
+              >
+                <FiRefreshCw className={modelCheckState.status === 'checking' ? 'model-check-spin' : ''} />
+                <span>
+                  {modelCheckState.status === 'checking'
+                    ? t('settings.checkingModels', 'Checking...')
+                    : t('settings.checkModels', 'Check models')}
+                </span>
+                {modelCheckState.status === 'complete' && modelCheckState.result && (
+                  <small>
+                    {modelCheckState.result.usableModels.length}/{modelCheckState.result.models.length}
+                  </small>
+                )}
+              </button>
+            </div>
           </div>
           <div className="settings-footer-right">
             <button

@@ -8,6 +8,13 @@ const path = require('path');
 const fs = require('fs');
 const { VIDEOS_DIR } = require('../config');
 const { downloadDouyinVideo, getAvailableQualities } = require('../services/douyin/playwrightDownloader');
+const {
+  downloadDouyinVideoYtDlp,
+  downloadDouyinVideoFallback,
+  downloadDouyinVideoShortUrlFallback,
+  downloadDouyinVideoSimpleFallback
+} = require('../services/douyin/downloader');
+const { downloadDouyinNative } = require('../services/douyin/nativeDownloader');
 const { getDownloadProgress } = require('../services/shared/progressTracker');
 
 // Track active downloads to prevent duplicates
@@ -15,6 +22,62 @@ const activeDownloads = new Map();
 
 // Track completed downloads with their actual filenames
 const completedDownloads = new Map();
+const failedDownloads = new Map();
+
+const toPublicPath = filename => `/videos/${encodeURIComponent(filename)}`;
+
+const summarizeError = error => String(error?.message || error || 'Unknown error')
+  .replace(/\s+/g, ' ')
+  .slice(0, 600);
+
+async function tryNonBrowserDownload(videoId, url, quality, useCookies) {
+  const failures = [];
+
+  try {
+    const result = await downloadDouyinNative(url, videoId);
+    return {
+      ...result,
+      filename: result.filename || path.basename(result.path),
+      publicPath: toPublicPath(result.filename || path.basename(result.path)),
+      failures
+    };
+  } catch (error) {
+    const detail = summarizeError(error);
+    failures.push({ method: 'douyin-native', error: detail });
+    console.warn(`[DOUYIN] Native resolver failed for ${videoId}: ${detail}`);
+  }
+
+  const ytDlpStrategies = [
+    ['yt-dlp', () => downloadDouyinVideoYtDlp(videoId, url, quality, useCookies)],
+    ['yt-dlp-fallback', () => downloadDouyinVideoFallback(videoId, url, quality, useCookies)],
+    ...(url.includes('v.douyin.com')
+      ? [['yt-dlp-short-url', () => downloadDouyinVideoShortUrlFallback(videoId, url, quality, useCookies)]]
+      : []),
+    ['yt-dlp-basic', () => downloadDouyinVideoSimpleFallback(videoId, url, quality, useCookies)]
+  ];
+
+  for (const [method, download] of ytDlpStrategies) {
+    try {
+      const result = await download();
+      const filename = path.basename(result.path);
+      const stats = await fs.promises.stat(result.path);
+      if (stats.size < 100 * 1024) throw new Error(`Downloaded file is too small (${stats.size} bytes)`);
+      return {
+        ...result,
+        method,
+        filename,
+        publicPath: toPublicPath(filename),
+        failures
+      };
+    } catch (error) {
+      const detail = summarizeError(error);
+      failures.push({ method, error: detail });
+      console.warn(`[DOUYIN] ${method} failed for ${videoId}: ${detail}`);
+    }
+  }
+
+  return { failures };
+}
 
 /**
  * POST /api/download-douyin-playwright - Download Douyin video using Playwright
@@ -43,13 +106,15 @@ router.post('/download-douyin-playwright', async (req, res) => {
       });
     }
 
+    failedDownloads.delete(videoId);
+
     // Check if file already exists and is not a force refresh
     // Look for files that start with the videoId (since actual filename includes title)
     let existingFile = null;
     if (fs.existsSync(VIDEOS_DIR)) {
       const files = fs.readdirSync(VIDEOS_DIR);
       existingFile = files.find(file =>
-        file.startsWith(`${videoId}_`) && file.endsWith('.mp4')
+        (file === `${videoId}.mp4` || file.startsWith(`${videoId}_`)) && file.endsWith('.mp4')
       );
     }
 
@@ -61,8 +126,26 @@ router.post('/download-douyin-playwright', async (req, res) => {
         message: 'Video already downloaded',
         videoId,
         filename: existingFile,
-        path: `/videos/${existingFile}`,
-        alreadyExists: true
+        path: toPublicPath(existingFile),
+        alreadyExists: true,
+        completed: true,
+        method: 'cached'
+      });
+    }
+
+    // Resolve ordinary Douyin links without starting a browser. Playwright is
+    // kept as the final fallback for links requiring JavaScript or cookies.
+    const localResult = await tryNonBrowserDownload(videoId, url, quality, useCookies);
+    if (localResult.path) {
+      return res.json({
+        success: true,
+        message: 'Video downloaded without a browser',
+        videoId,
+        filename: localResult.filename,
+        path: localResult.publicPath,
+        completed: true,
+        method: localResult.method,
+        fallbackAttempts: localResult.failures
       });
     }
 
@@ -71,7 +154,8 @@ router.post('/download-douyin-playwright', async (req, res) => {
       url,
       quality,
       startTime: Date.now(),
-      useCookies
+      useCookies,
+      fallbackAttempts: localResult.failures
     });
 
     // Start the download process
@@ -91,18 +175,19 @@ router.post('/download-douyin-playwright', async (req, res) => {
         // Perform the actual download
         const downloadedPath = await downloadDouyinVideo(url, videoId, quality, useCookies);
 
-      // Get the filename from the downloaded path
-      const filename = path.basename(downloadedPath);
+        // Get the filename from the downloaded path
+        const filename = path.basename(downloadedPath);
 
-      console.log(`[DOUYIN-PLAYWRIGHT] Download completed: ${filename}`);
+        console.log(`[DOUYIN-PLAYWRIGHT] Download completed: ${filename}`);
 
-      // Store completed download info for progress polling
-      completedDownloads.set(videoId, {
-        filename: filename,
-        path: downloadedPath,
-        url: `/videos/${filename}`,
-        completedAt: Date.now()
-      });
+        // Store completed download info for progress polling
+        completedDownloads.set(videoId, {
+          filename,
+          path: downloadedPath,
+          url: toPublicPath(filename),
+          completedAt: Date.now()
+        });
+        failedDownloads.delete(videoId);
 
         // Clean up active downloads tracking
         activeDownloads.delete(videoId);
@@ -111,8 +196,17 @@ router.post('/download-douyin-playwright', async (req, res) => {
         console.error(`[DOUYIN-PLAYWRIGHT] Download failed for ${videoId}:`, downloadError);
 
         // Clean up tracking
+        const downloadState = activeDownloads.get(videoId);
         activeDownloads.delete(videoId);
         completedDownloads.delete(videoId);
+        const attempts = [
+          ...(downloadState?.fallbackAttempts || []),
+          { method: 'playwright', error: summarizeError(downloadError) }
+        ];
+        failedDownloads.set(videoId, {
+          error: `Douyin download failed: ${attempts.map(item => `${item.method}: ${item.error}`).join(' | ')}`.slice(0, 2400),
+          attempts
+        });
       }
     })(); // End of async IIFE
 
@@ -193,6 +287,7 @@ router.get('/douyin-playwright-progress/:videoId', (req, res) => {
     const progressInfo = getDownloadProgress(videoId);
     const isActive = activeDownloads.has(videoId);
     const completedInfo = completedDownloads.get(videoId);
+    const failedInfo = failedDownloads.get(videoId);
 
     // Extract progress percentage from progress info object
     const progressPercentage = progressInfo?.progress || 0;
@@ -214,7 +309,9 @@ router.get('/douyin-playwright-progress/:videoId', (req, res) => {
       isActive,
       completed: isCompleted && fileExists,
       filename: completedInfo?.filename || null,
-      path: (isCompleted && fileExists) ? completedInfo.url : null
+      path: (isCompleted && fileExists) ? completedInfo.url : null,
+      error: failedInfo?.error || null,
+      fallbackAttempts: failedInfo?.attempts || []
     });
     
   } catch (error) {

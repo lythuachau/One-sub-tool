@@ -1,222 +1,79 @@
 /**
- * Script to start the F5-TTS narration service and Chatterbox API service
+ * Start the local VieNeu-TTS and OmniVoice adapters used by the narration UI.
  */
 
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-
-// Import unified port configuration
 const { PORTS } = require('./config');
-
-// Import port management
 const { trackProcess } = require('./utils/portManager');
 
-// Configuration using unified ports
 const NARRATION_PORT = PORTS.NARRATION;
 const CHATTERBOX_PORT = PORTS.CHATTERBOX;
 const UV_EXECUTABLE = process.env.UV_EXECUTABLE || 'uv';
+const ROOT_DIR = path.join(__dirname, '..');
+const TTS_DIR = path.join(__dirname, 'tts_service');
 
-// Start the Chatterbox API service
+const resolvePythonCommand = () => {
+  const configuredPython = process.env.TTS_PYTHON || process.env.NARRATION_PYTHON;
+  if (configuredPython) return { command: configuredPython, prefix: [] };
+  try {
+    execFileSync(UV_EXECUTABLE, ['--version'], { encoding: 'utf8' });
+    return { command: UV_EXECUTABLE, prefix: ['run', 'python'] };
+  } catch (error) {
+    throw new Error('uv is not installed. Set TTS_PYTHON to the OSG .venv Python executable or install uv.');
+  }
+};
+
+const spawnTtsService = ({ script, port, label, env }) => {
+  const scriptPath = path.join(TTS_DIR, script);
+  if (!fs.existsSync(scriptPath)) {
+    console.warn(`⚠️ ${label} adapter not found: ${scriptPath}`);
+    return null;
+  }
+
+  const python = resolvePythonCommand();
+  const child = spawn(python.command, [...python.prefix, scriptPath], {
+    cwd: ROOT_DIR,
+    env: { ...process.env, ...env, PYTHONUNBUFFERED: '1' },
+    stdio: 'inherit'
+  });
+  child.on('error', error => console.error(`❌ Failed to start ${label}: ${error.message}`));
+  child.on('close', code => { if (code !== 0) console.error(`❌ ${label} exited with code ${code}`); });
+  if (child.pid) trackProcess(port, child.pid, label);
+  console.log(`✅ ${label} starting on port ${port}`);
+  return child;
+};
+
 function startChatterboxService() {
   try {
-    console.log(`🔧 Starting Chatterbox API service on port ${CHATTERBOX_PORT}...`);
-
-    // Check if Chatterbox directory and required files exist
-    const chatterboxDir = path.join(path.dirname(__dirname), 'chatterbox-fastapi');
-    const chatterboxApiPath = path.join(chatterboxDir, 'start_api.py');
-    const chatterboxMainApiPath = path.join(chatterboxDir, 'api.py');
-
-    if (!fs.existsSync(chatterboxDir)) {
-      console.warn('⚠️  Chatterbox directory not found. Chatterbox service will not be available.');
-      console.warn('   Run the setup script to install Chatterbox: npm run setup:narration');
-      return null;
-    }
-
-    if (!fs.existsSync(chatterboxApiPath)) {
-      console.warn('⚠️  Chatterbox start_api.py not found. Chatterbox service will not be available.');
-      console.warn(`   Expected path: ${chatterboxApiPath}`);
-      return null;
-    }
-
-    if (!fs.existsSync(chatterboxMainApiPath)) {
-      console.warn('⚠️  Chatterbox api.py not found. Chatterbox service will not be available.');
-      console.warn(`   Expected path: ${chatterboxMainApiPath}`);
-      console.warn('   Run the setup script to install Chatterbox: npm run setup:narration');
-      return null;
-    }
-
-    // Set environment variables for Chatterbox
-    const env = {
-      ...process.env,
-      CHATTERBOX_PORT: CHATTERBOX_PORT,
-      CUDA_VISIBLE_DEVICES: '0', // Use same CUDA device as F5-TTS
-      PYTORCH_CUDA_ALLOC_CONF: 'max_split_size_mb:512'
-    };
-
-    // Start the Chatterbox service using the same pattern as F5-TTS
-    const chatterboxProcess = spawn(UV_EXECUTABLE, [
-      'run',
-      'python',
-      'start_api.py',  // Run from chatterbox-fastapi directory
-      '--host', '0.0.0.0',
-      '--port', CHATTERBOX_PORT.toString(),
-      '--reload'
-    ], {
-      env,
-      stdio: 'inherit',
-      cwd: chatterboxDir  // Set working directory to chatterbox-fastapi
+    return spawnTtsService({
+      script: 'omnivoice_service.py',
+      port: CHATTERBOX_PORT,
+      label: 'OmniVoice TTS',
+      env: { CHATTERBOX_PORT: String(CHATTERBOX_PORT) }
     });
-
-    // Handle process events
-    chatterboxProcess.on('error', (error) => {
-      console.error('❌ Failed to start Chatterbox service:', error);
-    });
-
-    chatterboxProcess.on('close', (code) => {
-      if (code !== 0) {
-        console.error(`❌ Chatterbox service exited with code ${code}`);
-      } else {
-        console.log('✅ Chatterbox service stopped gracefully');
-      }
-    });
-
-    // Track the Chatterbox process
-    if (chatterboxProcess.pid) {
-      trackProcess(CHATTERBOX_PORT, chatterboxProcess.pid, 'Chatterbox API');
-    }
-
-    console.log(`✅ Chatterbox API service starting...`);
-    console.log(`📁 Working directory: ${chatterboxDir}`);
-    console.log(`🌐 Will be available at: http://localhost:${CHATTERBOX_PORT}`);
-    console.log(`📖 API documentation: http://localhost:${CHATTERBOX_PORT}/docs`);
-
-    return chatterboxProcess;
   } catch (error) {
-    console.error(`❌ Error starting Chatterbox service: ${error.message}`);
+    console.error(`❌ Error starting OmniVoice service: ${error.message}`);
     return null;
   }
 }
 
-// Start the F5-TTS narration service
 function startNarrationService() {
-
-
   try {
-    // Check if uv is installed
-    try {
-      require('child_process').execSync(`${UV_EXECUTABLE} --version`, { encoding: 'utf8' });
-      console.log(`✅ UV package manager found`);
-    } catch (error) {
-      console.error(`❌ Error checking uv version: ${error.message}`);
-      console.error('   Please install uv: https://astral.sh/uv');
-      return null;
-    }
-
-    // Set environment variables - force CUDA usage
-    const env = {
-      ...process.env,
-      NARRATION_PORT: NARRATION_PORT,
-      CUDA_VISIBLE_DEVICES: '0', // Force use of first CUDA device
-      PYTORCH_CUDA_ALLOC_CONF: 'max_split_size_mb:512' // Avoid memory fragmentation issues
-    };
-
-    // Create narration directories if they don't exist
-    const narrationDir = path.join(path.dirname(__dirname), 'narration');
-    const referenceDir = path.join(narrationDir, 'reference');
-    const outputDir = path.join(narrationDir, 'output');
-
-    if (!fs.existsSync(narrationDir)) {
-      fs.mkdirSync(narrationDir, { recursive: true });
-
-    }
-
-    if (!fs.existsSync(referenceDir)) {
-      fs.mkdirSync(referenceDir, { recursive: true });
-
-    }
-
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-
-    }
-
-    // Check for CUDA support
-    try {
-
-      // Create a temporary Python script to check CUDA
-      const fs = require('fs');
-      const os = require('os');
-      const tempFile = path.join(os.tmpdir(), 'check_cuda.py');
-
-      const pythonCode = `
-import torch
-print(f'CUDA available: {torch.cuda.is_available()}')
-print(f'CUDA device count: {torch.cuda.device_count() if torch.cuda.is_available() else 0}')
-print(f'CUDA device name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"}')
-`;
-
-      fs.writeFileSync(tempFile, pythonCode);
-
-      const checkCudaCmd = `${UV_EXECUTABLE} run ${tempFile}`;
-      const cudaCheck = require('child_process').execSync(checkCudaCmd, { encoding: 'utf8' });
-
-
-      // Clean up the temporary file
-      try {
-        fs.unlinkSync(tempFile);
-      } catch (cleanupError) {
-        console.warn(`Warning: Unable to delete temporary file: ${cleanupError.message}`);
-      }
-
-      // If CUDA is not available, print a warning
-      if (!cudaCheck.includes('CUDA available: True')) {
-        console.warn('WARNING: CUDA is not available. The narration service will run on CPU, which is much slower.');
-        console.warn('Make sure your NVIDIA drivers and CUDA toolkit are properly installed.');
-      } else {
-
-      }
-    } catch (error) {
-      console.warn(`Warning: Unable to check CUDA availability: ${error.message}`);
-    }
-
-    // Spawn the Python process using uv
-    const narrationAppPath = path.join(__dirname, 'narrationApp.py');
-
-
-    const narrationProcess = spawn(UV_EXECUTABLE, ['run', narrationAppPath], {
-      env,
-      stdio: 'inherit'
-    });
-
-    // Handle process events
-    narrationProcess.on('error', (error) => {
-      console.error('Failed to start narration service:', error);
-    });
-
-    narrationProcess.on('close', (code) => {
-      if (code !== 0) {
-        console.error(`Narration service exited with code ${code}`);
+    const narrationProcess = spawnTtsService({
+      script: 'vieneu_service.py',
+      port: NARRATION_PORT,
+      label: 'VieNeu-TTS narration',
+      env: {
+        NARRATION_PORT: String(NARRATION_PORT),
+        VIENEU_BACKEND: process.env.VIENEU_BACKEND || 'onnx'
       }
     });
-
-    console.log(`✅ F5-TTS narration service started on port ${NARRATION_PORT}`);
-
-    // Track the narration process
-    if (narrationProcess.pid) {
-      trackProcess(NARRATION_PORT, narrationProcess.pid, 'F5-TTS Narration');
-    }
-
-    // Start Chatterbox service
     const chatterboxProcess = startChatterboxService();
-
-    // Return both processes for cleanup
-    return {
-      narrationProcess,
-      chatterboxProcess
-    };
+    return { narrationProcess, chatterboxProcess };
   } catch (error) {
-    console.error(`❌ Error starting F5-TTS narration service: ${error.message}`);
+    console.error(`❌ Error starting VieNeu-TTS services: ${error.message}`);
     return null;
   }
 }

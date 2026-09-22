@@ -49,6 +49,13 @@ export const checkGeminiAvailability = async () => {
         model: suitableModel
       };
     } catch (error) {
+      if (error.message?.includes('No Gemini Live audio model')) {
+        return {
+          available: false,
+          error: error.message,
+          message: 'Gemini narration requires a Live audio model enabled for this API key. Choose Edge TTS or gTTS, or use a key with Gemini Live audio access.'
+        };
+      }
       return {
         available: false,
         error: `Gemini API error: ${error.message}`,

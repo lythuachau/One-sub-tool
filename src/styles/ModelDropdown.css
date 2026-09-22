@@ -184,6 +184,8 @@
 .model-option-text {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
 }
 
 /* Model name styling */
@@ -195,6 +197,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 
@@ -203,6 +208,16 @@
 .model-option-description {
   font-size: var(--md-body-small-size);
   color: var(--md-on-surface-variant);
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.model-options-empty {
+  padding: 18px 16px;
+  color: var(--md-on-surface-variant);
+  font-size: var(--md-body-small-size);
+  line-height: 1.4;
 }
 
 /* Optional label styling */

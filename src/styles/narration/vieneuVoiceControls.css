@@ -1,0 +1,20 @@
+.vieneu-voice-mode-row,
+.vieneu-preset-row {
+  margin-top: 12px;
+}
+
+.vieneu-voice-select {
+  width: min(100%, 440px);
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border-color, #4a4652);
+  border-radius: 22px;
+  background: var(--surface-color, #1f1d22);
+  color: var(--text-color, #f4f1f5);
+  font: inherit;
+}
+
+.vieneu-voice-select:focus {
+  outline: 2px solid var(--accent-color, #7568ff);
+  outline-offset: 2px;
+}

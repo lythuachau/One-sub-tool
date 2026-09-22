@@ -17,6 +17,7 @@ import {
 import i18n from '../../i18n/i18n';
 import { getNextAvailableKey, blacklistKey } from './keyManager';
 import { addThinkingConfig } from '../../utils/thinkingBudgetUtils';
+import { resolveGeminiModel } from './modelDiscovery';
 
 /**
  * Call the Gemini API with various input types
@@ -28,17 +29,21 @@ import { addThinkingConfig } from '../../utils/thinkingBudgetUtils';
 export const callGeminiApi = async (input, inputType, options = {}) => {
     // Extract options
     const { userProvidedSubtitles, modelId } = options;
-    // Use the passed modelId if available, otherwise fall back to localStorage
-    const MODEL = modelId || localStorage.getItem('gemini_model') || "gemini-2.5-flash";
+    // Resolve the selected model against the models currently available to the active API key.
+    const requestedModel = modelId || localStorage.getItem('gemini_model') || '';
 
-    if (modelId) {
-        console.log(`[GeminiAPI] Using custom model: ${MODEL}`);
-    }
-
-    // Get the next available API key
+    // Resolve the model against the same key that will send the request.
     const geminiApiKey = getNextAvailableKey();
     if (!geminiApiKey) {
         throw new Error('No valid Gemini API key available. Please add at least one API key in Settings.');
+    }
+
+    const MODEL = await resolveGeminiModel(requestedModel, geminiApiKey);
+
+    if (requestedModel !== MODEL) {
+        console.warn(`[GeminiAPI] Model ${requestedModel || '(default)'} is unavailable; using ${MODEL}`);
+    } else if (modelId) {
+        console.log(`[GeminiAPI] Using custom model: ${MODEL}`);
     }
 
     let requestData = {

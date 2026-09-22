@@ -8,5 +8,7 @@
   "smarterFaster": "Độ chính xác thứ hai",
   "fastestAdvanced": "Mô hình 2.5 nhanh nhất",
   "balancedModel": "Cân bằng, dễ bị sub dài",
-  "fastestModel": "Nhanh nhất, dễ bị sub dài"
+  "fastestModel": "Nhanh nhất, dễ bị sub dài",
+  "loading": "Đang kiểm tra các mô hình có thể dùng...",
+  "noUsableModels": "Không có mô hình dịch đã xác minh cho API key này."
 }

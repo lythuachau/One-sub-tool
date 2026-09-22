@@ -24,6 +24,8 @@
   "seconds": "seconds",
   "noRest": "No delay",
   "waitingForNextChunk": "Waiting {{seconds}} seconds before translating the next chunk...",
+  "retryingModel": "Model {{model}} is busy. Retrying in {{seconds}} seconds...",
+  "switchingModel": "Switching to a fallback translation model...",
   "modelGemini25Pro": "output length 65536 tokens (usually no splitting needed)",
   "modelGemini25Flash": "output length 65536 tokens (usually no splitting needed)",
   "modelGemini25FlashLite": "output length 65536 tokens (usually no splitting needed)",

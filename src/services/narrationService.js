@@ -125,8 +125,8 @@ export const checkNarrationStatusWithRetry = async () => {
     }
 
     const data = await response.json();
-    if (!data.available) {
-      data.message = "Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được.";
+    if (!data.available && !data.message) {
+      data.message = data.initialization_error || "Cài VieNeu-TTS và OmniVoice rồi khởi động lại dịch vụ thuyết minh.";
     }
     return data;
   } catch (error) {
@@ -190,10 +190,8 @@ export const checkNarrationStatus = async () => {
     }
 
     const data = await response.json();
-    if (!data.available) {
-      // Using hardcoded Vietnamese message here because i18n context is not available in this service
-      // This message matches the translation key 'serviceUnavailableMessage'
-      data.message = "Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được.";
+    if (!data.available && !data.message) {
+      data.message = data.initialization_error || "Cài VieNeu-TTS và OmniVoice rồi khởi động lại dịch vụ thuyết minh.";
     }
     return data;
   } catch (error) {
@@ -205,6 +203,57 @@ export const checkNarrationStatus = async () => {
       message: "Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được."
     };
   }
+};
+
+export const getVieNeuVoices = async () => {
+  const response = await fetch(`${API_BASE_URL}/narration/voices`, {
+    method: 'GET',
+    mode: 'cors',
+    credentials: 'include',
+    headers: { 'Accept': 'application/json' }
+  });
+
+  if (!response.ok) {
+    throw new Error(`VieNeu voice list returned ${response.status}`);
+  }
+
+  return response.json();
+};
+
+export const previewVieNeuSpeech = async ({
+  text,
+  voice,
+  referenceAudio,
+  referenceText = '',
+  speechRate
+}) => {
+  const response = await fetch(`${API_BASE_URL}/narration/preview`, {
+    method: 'POST',
+    mode: 'cors',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'audio/wav'
+    },
+    body: JSON.stringify({
+      text,
+      reference_audio: referenceAudio?.filepath || referenceAudio?.path || referenceAudio?.filename || null,
+      reference_text: referenceText,
+      settings: {
+        voice: voice || undefined,
+        speechRate: speechRate ? Number(speechRate) : undefined
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `VieNeu preview returned ${response.status}`);
+  }
+
+  return new Blob([await response.arrayBuffer()], {
+    type: response.headers.get('content-type') || 'audio/wav'
+  });
 };
 
 /**

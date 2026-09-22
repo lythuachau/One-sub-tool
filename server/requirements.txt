@@ -1,6 +1,5 @@
 flask
 flask-cors
 requests
-huggingface_hub
-torch
-f5-tts
+numpy
+soundfile

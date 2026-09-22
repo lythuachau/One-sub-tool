@@ -1,7 +1,7 @@
 /**
  * Module for aligning audio segments with precise timing
  * Includes batch processing to handle large numbers of segments
- * Features smart overlap detection and resolution for natural narration
+ * Uses version 1 narration timing and overlap rules
  */
 
 const path = require('path');
@@ -25,21 +25,9 @@ const MAX_SEGMENTS_PER_BATCH = 200;
  * This function handles both F5-TTS and Gemini narrations in the same way,
  * ensuring consistent alignment and playback in the video player.
  *
- * Audio processing includes:
- * 1. Smart overlap detection and resolution to prevent narrations from talking over each other
- * 2. Individual audio segments are boosted by 1.5x for clarity
- * 3. Using amix with normalize=0 to prevent automatic volume reduction during any remaining overlaps
- *
- * The smart overlap detection:
- * - Analyzes the actual duration of each audio segment
- * - Detects when segments would naturally overlap based on their timing and duration
- * - Adjusts the timing of overlapping segments to ensure they play sequentially
- * - Maintains a small gap between segments for natural pacing
- * - Preserves the relationship with subtitle timing while ensuring comprehensibility
- *
- * The key setting is normalize=0 in the amix filter, which ensures that when audio segments
- * overlap (even partially), they maintain their full volume without any reduction.
- * By default, amix would reduce the volume of overlapping segments to prevent clipping.
+ * Audio processing fits each clip to its subtitle slot, reserves a 50ms gap,
+ * applies the version 1 overlap speed and fade limits, then mixes without a
+ * per-segment volume boost.
  *
  * For large numbers of segments, the function splits them into batches to avoid
  * ENAMETOOLONG errors when the FFmpeg command becomes too long.

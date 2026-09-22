@@ -1,0 +1,24 @@
+.voice-preview-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.voice-preview-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.voice-preview-player {
+  width: min(100%, 320px);
+  height: 36px;
+}
+
+.voice-preview-error {
+  flex-basis: 100%;
+  color: var(--md-error, #ffb4ab);
+  font-size: 0.85rem;
+}

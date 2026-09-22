@@ -6,6 +6,7 @@ import { cancelGenericVideoDownload } from '../../utils/allSitesDownloader';
 import { prepareVideoForSegments, downloadAndPrepareYouTubeVideo } from './VideoProcessingHandlers';
 import { hasValidTokens } from '../../services/youtubeApiService';
 import { hasValidDownloadedVideo } from '../../utils/videoUtils';
+import { getSubtitleEngine } from '../../services/subtitleEngineService';
 
 /**
  * Hook for application event handlers
@@ -331,7 +332,7 @@ export const useAppHandlers = (appState) => {
     }
 
     // Only check for API key - this is the minimum requirement
-    if (!apiKeysSet.gemini) {
+    if (getSubtitleEngine() === 'gemini' && !apiKeysSet.gemini) {
       console.log('No Gemini API key available');
       setStatus({ message: t('errors.apiKeyRequired', 'Gemini API key is required'), type: 'error' });
       return;

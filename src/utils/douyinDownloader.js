@@ -349,7 +349,7 @@ export const extractDouyinVideoId = (url) => {
   }
 
   // Extract ID from short URL format: https://v.douyin.com/ABC123/
-  const shortUrlMatch = url.match(/v\.douyin\.com\/([a-zA-Z0-9]+)/);
+  const shortUrlMatch = url.match(/v\.douyin\.com\/([a-zA-Z0-9_-]+)/);
   if (shortUrlMatch && shortUrlMatch[1]) {
     return shortUrlMatch[1];
   }

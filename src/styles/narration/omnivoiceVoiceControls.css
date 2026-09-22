@@ -1,0 +1,82 @@
+.omnivoice-mode-selection {
+  width: 100%;
+}
+
+.omnivoice-mode-selection .radio-pill-group {
+  flex-wrap: wrap;
+}
+
+.omnivoice-design-select {
+  width: min(100%, 360px);
+  min-height: 42px;
+  padding: 8px 14px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-1);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-pill);
+  font: inherit;
+}
+
+.omnivoice-design-select:focus {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+.omnivoice-design-row .setting-description,
+.omnivoice-auto-row .setting-description {
+  margin-top: 8px;
+}
+
+.omnivoice-design-controls {
+  width: 100%;
+}
+
+.omnivoice-design-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+  width: min(100%, 560px);
+}
+
+.omnivoice-design-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--md-on-surface-variant);
+  font-size: 0.9rem;
+}
+
+.omnivoice-design-field select {
+  min-height: 38px;
+  padding: 6px 10px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-1);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-small, 10px);
+  font: inherit;
+}
+
+.omnivoice-design-field select:focus {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+.omnivoice-instruct-preview {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 12px;
+  color: var(--md-on-surface-variant);
+  font-size: 0.85rem;
+}
+
+.omnivoice-instruct-preview code {
+  color: var(--md-primary);
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .omnivoice-design-grid {
+    grid-template-columns: 1fr;
+  }
+}

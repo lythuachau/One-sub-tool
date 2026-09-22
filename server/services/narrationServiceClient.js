@@ -31,20 +31,23 @@ const checkService = async () => {
 
     if (response.ok) {
       const statusData = await response.json();
-      if (statusData.available) {
-        return {
-          available: true,
-          device: statusData.device || 'cpu',
-          gpu_info: statusData.gpu_info || {}
-        };
-      }
+      return {
+        available: Boolean(statusData.available),
+        ready: Boolean(statusData.ready),
+        device: statusData.device || 'cpu',
+        gpu_info: statusData.gpu_info || statusData.device || {},
+        engine: statusData.engine || 'vieneu',
+        models: statusData.models || {},
+        initialization_error: statusData.initialization_error || null,
+        message: statusData.initialization_error || null
+      };
     }
 
     // Service not available
-    return { available: false, device: 'none', gpu_info: {} };
+    return { available: false, device: 'none', gpu_info: {}, message: 'VieNeu-TTS service returned an invalid status' };
   } catch (error) {
     // Error connecting to service
-    return { available: false, device: 'none', gpu_info: {} };
+    return { available: false, device: 'none', gpu_info: {}, message: error.message };
   }
 };
 

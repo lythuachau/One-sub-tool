@@ -9,6 +9,7 @@ import { createConsolidationSchema, addResponseSchema } from '../../utils/schema
 import { getDefaultConsolidatePrompt } from './promptManagement';
 import { createRequestController, removeRequestController } from './requestManagement';
 import { processStructuredJsonResponse, processTextResponse } from './responseProcessingService';
+import { resolveGeminiModel } from './modelDiscovery';
 
 /**
  * Consolidate document from subtitles text
@@ -18,7 +19,8 @@ import { processStructuredJsonResponse, processTextResponse } from './responsePr
  * @param {number} splitDuration - Duration in minutes for each chunk (0 = no split)
  * @returns {Promise<string>} - Completed document text
  */
-export const completeDocument = async (subtitlesText, model = 'gemini-2.0-flash', customPrompt = null, splitDuration = 0) => {
+export const completeDocument = async (subtitlesText, model = '', customPrompt = null, splitDuration = 0) => {
+    model = await resolveGeminiModel(model || localStorage.getItem('gemini_model') || '');
     if (!subtitlesText || subtitlesText.trim() === '') {
         throw new Error('No text to process');
     }

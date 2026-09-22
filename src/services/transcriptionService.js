@@ -2,6 +2,8 @@
  * Transcription service for voice recognition using Gemini API
  */
 
+import { resolveGeminiModel } from './gemini/modelDiscovery';
+
 // No need to import API_BASE_URL as it's not used in this file
 
 /**
@@ -129,9 +131,11 @@ export const transcribeAudio = async (audioBlob) => {
     const base64Audio = await blobToBase64(audioBlob);
     console.timeLog('transcribeAudio', 'Blob to base64 conversion');
 
+    const model = await resolveGeminiModel(localStorage.getItem('gemini_model') || '');
+
     // Prepare request data for transcription
     const requestData = {
-      model: "gemini-2.0-flash-lite",
+      model,
       contents: [
         {
           role: "user",

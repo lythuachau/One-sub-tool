@@ -1,7 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FiChevronDown, FiStar, FiZap, FiCpu, FiTrendingUp, FiActivity } from 'react-icons/fi';
+import { FiChevronDown, FiStar, FiZap, FiCpu, FiTrendingUp } from 'react-icons/fi';
 import '../styles/ModelDropdown.css';
+import { useGeminiModels } from '../hooks/useGeminiModels';
+import { getGeminiModelLabel } from '../services/gemini/modelDiscovery';
 
 /**
  * Reusable component for model selection dropdown
@@ -17,7 +19,7 @@ import '../styles/ModelDropdown.css';
  */
 const ModelDropdown = ({
   onModelSelect,
-  selectedModel = 'gemini-2.5-flash',
+  selectedModel = 'gemini-flash-latest',
   buttonClassName = '',
   label = '',
   headerText,
@@ -25,66 +27,46 @@ const ModelDropdown = ({
   disabled = false
 }) => {
   const { t } = useTranslation();
+  const { models, isLoading, error } = useGeminiModels();
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
   const dropdownRef = useRef(null);
 
-  // Model options with their icons and colors
-  const modelOptions = [
-    {
-      id: 'gemini-2.5-pro',
-      name: t('models.gemini25Pro', 'Gemini 2.5 Pro'),
-      description: isTranslationSection
-        ? t('translation.modelGemini25Pro', 'output length 65536 tokens (usually no splitting needed)')
-        : t('models.bestAccuracy', 'Best accuracy'),
-      icon: <FiStar className="model-icon star-icon" />,
-      color: 'var(--md-tertiary)',
-      bgColor: 'rgba(var(--md-tertiary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.5-flash',
-      name: t('models.gemini25Flash', 'Gemini 2.5 Flash'),
-      description: isTranslationSection
-        ? t('translation.modelGemini25Flash', 'output length 65536 tokens (usually no splitting needed)')
-        : t('models.smarterFaster', 'Smarter & faster'),
-      icon: <FiZap className="model-icon zap-icon" style={{ color: 'var(--md-tertiary)' }} />,
-      color: 'var(--md-tertiary)',
-      bgColor: 'rgba(var(--md-tertiary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.5-flash-lite-preview-06-17',
-      name: t('models.gemini25FlashLite', 'Gemini 2.5 Flash Lite'),
-      description: isTranslationSection
-        ? t('translation.modelGemini25FlashLite', 'output length 65536 tokens (usually no splitting needed)')
-        : t('models.fastestAdvanced', 'Fastest 2.5 model'),
-      icon: <FiTrendingUp className="model-icon trending-icon" style={{ color: 'var(--md-tertiary)' }} />,
-      color: 'var(--md-tertiary)',
-      bgColor: 'rgba(var(--md-tertiary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.0-flash',
-      name: t('models.gemini20Flash', 'Gemini 2.0 Flash'),
-      description: isTranslationSection
-        ? t('translation.modelGemini20Flash', 'output length 8192 tokens (splitting recommended)')
-        : t('models.balancedModel', 'Balanced'),
-      icon: <FiActivity className="model-icon activity-icon" />,
-      color: 'var(--md-primary)',
-      bgColor: 'rgba(var(--md-primary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.0-flash-lite',
-      name: t('models.gemini20FlashLite', 'Gemini 2.0 Flash Lite'),
-      description: isTranslationSection
-        ? t('translation.modelGemini20FlashLite', 'output length 8192 tokens (splitting recommended)')
-        : t('models.fastestModel', 'Fastest'),
-      icon: <FiCpu className="model-icon cpu-icon" />,
-      color: 'var(--success-color)',
-      bgColor: 'rgba(var(--success-color-rgb), 0.1)'
-    }
-  ];
+  const modelOptions = models
+    .map((model) => {
+      const id = model.id;
+      const isPro = id.includes('pro');
+      const isLite = id.includes('lite');
+      const isFlash = id.includes('flash');
+
+      return {
+        ...model,
+        id,
+        name: getGeminiModelLabel(model),
+        description: isTranslationSection
+          ? t('translation.dynamicModelDescription', 'Provider model supporting generateContent')
+          : (model.description || t('models.dynamicModel', 'Detected from the active API key')),
+        icon: isPro
+          ? <FiStar className="model-icon star-icon" />
+          : isLite
+            ? <FiTrendingUp className="model-icon trending-icon" />
+            : isFlash
+              ? <FiZap className="model-icon zap-icon" />
+              : <FiCpu className="model-icon cpu-icon" />,
+        color: isPro ? 'var(--md-tertiary)' : 'var(--md-primary)',
+        bgColor: isPro ? 'rgba(var(--md-tertiary-rgb), 0.1)' : 'rgba(var(--md-primary-rgb), 0.1)'
+      };
+    });
 
   // Get the currently selected model
-  const currentModel = modelOptions.find(model => model.id === selectedModel) || modelOptions[2]; // Default to Flash
+  const currentModel = modelOptions.find(model => model.id === selectedModel) || modelOptions[0];
+  const modelUnavailable = isLoading || modelOptions.length === 0;
+
+  useEffect(() => {
+    if (modelOptions.length > 0 && !modelOptions.some((model) => model.id === selectedModel)) {
+      onModelSelect(modelOptions[0].id);
+    }
+  }, [modelOptions, onModelSelect, selectedModel]);
 
   // Position the dropdown relative to the button
   const positionDropdown = useCallback(() => {
@@ -99,7 +81,7 @@ const ModelDropdown = ({
     // Ensure the dropdown doesn't go off-screen to the right
     const rightEdge = buttonRect.right;
     const windowWidth = window.innerWidth;
-    const dropdownWidth = 240; // Width from CSS
+    const dropdownWidth = window.innerWidth <= 768 ? 220 : 380;
 
     if (rightEdge + dropdownWidth > windowWidth) {
       // Position to the left of the button's right edge
@@ -118,11 +100,11 @@ const ModelDropdown = ({
     e.stopPropagation();
 
     // Don't open if disabled
-    if (disabled) return;
+    if (disabled || isLoading || modelOptions.length === 0) return;
 
     // Toggle dropdown state
     setIsOpen(prev => !prev);
-  }, [disabled]);
+  }, [disabled, isLoading, modelOptions.length]);
 
   // Handle model selection
   const handleModelSelect = useCallback((e, modelId) => {
@@ -171,18 +153,22 @@ const ModelDropdown = ({
   return (
     <div className={`model-dropdown-container ${isOpen ? 'dropdown-open' : ''}`}>
       <button
-        className={`model-dropdown-btn ${buttonClassName} ${isOpen ? 'active-dropdown-btn' : ''} ${disabled ? 'disabled' : ''}`}
+        className={`model-dropdown-btn ${buttonClassName} ${isOpen ? 'active-dropdown-btn' : ''} ${disabled || modelUnavailable ? 'disabled' : ''}`}
         onClick={handleButtonClick}
-        title={disabled ? t('common.disabled', 'Disabled during translation') : t('common.selectModel', 'Select model')}
+        title={disabled ? t('common.disabled', 'Disabled during translation') : isLoading ? t('models.loading', 'Checking available models...') : error ? t('models.noUsableModels', 'No verified models available') : t('common.selectModel', 'Select model')}
         ref={buttonRef}
         aria-haspopup="true"
         aria-expanded={isOpen}
-        disabled={disabled}
+        disabled={disabled || isLoading || modelOptions.length === 0}
       >
         {label && <span className="model-dropdown-label">{label}</span>}
         <span className="model-dropdown-selected">
-          {currentModel.icon}
-          <span className="model-name">{currentModel.name}</span>
+          {currentModel?.icon || <FiCpu className="model-icon cpu-icon" />}
+          <span className="model-name">
+            {currentModel?.name || (isLoading
+              ? t('models.loading', 'Checking available models...')
+              : t('models.noUsableModels', 'No verified models available'))}
+          </span>
         </span>
         <FiChevronDown size={14} className="dropdown-icon" />
       </button>
@@ -197,6 +183,13 @@ const ModelDropdown = ({
             {headerText || t('common.selectModel', 'Select model')}
           </div>
           <div className="model-options-list">
+            {modelOptions.length === 0 && (
+              <div className="model-options-empty">
+                {isLoading
+                  ? t('models.loading', 'Checking available models...')
+                  : t('models.noUsableModels', 'No verified translation models are available for this API key.')}
+              </div>
+            )}
             {modelOptions.map((model) => (
               <button
                 key={model.id}

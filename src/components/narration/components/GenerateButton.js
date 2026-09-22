@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next';
  * @param {Function} props.cancelGeneration - Function to cancel narration generation
  * @param {string|null} props.subtitleSource - The selected subtitle source
  * @param {boolean} props.isServiceAvailable - Whether the narration service is available
+ * @param {boolean} props.requiresReferenceAudio - Whether the selected mode needs reference audio
  * @param {string} props.serviceUnavailableMessage - Message to show when service is unavailable
  * @returns {JSX.Element} - Rendered component
  */
@@ -26,9 +27,11 @@ const GenerateButton = ({
   cancelGeneration,
   subtitleSource,
   isServiceAvailable = true,
+  requiresReferenceAudio = true,
   serviceUnavailableMessage = ''
 }) => {
   const { t } = useTranslation();
+  const missingReferenceAudio = requiresReferenceAudio && !referenceAudio;
 
   return (
     <div className="narration-row generate-button-row">
@@ -50,11 +53,11 @@ const GenerateButton = ({
             <button
               className="pill-button primary"
               onClick={handleGenerateNarration}
-              disabled={(referenceAudio !== null && !referenceAudio) || !subtitleSource || !isServiceAvailable}
+              disabled={missingReferenceAudio || !subtitleSource || !isServiceAvailable}
               title={
                 !isServiceAvailable ? serviceUnavailableMessage :
                 !subtitleSource ? t('narration.noSourceSelectedError', 'Please select a subtitle source (Original or Translated)') :
-                (referenceAudio !== null && !referenceAudio) ? t('narration.noReferenceAudioError', 'Please upload or record reference audio') : ''
+                missingReferenceAudio ? t('narration.noReferenceAudioError', 'Please upload or record reference audio') : ''
               }
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

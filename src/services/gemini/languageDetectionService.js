@@ -4,6 +4,7 @@
 
 import { createLanguageDetectionSchema, addResponseSchema } from '../../utils/schemaUtils';
 import i18n from '../../i18n/i18n';
+import { resolveGeminiModel } from './modelDiscovery';
 
 /**
  * Detect language of text using Gemini API
@@ -12,7 +13,8 @@ import i18n from '../../i18n/i18n';
  * @param {string} model - Gemini model to use
  * @returns {Promise<Object>} - Language detection result
  */
-export const detectSubtitleLanguage = async (subtitles, source = 'original', model = 'gemini-2.0-flash-lite') => {
+export const detectSubtitleLanguage = async (subtitles, source = 'original', model = '') => {
+    model = await resolveGeminiModel(model || localStorage.getItem('gemini_model') || '');
     if (!subtitles || subtitles.length === 0) {
 
         return {

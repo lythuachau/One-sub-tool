@@ -24,6 +24,8 @@
   "seconds": "초",
   "noRest": "지연 없음",
   "waitingForNextChunk": "다음 청크를 번역하기 전에 {{seconds}}초 대기 중...",
+  "retryingModel": "모델 {{model}} 사용량이 많습니다. {{seconds}}초 후 다시 시도합니다...",
+  "switchingModel": "대체 번역 모델로 전환합니다...",
   "modelGemini25Pro": "출력 길이 65536 토큰 (일반적으로 분할 필요 없음)",
   "modelGemini25Flash": "출력 길이 65536 토큰 (일반적으로 분할 필요 없음)",
   "modelGemini25FlashLite": "출력 길이 65536 토큰 (일반적으로 분할 필요 없음)",

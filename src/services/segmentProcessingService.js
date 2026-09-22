@@ -64,7 +64,7 @@ export async function processSegment(segment, segmentIndex, startTime, segmentCa
             if (modelId) {
                 console.log(`[SegmentRetry] Using custom model for segment ${segmentIndex + 1}: ${modelId}`);
             } else {
-                console.log(`[SegmentRetry] Using default model for segment ${segmentIndex + 1}: ${localStorage.getItem('gemini_model') || 'gemini-2.5-flash'}`);
+                console.log(`[SegmentRetry] Using default model for segment ${segmentIndex + 1}: ${localStorage.getItem('gemini_model') || 'gemini-flash-latest'}`);
             }
 
             // Get the total duration from the parent if available

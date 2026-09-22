@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { generateChatterboxSpeech, checkChatterboxAvailability, isChatterboxServiceInitialized } from '../../../services/chatterboxService';
 import { SERVER_URL } from '../../../config';
 
@@ -22,7 +22,7 @@ const cleanupOldSubtitleDirectories = async (groupedSubtitles) => {
 };
 
 /**
- * Custom hook for Chatterbox narration generation
+ * Custom hook for OmniVoice narration generation
  * @param {Object} params - Hook parameters
  * @param {Function} params.setIsGenerating - Function to set generation state
  * @param {Function} params.setGenerationStatus - Function to set generation status
@@ -63,7 +63,10 @@ const useChatterboxNarration = ({
   translatedLanguage,
   exaggeration,
   cfgWeight,
+  omnivoiceMode,
+  omnivoiceInstruct,
   referenceAudio,
+  referenceText,
   useGroupedSubtitles,
   setUseGroupedSubtitles,
   groupedSubtitles,
@@ -74,9 +77,6 @@ const useChatterboxNarration = ({
   t,
   setRetryingSubtitleId
 }) => {
-  // Track error state locally
-  const [localError, setLocalError] = useState('');
-
   /**
    * Get the selected subtitles based on current settings
    */
@@ -204,7 +204,11 @@ const useChatterboxNarration = ({
         exaggeration,
         cfgWeight,
         voiceFile,
-        voiceFilePath
+        voiceFilePath,
+        referenceAudio?.text || referenceText || '',
+        omnivoiceMode,
+        omnivoiceInstruct,
+        subtitleSource === 'translated' ? translatedLanguage : originalLanguage
       );
 
       // Save audio blob to server and get filename
@@ -217,7 +221,7 @@ const useChatterboxNarration = ({
         end_time: subtitle.end,
         filename: filename,
         success: true,
-        method: 'chatterbox'
+        method: 'omnivoice'
       };
     } catch (error) {
       console.error(`Error generating narration for subtitle ${index}:`, error);
@@ -229,10 +233,10 @@ const useChatterboxNarration = ({
         end_time: subtitle.end,
         success: false,
         error: error.message,
-        method: 'chatterbox'
+        method: 'omnivoice'
       };
     }
-  }, [exaggeration, cfgWeight, t, setGenerationStatus]);
+  }, [exaggeration, cfgWeight, referenceAudio, referenceText, omnivoiceMode, omnivoiceInstruct, subtitleSource, translatedLanguage, originalLanguage, saveAudioBlobToServer, t, setGenerationStatus]);
 
   /**
    * Handle Chatterbox narration generation
@@ -245,7 +249,6 @@ const useChatterboxNarration = ({
 
       setIsGenerating(true);
       setError('');
-      setLocalError('');
       setGenerationResults([]);
 
       // Check if Chatterbox service is initialized, if not, show warming up message
@@ -265,13 +268,15 @@ const useChatterboxNarration = ({
         throw new Error(t('narration.noSubtitlesError', 'No subtitles available for narration'));
       }
 
-      // Get reference audio - now required for all Chatterbox generation
-      const voiceFilePath = getReferenceAudioPath();
-      const voiceFile = voiceFilePath ? null : await getReferenceAudioFile();
+      const needsReferenceAudio = omnivoiceMode === 'reference';
+      const voiceFilePath = needsReferenceAudio ? getReferenceAudioPath() : null;
+      const voiceFile = needsReferenceAudio && !voiceFilePath ? await getReferenceAudioFile() : null;
 
-      // Validate that reference audio is provided
-      if (!voiceFile && !voiceFilePath) {
+      if (needsReferenceAudio && !voiceFile && !voiceFilePath) {
         throw new Error(t('narration.chatterboxNoReferenceAudio', 'Reference audio is required for Chatterbox TTS generation. Please upload a reference audio file.'));
+      }
+      if (omnivoiceMode === 'design' && !omnivoiceInstruct.trim()) {
+        throw new Error(t('narration.omnivoiceNoDesign', 'Please choose a voice design before generating narration.'));
       }
 
       setGenerationStatus(t('narration.chatterboxStarting', 'Starting Chatterbox narration generation...'));
@@ -334,7 +339,7 @@ const useChatterboxNarration = ({
               filename: result.filename,
               success: result.success,
               text: result.text,
-              method: 'chatterbox'
+              method: 'omnivoice'
             })),
             referenceAudio: referenceAudio ? {
               filename: referenceAudio.filename,
@@ -387,7 +392,6 @@ const useChatterboxNarration = ({
       setError(t('narration.chatterboxGenerationError', 'Error generating narration with Chatterbox: {{error}}', {
         error: error.message
       }));
-      setLocalError(error.message);
     } finally {
       setIsGenerating(false);
     }
@@ -397,9 +401,17 @@ const useChatterboxNarration = ({
     setGenerationResults,
     getSelectedSubtitles,
     getReferenceAudioFile,
+    getReferenceAudioPath,
     generateSingleNarration,
     setGenerationStatus,
-    t
+    t,
+    omnivoiceMode,
+    omnivoiceInstruct,
+    useGroupedSubtitles,
+    groupedSubtitles,
+    setUseGroupedSubtitles,
+    subtitleSource,
+    referenceAudio
   ]);
 
   /**
@@ -409,7 +421,6 @@ const useChatterboxNarration = ({
     setIsGenerating(false);
     setGenerationStatus('');
     setError('');
-    setLocalError('');
   }, [setIsGenerating, setGenerationStatus, setError]);
 
   /**
@@ -426,8 +437,10 @@ const useChatterboxNarration = ({
         throw new Error('Subtitle not found for retry');
       }
 
-      const voiceFile = await getReferenceAudioFile();
-      const result = await generateSingleNarration(subtitle, 0, 1, voiceFile);
+      const needsReferenceAudio = omnivoiceMode === 'reference';
+      const voiceFilePath = needsReferenceAudio ? getReferenceAudioPath() : null;
+      const voiceFile = needsReferenceAudio && !voiceFilePath ? await getReferenceAudioFile() : null;
+      const result = await generateSingleNarration(subtitle, 0, 1, voiceFile, voiceFilePath);
 
       // Update the specific result in the array
       setGenerationResults(prevResults => 
@@ -444,7 +457,7 @@ const useChatterboxNarration = ({
     } finally {
       setRetryingSubtitleId(null);
     }
-  }, [setRetryingSubtitleId, getSelectedSubtitles, getReferenceAudioFile, generateSingleNarration, setGenerationResults, setError, t]);
+  }, [setRetryingSubtitleId, getSelectedSubtitles, getReferenceAudioFile, getReferenceAudioPath, generateSingleNarration, setGenerationResults, setError, t, omnivoiceMode]);
 
   /**
    * Retry all failed Chatterbox narrations
@@ -459,14 +472,16 @@ const useChatterboxNarration = ({
         return;
       }
 
-      const voiceFile = await getReferenceAudioFile();
+      const needsReferenceAudio = omnivoiceMode === 'reference';
+      const voiceFilePath = needsReferenceAudio ? getReferenceAudioPath() : null;
+      const voiceFile = needsReferenceAudio && !voiceFilePath ? await getReferenceAudioFile() : null;
       const selectedSubtitles = getSelectedSubtitles();
 
       for (const failedResult of failedResults) {
         const subtitle = selectedSubtitles.find(s => (s.id || selectedSubtitles.indexOf(s)) === failedResult.subtitle_id);
         
         if (subtitle) {
-          const result = await generateSingleNarration(subtitle, 0, 1, voiceFile);
+          const result = await generateSingleNarration(subtitle, 0, 1, voiceFile, voiceFilePath);
           
           // Update the specific result
           setGenerationResults(prevResults => 
@@ -485,7 +500,7 @@ const useChatterboxNarration = ({
     } finally {
       setIsGenerating(false);
     }
-  }, [setIsGenerating, generationResults, getReferenceAudioFile, getSelectedSubtitles, generateSingleNarration, setGenerationResults, setError, t]);
+  }, [setIsGenerating, generationResults, getReferenceAudioFile, getReferenceAudioPath, getSelectedSubtitles, generateSingleNarration, setGenerationResults, setError, t, omnivoiceMode]);
 
   return {
     handleChatterboxNarration,

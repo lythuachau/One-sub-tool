@@ -13,6 +13,21 @@ import { analyzeVideoAndWaitForUserChoice } from './analysisUtils';
 import { setCurrentCacheId as setRulesCacheId, setTranscriptionRules } from '../transcriptionRulesStore';
 import { setCurrentCacheId as setSubtitlesCacheId } from '../userSubtitlesStore';
 import { API_BASE_URL } from '../../config';
+import {
+  getSubtitleEngine,
+  normalizeGeminiSubtitles,
+  transcribeWithWhisper
+} from '../../services/subtitleEngineService';
+
+const processGeminiMedia = async (mediaFile, onStatusUpdate, t, options, duration) => {
+  const subtitles = await callGeminiApi(mediaFile, 'file-upload', options);
+  return normalizeGeminiSubtitles(mediaFile, subtitles, duration, (status) => {
+    onStatusUpdate({
+      ...status,
+      message: t('output.timestampNormalizationComplete', status.message)
+    });
+  });
+};
 
 /**
  * Apply default settings when video analysis is disabled or fails
@@ -40,6 +55,10 @@ const applyDefaultSettings = () => {
 export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = {}) => {
   const { userProvidedSubtitles } = options;
   const isAudio = mediaFile.type.startsWith('audio/');
+
+  if (getSubtitleEngine() === 'whisper') {
+    return transcribeWithWhisper(mediaFile, {}, onStatusUpdate);
+  }
 
   // Video optimization is now always enabled
   const optimizedResolution = localStorage.getItem('optimized_resolution') || '360p'; // Default to 360p
@@ -78,7 +97,7 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
           });
         }
 
-        return await callGeminiApi(optimizedFile, 'file-upload', { userProvidedSubtitles });
+        return await processGeminiMedia(optimizedFile, onStatusUpdate, t, { userProvidedSubtitles }, await getVideoDuration(optimizedFile));
       }
 
       try {
@@ -92,7 +111,7 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
         });
 
 
-        return await callGeminiApi(optimizedFile, 'file-upload', { userProvidedSubtitles });
+        return await processGeminiMedia(optimizedFile, onStatusUpdate, t, { userProvidedSubtitles }, await getVideoDuration(optimizedFile));
       } catch (analysisError) {
         console.error('Error analyzing video:', analysisError);
         // Apply default settings when video analysis fails
@@ -103,7 +122,7 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
         });
 
         // Continue with processing without analysis
-        return await callGeminiApi(optimizedFile, 'file-upload', { userProvidedSubtitles });
+        return await processGeminiMedia(optimizedFile, onStatusUpdate, t, { userProvidedSubtitles }, await getVideoDuration(optimizedFile));
       }
     } catch (error) {
       console.error('Error optimizing video:', error);
@@ -131,12 +150,12 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
       });
       // Fall back to using the original file
 
-      return await callGeminiApi(mediaFile, 'file-upload', { userProvidedSubtitles });
+      return await processGeminiMedia(mediaFile, onStatusUpdate, t, { userProvidedSubtitles }, await getVideoDuration(mediaFile));
     }
   } else {
     // For audio or when optimization is disabled, process directly
 
-    return await callGeminiApi(mediaFile, 'file-upload', { userProvidedSubtitles });
+    return await processGeminiMedia(mediaFile, onStatusUpdate, t, { userProvidedSubtitles }, await getVideoDuration(mediaFile));
   }
 };
 
@@ -151,6 +170,15 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
 export const processLongVideo = async (mediaFile, onStatusUpdate, t, options = {}) => {
   // Extract options
   const { userProvidedSubtitles } = options;
+
+  if (getSubtitleEngine() === 'whisper') {
+    localStorage.setItem('video_processing_in_progress', 'true');
+    try {
+      return await transcribeWithWhisper(mediaFile, {}, onStatusUpdate);
+    } finally {
+      localStorage.removeItem('video_processing_in_progress');
+    }
+  }
 
   // Set cache ID for the current video
   const cacheId = getCacheIdForMedia(mediaFile);

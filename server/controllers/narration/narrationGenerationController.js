@@ -40,7 +40,7 @@ const generateNarration = async (req, res) => {
 
       return res.status(503).json({
         success: false,
-        error: 'Narration service is not available. Please use npm run dev:cuda to start with Python narration service.'
+        error: serviceStatus.message || 'VieNeu-TTS service is not available. Install the TTS engines and restart the narration services.'
       });
     }
 
@@ -86,6 +86,11 @@ const getNarrationStatus = async (req, res) => {
 
   res.json({
     available: serviceStatus.available,
+    ready: serviceStatus.ready,
+    engine: serviceStatus.engine || 'vieneu',
+    initialization_error: serviceStatus.initialization_error || null,
+    message: serviceStatus.message || null,
+    models: serviceStatus.models || {},
     device: serviceStatus.device,
     source: serviceStatus.available ? 'actual' : 'none',
     actualPort: narrationServiceClient.getNarrationPort(),

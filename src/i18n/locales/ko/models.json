@@ -8,5 +8,7 @@
   "smarterFaster": "더 스마트하고 빠름",
   "fastestAdvanced": "가장 빠른 2.5 모델",
   "balancedModel": "균형 잡힌",
-  "fastestModel": "가장 빠름"
+  "fastestModel": "가장 빠름",
+  "loading": "사용 가능한 모델을 확인하는 중...",
+  "noUsableModels": "이 API 키로 확인된 번역 모델이 없습니다."
 }

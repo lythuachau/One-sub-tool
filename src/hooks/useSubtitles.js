@@ -6,6 +6,7 @@ import { extractYoutubeVideoId } from '../utils/videoDownloader';
 import { getVideoDuration, processLongVideo, retrySegmentProcessing } from '../utils/videoProcessor';
 import { setCurrentCacheId as setRulesCacheId } from '../utils/transcriptionRulesStore';
 import { setCurrentCacheId as setSubtitlesCacheId } from '../utils/userSubtitlesStore';
+import { getSubtitleEngine, transcribeWithWhisper } from '../services/subtitleEngineService';
 
 /**
  * Generate a consistent cache ID from any video URL
@@ -129,7 +130,8 @@ export const useSubtitles = (t) => {
     const generateSubtitles = useCallback(async (input, inputType, apiKeysSet, options = {}) => {
         // Extract options
         const { userProvidedSubtitles } = options;
-        if (!apiKeysSet.gemini) {
+        const subtitleEngine = getSubtitleEngine();
+        if (subtitleEngine === 'gemini' && !apiKeysSet.gemini) {
             setStatus({ message: t('errors.apiKeyRequired'), type: 'error' });
             return false;
         }
@@ -193,6 +195,13 @@ export const useSubtitles = (t) => {
                 }
             }
 
+            if (cacheId && subtitleEngine === 'whisper') {
+                cacheId = `${cacheId}_whisper`;
+                if (inputType === 'file-upload') localStorage.setItem('current_file_cache_id', cacheId);
+                setRulesCacheId(cacheId);
+                setSubtitlesCacheId(cacheId);
+            }
+
             // Check cache with URL validation
             if (cacheId) {
                 const cachedSubtitles = await checkCachedSubtitles(cacheId, currentVideoUrl);
@@ -233,10 +242,15 @@ export const useSubtitles = (t) => {
                 } catch (error) {
                     console.error('Error checking media duration:', error);
                     // Fallback to normal processing
-                    subtitles = await callGeminiApi(input, inputType, { userProvidedSubtitles });
+                    subtitles = subtitleEngine === 'whisper'
+                        ? await transcribeWithWhisper(input, {}, setStatus)
+                        : await callGeminiApi(input, inputType, { userProvidedSubtitles });
                 }
             } else {
                 // Normal processing for YouTube
+                if (subtitleEngine === 'whisper') {
+                    throw new Error('Whisper requires a local video or audio file.');
+                }
                 subtitles = await callGeminiApi(input, inputType, { userProvidedSubtitles });
             }
 
@@ -248,7 +262,7 @@ export const useSubtitles = (t) => {
             }
 
             // Check if using a strong model (Gemini 2.5 Pro or Gemini 2.0 Flash Thinking)
-            const currentModel = localStorage.getItem('gemini_model') || 'gemini-2.0-flash';
+            const currentModel = localStorage.getItem('gemini_model') || 'gemini-flash-latest';
             const strongModels = ['gemini-2.5-pro', 'gemini-2.0-flash-thinking-exp-01-21'];
             const isUsingStrongModel = strongModels.includes(currentModel);
 
@@ -339,7 +353,8 @@ export const useSubtitles = (t) => {
     const retryGeneration = useCallback(async (input, inputType, apiKeysSet, options = {}) => {
         // Extract options
         const { userProvidedSubtitles } = options;
-        if (!apiKeysSet.gemini) {
+        const subtitleEngine = getSubtitleEngine();
+        if (subtitleEngine === 'gemini' && !apiKeysSet.gemini) {
             setStatus({ message: t('errors.apiKeyRequired'), type: 'error' });
             return false;
         }
@@ -374,10 +389,15 @@ export const useSubtitles = (t) => {
                 } catch (error) {
                     console.error('Error checking media duration:', error);
                     // Fallback to normal processing
-                    subtitles = await callGeminiApi(input, inputType, { userProvidedSubtitles });
+                    subtitles = subtitleEngine === 'whisper'
+                        ? await transcribeWithWhisper(input, {}, setStatus)
+                        : await callGeminiApi(input, inputType, { userProvidedSubtitles });
                 }
             } else {
                 // Normal processing for YouTube
+                if (subtitleEngine === 'whisper') {
+                    throw new Error('Whisper requires a local video or audio file.');
+                }
                 subtitles = await callGeminiApi(input, inputType, { userProvidedSubtitles });
             }
 
@@ -403,6 +423,7 @@ export const useSubtitles = (t) => {
             } else if (inputType === 'file-upload') {
                 // For actual file uploads, use file-based cache ID
                 cacheId = await generateFileCacheId(input);
+                if (subtitleEngine === 'whisper') cacheId = `${cacheId}_whisper`;
                 localStorage.setItem('current_file_cache_id', cacheId);
 
                 if (cacheId && subtitles && subtitles.length > 0) {
@@ -416,7 +437,7 @@ export const useSubtitles = (t) => {
             }
 
             // Check if using a strong model (Gemini 2.5 Pro or Gemini 2.0 Flash Thinking)
-            const currentModel = localStorage.getItem('gemini_model') || 'gemini-2.0-flash';
+            const currentModel = localStorage.getItem('gemini_model') || 'gemini-flash-latest';
             const strongModels = ['gemini-2.5-pro', 'gemini-2.0-flash-thinking-exp-01-21'];
             const isUsingStrongModel = strongModels.includes(currentModel);
 

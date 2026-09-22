@@ -5,6 +5,7 @@
 import { fileToBase64 } from '../utils/fileUtils';
 import { createVideoAnalysisSchema, addResponseSchema } from '../utils/schemaUtils';
 import { addThinkingConfig } from '../utils/thinkingBudgetUtils';
+import { resolveGeminiModel } from './gemini/modelDiscovery';
 import i18n from '../i18n/i18n';
 
 // Translation function shorthand
@@ -101,7 +102,11 @@ export const analyzeVideoWithGemini = async (videoFile, onStatusUpdate) => {
     }
 
     // Get the selected model from localStorage or use the default
-    const MODEL = localStorage.getItem('video_analysis_model') || "gemini-2.0-flash";
+    const requestedModel = localStorage.getItem('video_analysis_model') || '';
+    const MODEL = await resolveGeminiModel(requestedModel);
+    if (requestedModel !== MODEL) {
+      console.warn(`[VideoAnalysis] Model ${requestedModel || '(default)'} is unavailable; using ${MODEL}`);
+    }
 
     // Get video duration
     onStatusUpdate({ message: t('input.preparingVideoAnalysis', 'Preparing video for analysis...'), type: 'loading' });

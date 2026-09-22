@@ -118,7 +118,7 @@
   "saveError": "Error saving audio to server",
 
   "narrationMethod": "Narration Method",
-  "f5ttsMethod": "F5-TTS",
+  "f5ttsMethod": "VieNeu-TTS",
   "geminiMethod": "Gemini",
 
   "alignedMode": "Use Aligned Narration",
@@ -166,9 +166,9 @@
   "speedModifySuccess": "Narration speed successfully changed to {{speed}}x",
   "speedModifyError": "Error changing narration speed: {{error}}",
 
-  "chatterboxMethod": "Chatterbox",
-  "chatterboxUnavailable": "(Unavailable - Run with npm run dev:cuda)",
-  "chatterboxUnavailableMessage": "Chatterbox service not started (use npm run dev:cuda)",
+  "chatterboxMethod": "OmniVoice",
+  "chatterboxUnavailable": "(Unavailable - install OmniVoice)",
+  "chatterboxUnavailableMessage": "OmniVoice is not ready. Install the TTS dependencies and restart the service.",
   "exaggeration": "Emotional Intensity",
   "exaggerationTooltip": "Controls emotional intensity of the voice (0.25-2.0, neutral=0.5)",
   "exaggerationDesc": "Higher values increase emotional expression",
@@ -221,5 +221,10 @@
   "cancel": "Cancel",
   "clear": "Clear",
   "recommendedVoices": "Recommended for {{language}}",
-  "recommendedLanguage": "Recommended for {{language}}"
+  "recommendedLanguage": "Recommended for {{language}}",
+  "voicePreview": "Preview voice",
+  "voicePreviewLoading": "Creating preview...",
+  "voicePreviewText": "Hello, this is a preview of the current narration voice.",
+  "voicePreviewEmpty": "No preview audio was returned.",
+  "voicePreviewError": "Could not create the voice preview."
 }

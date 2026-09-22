@@ -342,5 +342,17 @@
   "concurrentClients": "Khách hàng Đồng thời",
   "concurrentClientsDescription": "Số lượng yêu cầu API đồng thời để xử lý song song. Giá trị cao hơn tăng tốc độ nhưng có thể đạt giới hạn tốc độ.",
   "resolution240p": "240p (Nhanh nhất, tệp nhỏ nhất)",
-  "resolution360p": "360p (Khuyến nghị cho Gemini)"
+  "resolution360p": "360p (Khuyến nghị cho Gemini)",
+  "checkModels": "Kiểm tra models",
+  "checkModelsTooltip": "Kiểm tra các model Gemini khả dụng với API key hiện tại",
+  "checkingModels": "Đang kiểm tra...",
+  "modelCheckTitle": "Trạng thái model",
+  "modelCheckRunning": "Đang kiểm tra model bằng API key hiện tại...",
+  "modelCheckMissingKey": "Hãy thêm Gemini API key trước khi kiểm tra model.",
+  "modelCheckFailed": "Không thể kiểm tra model",
+  "modelsAvailable": "model hoạt động",
+  "subtitleEngine": "Bộ máy tạo phụ đề",
+  "subtitleEngineDescription": "Chọn Gemini với chuẩn hóa timestamp hoặc Faster-Whisper chạy cục bộ.",
+  "subtitleEngineGemini": "Gemini + timestamp chuẩn hóa",
+  "subtitleEngineWhisper": "Whisper (Faster-Whisper)"
 }

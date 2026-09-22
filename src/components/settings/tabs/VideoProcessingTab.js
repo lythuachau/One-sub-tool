@@ -1,14 +1,18 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import StandardSlider from '../../common/StandardSlider';
 import { SegmentsIcon, VideoAnalysisIcon, OptimizationIcon, DisplayIcon } from '../icons/TabIcons';
 import { FiCpu } from 'react-icons/fi';
 import MaterialSwitch from '../../common/MaterialSwitch';
 import '../../../styles/common/material-switch.css';
+import { useGeminiModels } from '../../../hooks/useGeminiModels';
+import { getGeminiModelLabel, resolveGeminiModel } from '../../../services/gemini/modelDiscovery';
 
 const VideoProcessingTab = ({
   segmentDuration,
   setSegmentDuration,
+  subtitleEngine,
+  setSubtitleEngine,
   geminiModel,
   setGeminiModel,
   timeFormat,
@@ -35,6 +39,29 @@ const VideoProcessingTab = ({
   setUseCookiesForDownload
 }) => {
   const { t } = useTranslation();
+  const { models, isLoading: modelsLoading } = useGeminiModels();
+
+  useEffect(() => {
+    if (models.length === 0) return;
+
+    let active = true;
+    Promise.all([
+      resolveGeminiModel(geminiModel),
+      resolveGeminiModel(videoAnalysisModel)
+    ]).then(([resolvedGeminiModel, resolvedVideoAnalysisModel]) => {
+      if (!active) return;
+      setGeminiModel(resolvedGeminiModel);
+      setVideoAnalysisModel(resolvedVideoAnalysisModel);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [models, geminiModel, videoAnalysisModel, setGeminiModel, setVideoAnalysisModel]);
+
+  const modelOptions = models.length > 0 ? models : [];
+  const hasGeminiModelOption = modelOptions.some((model) => model.id === geminiModel);
+  const hasVideoAnalysisModelOption = modelOptions.some((model) => model.id === videoAnalysisModel);
 
   // Helper function to get the dropdown mode for a thinking budget value
   const getThinkingMode = (budget) => {
@@ -118,6 +145,24 @@ const VideoProcessingTab = ({
             <h4>{t('settings.processingSettings', 'Processing Settings')}</h4>
           </div>
           <div className="settings-card-content">
+            <div className="compact-setting">
+              <label htmlFor="subtitle-engine">
+                {t('settings.subtitleEngine', 'Subtitle engine')}
+              </label>
+              <p className="setting-description">
+                {t('settings.subtitleEngineDescription', 'Choose Gemini with timestamp normalization or local Faster-Whisper transcription.')}
+              </p>
+              <select
+                id="subtitle-engine"
+                value={subtitleEngine}
+                onChange={(e) => setSubtitleEngine(e.target.value)}
+                className="enhanced-select"
+              >
+                <option value="gemini">{t('settings.subtitleEngineGemini', 'Gemini + normalized timestamps')}</option>
+                <option value="whisper">{t('settings.subtitleEngineWhisper', 'Whisper (Faster-Whisper)')}</option>
+              </select>
+            </div>
+
             {/* Segment Duration Setting */}
             <div className="compact-setting">
               <label htmlFor="segment-duration">
@@ -157,29 +202,23 @@ const VideoProcessingTab = ({
                 {t('settings.geminiModel', 'Gemini Model')}
               </label>
               <p className="setting-description">
-                {t('settings.geminiModelDescription', 'Select the Gemini model to use for transcription. Different models offer trade-offs between accuracy and speed.')}
+                {modelsLoading
+                  ? t('settings.geminiModelLoading', 'Detecting models available for this API key...')
+                  : t('settings.geminiModelDescription', 'Select the Gemini model to use for transcription. Different models offer trade-offs between accuracy and speed.')}
               </p>
               <select
                 id="gemini-model"
                 value={geminiModel}
                 onChange={(e) => setGeminiModel(e.target.value)}
                 className="enhanced-select"
+                disabled={subtitleEngine === 'whisper'}
               >
-                <option value="gemini-2.5-pro">
-                  {t('settings.modelBestAccuracy', 'Gemini 2.5 Pro (Paid) - Best accuracy, slowest, easily overloaded')}
-                </option>
-                <option value="gemini-2.5-flash">
-                  {t('settings.modelSmartFast', 'Gemini 2.5 Flash (Smarter & faster, second best accuracy)')}
-                </option>
-                <option value="gemini-2.5-flash-lite-preview-06-17">
-                  {t('settings.modelFlash25Lite', 'Gemini 2.5 Flash Lite (Fastest 2.5 model, good accuracy)')}
-                </option>
-                <option value="gemini-2.0-flash">
-                  {t('settings.modelThirdBest', 'Gemini 2.0 Flash (Third best, acceptable accuracy, medium speed)')}
-                </option>
-                <option value="gemini-2.0-flash-lite">
-                  {t('settings.modelFastest', 'Gemini 2.0 Flash Lite (Worst accuracy, fastest - testing only)')}
-                </option>
+                {!hasGeminiModelOption && geminiModel && (
+                  <option value={geminiModel}>{geminiModel} ({t('settings.modelChecking', 'checking availability')})</option>
+                )}
+                {modelOptions.map((model) => (
+                  <option value={model.id} key={model.id}>{getGeminiModelLabel(model)}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -205,6 +244,7 @@ const VideoProcessingTab = ({
                     id="use-video-analysis"
                     checked={useVideoAnalysis}
                     onChange={(e) => setUseVideoAnalysis(e.target.checked)}
+                    disabled={subtitleEngine === 'whisper'}
                     ariaLabel={t('settings.useVideoAnalysis', 'Detect Patterns + Context Memory/Rules')}
                     icons={true}
                   />
@@ -220,18 +260,23 @@ const VideoProcessingTab = ({
                 {t('settings.videoAnalysisModel', 'Analysis Model')}
               </label>
               <p className="setting-description">
-                {t('settings.videoAnalysisModel.simplified', 'Select the model to use for video analysis. Flash Lite is faster but less accurate.')}
+                {modelsLoading
+                  ? t('settings.geminiModelLoading', 'Detecting models available for this API key...')
+                  : t('settings.videoAnalysisModel.simplified', 'Select an available Gemini model to use for video analysis. Lite models are faster but may be less accurate.')}
               </p>
               <select
                 id="video-analysis-model"
                 value={videoAnalysisModel}
                 onChange={(e) => setVideoAnalysisModel(e.target.value)}
                 className="enhanced-select"
-                disabled={!useVideoAnalysis}
+                disabled={!useVideoAnalysis || subtitleEngine === 'whisper'}
               >
-                <option value="gemini-2.5-flash">{t('settings.modelFlash25', 'Gemini 2.5 Flash (Best)')}</option>
-                <option value="gemini-2.5-flash-lite-preview-06-17">{t('settings.modelFlash25LiteAnalysis', 'Gemini 2.5 Flash Lite (Good + Fast)')}</option>
-                <option value="gemini-2.0-flash">{t('settings.modelFlash', 'Gemini 2.0 Flash (More Detailed)')}</option>
+                {!hasVideoAnalysisModelOption && videoAnalysisModel && (
+                  <option value={videoAnalysisModel}>{videoAnalysisModel} ({t('settings.modelChecking', 'checking availability')})</option>
+                )}
+                {modelOptions.map((model) => (
+                  <option value={model.id} key={model.id}>{getGeminiModelLabel(model)}</option>
+                ))}
               </select>
             </div>
 
@@ -247,7 +292,7 @@ const VideoProcessingTab = ({
                 value={videoAnalysisTimeout}
                 onChange={(e) => setVideoAnalysisTimeout(e.target.value)}
                 className="enhanced-select"
-                disabled={!useVideoAnalysis}
+                disabled={!useVideoAnalysis || subtitleEngine === 'whisper'}
               >
                 <option value="none">{t('settings.timeoutNone', 'No Timeout')}</option>
                 <option value="10">{t('settings.timeout10Seconds', '10 Seconds')}</option>
@@ -265,7 +310,7 @@ const VideoProcessingTab = ({
                     id="auto-select-default-preset"
                     checked={autoSelectDefaultPreset}
                     onChange={(e) => setAutoSelectDefaultPreset(e.target.checked)}
-                    disabled={!useVideoAnalysis}
+                    disabled={!useVideoAnalysis || subtitleEngine === 'whisper'}
                     ariaLabel={t('settings.autoSelectDefaultPreset', 'Auto-select default preset on timeout')}
                     icons={true}
                   />

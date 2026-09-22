@@ -338,5 +338,17 @@
   "concurrentClients": "동시 클라이언트",
   "concurrentClientsDescription": "병렬로 처리할 동시 API 요청 수입니다. 값이 높을수록 속도가 증가하지만 속도 제한에 도달할 수 있습니다.",
   "resolution240p": "240p (가장 빠름, 가장 작은 파일)",
-  "resolution360p": "360p (Gemini에 권장)"
+  "resolution360p": "360p (Gemini에 권장)",
+  "checkModels": "모델 확인",
+  "checkModelsTooltip": "현재 API 키로 사용할 수 있는 Gemini 모델 확인",
+  "checkingModels": "확인 중...",
+  "modelCheckTitle": "모델 사용 가능 여부",
+  "modelCheckRunning": "현재 API 키로 모델을 확인하는 중...",
+  "modelCheckMissingKey": "모델을 확인하기 전에 Gemini API 키를 추가하세요.",
+  "modelCheckFailed": "모델 확인 실패",
+  "modelsAvailable": "개 모델 사용 가능",
+  "subtitleEngine": "자막 엔진",
+  "subtitleEngineDescription": "타임스탬프를 정규화한 Gemini 또는 로컬 Faster-Whisper를 선택합니다.",
+  "subtitleEngineGemini": "Gemini + 타임스탬프 정규화",
+  "subtitleEngineWhisper": "Whisper (Faster-Whisper)"
 }

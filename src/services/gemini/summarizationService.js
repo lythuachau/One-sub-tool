@@ -8,6 +8,7 @@ import { createSummarizationSchema, addResponseSchema } from '../../utils/schema
 import { getDefaultSummarizePrompt } from './promptManagement';
 import { createRequestController, removeRequestController } from './requestManagement';
 import { processStructuredJsonResponse, processTextResponse } from './responseProcessingService';
+import { resolveGeminiModel } from './modelDiscovery';
 
 /**
  * Summarize document from subtitles text
@@ -16,7 +17,8 @@ import { processStructuredJsonResponse, processTextResponse } from './responsePr
  * @param {string} customPrompt - Optional custom prompt to use
  * @returns {Promise<string>} - Summarized document text
  */
-export const summarizeDocument = async (subtitlesText, model = 'gemini-2.0-flash', customPrompt = null) => {
+export const summarizeDocument = async (subtitlesText, model = '', customPrompt = null) => {
+    model = await resolveGeminiModel(model || localStorage.getItem('gemini_model') || '');
     if (!subtitlesText || subtitlesText.trim() === '') {
         throw new Error('No text to process');
     }

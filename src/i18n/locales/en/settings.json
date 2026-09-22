@@ -332,5 +332,17 @@
   "concurrentClients": "Concurrent Clients",
   "concurrentClientsDescription": "Number of simultaneous API requests to process in parallel. Higher values increase speed but may hit rate limits.",
   "resolution240p": "240p (Fastest, smallest files)",
-  "resolution360p": "360p (Recommended for Gemini)"
+  "resolution360p": "360p (Recommended for Gemini)",
+  "checkModels": "Check models",
+  "checkModelsTooltip": "Check which Gemini models are available with the active API key",
+  "checkingModels": "Checking...",
+  "modelCheckTitle": "Model availability",
+  "modelCheckRunning": "Checking models with the active API key...",
+  "modelCheckMissingKey": "Add a Gemini API key before checking models.",
+  "modelCheckFailed": "Model check failed",
+  "modelsAvailable": "models available",
+  "subtitleEngine": "Subtitle engine",
+  "subtitleEngineDescription": "Choose Gemini with timestamp normalization or local Faster-Whisper transcription.",
+  "subtitleEngineGemini": "Gemini + normalized timestamps",
+  "subtitleEngineWhisper": "Whisper (Faster-Whisper)"
 }

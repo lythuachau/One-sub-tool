@@ -155,8 +155,17 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
   };
 
   const isValidDouyinUrl = (url) => {
-    const douyinRegex = /^(https?:\/\/)?(www\.|v\.)?douyin\.com\/(video\/\d+|[a-zA-Z0-9]+\/?.*)/;
+    const douyinRegex = /^(https?:\/\/)?(?:www\.|v\.)?douyin\.com\/(?:video\/\d+|[a-zA-Z0-9_-]+)(?:[/?#].*)?$/i;
     return douyinRegex.test(url);
+  };
+
+  const extractDouyinUrl = (value) => {
+    if (!value) return '';
+
+    const match = value.match(/https?:\/\/(?:v\.douyin\.com|(?:www\.)?douyin\.com)\/[^\s<>"']+/i);
+    if (!match) return '';
+
+    return match[0].replace(/[)\]}>，。！？；、]+$/g, '');
   };
 
   const isValidUrl = (url) => {
@@ -189,7 +198,7 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
     }
 
     // Extract ID from short URL format: https://v.douyin.com/ABC123/
-    const shortUrlMatch = url.match(/v\.douyin\.com\/([a-zA-Z0-9]+)/);
+    const shortUrlMatch = url.match(/v\.douyin\.com\/([a-zA-Z0-9_-]+)/);
     if (shortUrlMatch && shortUrlMatch[1]) {
       return shortUrlMatch[1];
     }
@@ -234,7 +243,8 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
   };
 
   const handleUrlChange = async (e) => {
-    const inputUrl = e.target.value.trim();
+    const rawInput = e.target.value;
+    const inputUrl = extractDouyinUrl(rawInput) || rawInput.trim();
     setUrl(inputUrl);
     setError(''); // Clear any previous errors
 
@@ -393,12 +403,33 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
           videoId,
           url: selectedVideo.url,
           quality: 'original',
-          useCookies: false
+          useCookies: localStorage.getItem('use_cookies_for_download') === 'true'
         }),
       });
 
       if (!response.ok) {
         throw new Error(`Download failed: ${response.status}`);
+      }
+
+      const downloadData = await response.json();
+      const triggerDownload = (filename) => {
+        const safeFilename = filename || 'douyin_video.mp4';
+        const downloadUrl = `http://localhost:3031/api/douyin-playwright-download/${encodeURIComponent(safeFilename)}`;
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = safeFilename;
+        a.style.display = 'none';
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      };
+
+      if (downloadData.completed && downloadData.path) {
+        setIsDouyinDownloading(false);
+        setDouyinDownloadProgress(100);
+        triggerDownload(downloadData.filename);
+        return;
       }
 
       // Poll for progress
@@ -416,18 +447,7 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
 
               // Use proper download endpoint with attachment headers
               try {
-                const filename = progressData.filename || 'douyin_video.mp4';
-                const downloadUrl = `http://localhost:3031/api/douyin-playwright-download/${encodeURIComponent(filename)}`;
-
-                // Create download link that will trigger proper download
-                const a = document.createElement('a');
-                a.href = downloadUrl;
-                a.download = filename;
-                a.style.display = 'none';
-                a.target = '_blank'; // Ensure it doesn't replace current page
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
+                triggerDownload(progressData.filename);
               } catch (downloadError) {
                 console.error('[UnifiedUrlInput] Error downloading file:', downloadError);
                 // Show user a message instead of navigating
@@ -437,18 +457,20 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
               // Download failed
               clearInterval(pollProgress);
               setIsDouyinDownloading(false);
-              throw new Error('Download failed');
+              setError(progressData.error || 'Download failed');
             }
           }
         } catch (error) {
           clearInterval(pollProgress);
           setIsDouyinDownloading(false);
+          setError(error.message || 'Download failed');
         }
       }, 2000);
 
     } catch (error) {
       setIsDouyinDownloading(false);
       setDouyinDownloadProgress(0);
+      setError(error.message || 'Download failed');
     }
   };
 
@@ -558,7 +580,7 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
             <div className="video-info">
               <h3 className="video-title">{videoTitle}</h3>
               <p className="video-id">{t('unifiedUrlInput.videoId', 'Video ID:')} <span className="video-id-value">{selectedVideo.id}</span></p>
-              <p className="video-method">Using Playwright Method</p>
+              <p className="video-method">Native / yt-dlp · Playwright dự phòng</p>
               <button
                 className="download-only-btn"
                 onClick={handleDouyinDirectDownload}

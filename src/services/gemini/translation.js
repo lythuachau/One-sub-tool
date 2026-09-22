@@ -9,6 +9,115 @@ import { addThinkingConfig } from '../../utils/thinkingBudgetUtils';
 import { getDefaultTranslationPrompt } from './promptManagement';
 import { getTranscriptionRules } from '../../utils/transcriptionRulesStore';
 import { createRequestController, removeRequestController, abortAllRequests, getProcessingForceStopped } from './requestManagement';
+import { resolveGeminiModel } from './modelDiscovery';
+import { getNextAvailableKey } from './keyManager';
+
+const TRANSLATION_FALLBACK_MODELS = [
+    'gemini-flash-latest',
+    'gemini-2.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite'
+];
+
+const isTransientTranslationError = (status, message = '') => {
+    const normalized = message.toLowerCase();
+    return [429, 500, 502, 503, 504].includes(status) ||
+        normalized.includes('high demand') ||
+        normalized.includes('overloaded') ||
+        normalized.includes('temporarily unavailable') ||
+        normalized.includes('service unavailable');
+};
+
+const waitForRetry = (delayMs, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+        reject(new Error('Translation request was aborted'));
+        return;
+    }
+
+    const timeoutId = setTimeout(resolve, delayMs);
+    signal?.addEventListener('abort', () => {
+        clearTimeout(timeoutId);
+        reject(new Error('Translation request was aborted'));
+    }, { once: true });
+});
+
+const requestTranslationWithFallback = async ({
+    model,
+    apiKey,
+    requestDataFactory,
+    signal
+}) => {
+    const candidateModels = [...new Set([model, ...TRANSLATION_FALLBACK_MODELS].filter(Boolean))];
+    let lastError = null;
+
+    for (const candidateModel of candidateModels) {
+        let resolvedModel = candidateModel;
+        try {
+            resolvedModel = await resolveGeminiModel(candidateModel, apiKey);
+        } catch (error) {
+            console.warn(`[Translation] Could not validate model ${candidateModel}: ${error.message}`);
+        }
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+                const requestData = requestDataFactory(resolvedModel);
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${resolvedModel}:generateContent?key=${apiKey}`;
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestData),
+                    signal
+                });
+
+                if (response.ok) {
+                    return { data: await response.json(), model: resolvedModel, apiUrl };
+                }
+
+                let errorData = {};
+                try {
+                    errorData = await response.json();
+                } catch (error) {
+                    errorData = {};
+                }
+
+                const message = errorData.error?.message || response.statusText || `HTTP ${response.status}`;
+                const apiError = new Error(`Gemini API error: ${message}`);
+                apiError.status = response.status;
+                apiError.model = resolvedModel;
+                apiError.isTransient = isTransientTranslationError(response.status, message);
+                lastError = apiError;
+
+                if (apiError.isTransient && attempt < 2) {
+                    const retryAfter = Number(response.headers.get('Retry-After'));
+                    const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+                        ? Math.min(retryAfter * 1000, 60000)
+                        : [5000, 15000, 45000][attempt];
+                    window.dispatchEvent(new CustomEvent('translation-status', {
+                        detail: { message: i18n.t('translation.retryingModel', 'Model {{model}} is busy. Retrying in {{seconds}} seconds...', { model: resolvedModel, seconds: Math.round(delayMs / 1000) }) }
+                    }));
+                    await waitForRetry(delayMs, signal);
+                    continue;
+                }
+
+                if (apiError.isTransient || response.status === 404) break;
+                throw apiError;
+            } catch (error) {
+                if (error.name === 'AbortError' || error.message.includes('aborted')) throw error;
+                lastError = error;
+                if (!error.isTransient || attempt >= 2) break;
+            }
+        }
+
+        if (lastError && !lastError.isTransient && lastError.status !== 404) throw lastError;
+        if (candidateModel !== candidateModels[candidateModels.length - 1]) {
+            window.dispatchEvent(new CustomEvent('translation-status', {
+                detail: { message: i18n.t('translation.switchingModel', 'Switching to a fallback translation model...') }
+            }));
+        }
+    }
+
+    throw lastError || new Error('Gemini translation request failed');
+};
 
 /**
  * Translate subtitles to different language(s) while preserving timing
@@ -26,7 +135,8 @@ import { createRequestController, removeRequestController, abortAllRequests, get
  * @param {Array} chainItems - Optional chain items for chain-based formatting
  * @returns {Promise<Array>} - Array of translated subtitles
  */
-const translateSubtitles = async (subtitles, targetLanguage, model = 'gemini-2.0-flash', customPrompt = null, splitDuration = 0, includeRules = false, delimiter = ' ', useParentheses = false, bracketStyle = null, chainItems = null, fileContext = null) => {
+const translateSubtitles = async (subtitles, targetLanguage, model = '', customPrompt = null, splitDuration = 0, includeRules = false, delimiter = ' ', useParentheses = false, bracketStyle = null, chainItems = null, fileContext = null) => {
+    model = await resolveGeminiModel(model || localStorage.getItem('gemini_model') || '');
     // Check if we're in format mode (empty target languages array)
     const isFormatMode = Array.isArray(targetLanguage) && targetLanguage.length === 0;
 
@@ -198,56 +308,44 @@ const translateSubtitles = async (subtitles, targetLanguage, model = 'gemini-2.0
     const { requestId, signal } = createRequestController();
 
     try {
-        // Get API key from localStorage
-        const apiKey = localStorage.getItem('gemini_api_key');
+        const apiKey = getNextAvailableKey() || localStorage.getItem('gemini_api_key');
         if (!apiKey) {
             throw new Error('Gemini API key not found');
         }
 
-        // Use the model parameter passed to the function
-        // This allows for model selection specific to translation
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-        // Create request data with structured output
-        let requestData = {
-            contents: [
-                {
-                    role: "user",
-                    parts: [
-                        { text: translationPrompt }
-                    ]
-                }
-            ],
-            generationConfig: {
-                temperature: 0.2,
-                topK: 32,
-                topP: 0.95,
-                maxOutputTokens: 65536, // Increased to maximum allowed value (65536 per Gemini documentation)
-            },
-        };
-
-        // Always use structured output
-        requestData = addResponseSchema(requestData, createTranslationSchema(isMultiLanguage));
-
-        // Add thinking configuration if supported by the model
-        requestData = addThinkingConfig(requestData, model);
-
-
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestData),
-            signal: signal
+        const requestedTranslationModel = model;
+        const responseResult = await requestTranslationWithFallback({
+            model,
+            apiKey,
+            signal,
+            requestDataFactory: (candidateModel) => {
+                let requestData = {
+                    contents: [
+                        {
+                            role: "user",
+                            parts: [{ text: translationPrompt }]
+                        }
+                    ],
+                    generationConfig: {
+                        temperature: 0.2,
+                        topK: 32,
+                        topP: 0.95,
+                        maxOutputTokens: 65536,
+                    },
+                };
+                requestData = addResponseSchema(requestData, createTranslationSchema(isMultiLanguage));
+                return addThinkingConfig(requestData, candidateModel);
+            }
         });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
+        model = responseResult.model;
+        if (model !== requestedTranslationModel) {
+            localStorage.setItem('translation_model', model);
+            window.dispatchEvent(new CustomEvent('translation-model-fallback', {
+                detail: { requestedModel: requestedTranslationModel, selectedModel: model }
+            }));
         }
-
-        const data = await response.json();
+        const apiUrl = responseResult.apiUrl;
+        const data = responseResult.data;
 
 
         // Process the translation response

@@ -1,7 +1,7 @@
 /**
  * Module for batch processing of audio segments
  * Handles large numbers of audio segments by splitting them into batches
- * Includes smart overlap detection and resolution for natural narration
+ * Uses the version 1 narration timing rules for fitting and overlap resolution
  */
 
 const path = require('path');
@@ -14,6 +14,14 @@ const { TEMP_AUDIO_DIR } = require('../directoryManager');
 
 // Import media duration utility
 const { getMediaDuration } = require('../../../services/videoProcessing/durationUtils');
+
+const VERSION1_MIN_TEMPO = 0.75;
+const VERSION1_INITIAL_MAX_TEMPO = 1.55;
+const VERSION1_OVERLAP_MAX_TEMPO = 1.85;
+const VERSION1_OVERLAP_GAP_MS = 50;
+const VERSION1_MIN_SLOT_MS = 200;
+const VERSION1_OVERLAP_RETIME_THRESHOLD = 1.08;
+const VERSION1_FADE_MAX_MS = 70;
 
 /**
  * Find blank spaces (gaps) between segments where we can potentially move segments
@@ -144,237 +152,116 @@ const calculateDistributedGroupShift = (segmentsToShift, blankSpaces, requiredSh
  * Analyze audio segments and adjust their timing to avoid overlaps
  * This creates a more natural narration by ensuring segments don't talk over each other
  *
- * Improvements:
- * 1. Allows 0.2s overlap at the end of each segment (more natural)
- * 2. When large adjustments (>0.5s) are needed, tries to find blank spaces to the left
- *    to move segments into, reducing the overall audio length
+ * Version 1 timing rules:
+ * 1. Fit each clip to its subtitle slot between 0.75x and 1.55x.
+ * 2. Reserve a 50ms gap before the next subtitle.
+ * 3. Resolve remaining overlap up to 1.85x, then trim with a short fade.
  *
  * @param {Array} audioSegments - Array of audio segments to analyze
  * @returns {Promise<Array>} - Array of adjusted audio segments
  */
+const runFfmpeg = (args) => new Promise((resolve, reject) => {
+  const process = spawn(getFfmpegPath(), args);
+  let stderr = '';
+  process.stderr.on('data', data => { stderr += data.toString(); });
+  process.on('error', reject);
+  process.on('close', code => {
+    if (code === 0) resolve();
+    else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+  });
+});
+
+const changeTempoFile = async (source, destination, tempo) => {
+  await runFfmpeg([
+    '-y', '-v', 'error', '-i', source,
+    '-filter:a', `atempo=${tempo.toFixed(5)}`,
+    '-c:a', 'pcm_s16le', '-ar', '44100', destination
+  ]);
+  return destination;
+};
+
+const trimAndFadeFile = async (source, destination, duration) => {
+  const fadeDuration = Math.min(VERSION1_FADE_MAX_MS / 1000, Math.max(0.02, duration / 5));
+  const fadeStart = Math.max(0, duration - fadeDuration);
+  await runFfmpeg([
+    '-y', '-v', 'error', '-i', source,
+    '-filter:a', `atrim=duration=${duration.toFixed(4)},asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(4)}:d=${fadeDuration.toFixed(4)}`,
+    '-c:a', 'pcm_s16le', '-ar', '44100', destination
+  ]);
+  return destination;
+};
+
 const analyzeAndAdjustSegments = async (audioSegments) => {
-  if (!audioSegments || audioSegments.length <= 1) {
-    return audioSegments; // No adjustment needed for 0 or 1 segments
+  if (!audioSegments || audioSegments.length === 0) {
+    return audioSegments || [];
   }
 
-  console.log(`Analyzing ${audioSegments.length} audio segments for smart overlap resolution...`);
+  const sorted = [...audioSegments].sort((a, b) => a.start - b.start);
+  const fitted = [];
+  let initialSpeedups = 0;
+  let overlapSpeedups = 0;
+  let faded = 0;
 
-  // Sort segments by start time (should already be sorted, but ensure it)
-  audioSegments.sort((a, b) => a.start - b.start);
-
-  // First pass: Get actual durations of each audio file
-  const segmentsWithDuration = [];
-  for (const segment of audioSegments) {
-    try {
-      // Get the actual duration of the audio file
-      const actualDuration = await getMediaDuration(segment.path);
-
-      // Add the actual duration to the segment
-      segmentsWithDuration.push({
-        ...segment,
-        actualDuration,
-        // Calculate a "natural end" based on start time + actual duration
-        // This represents when the audio would naturally end if played at the start time
-        naturalEnd: segment.start + actualDuration
-      });
-    } catch (error) {
-      console.error(`Error getting duration for audio segment: ${error.message}`);
-      // If we can't get the duration, use the subtitle timing as fallback
-      segmentsWithDuration.push({
-        ...segment,
-        actualDuration: segment.end - segment.start,
-        naturalEnd: segment.end
-      });
+  for (let index = 0; index < sorted.length; index++) {
+    const segment = { ...sorted[index] };
+    const rawDuration = await getMediaDuration(segment.path);
+    const subtitleDuration = Math.max(0.35, (segment.end ?? segment.start) - segment.start);
+    const initialTempo = Math.min(VERSION1_INITIAL_MAX_TEMPO, Math.max(VERSION1_MIN_TEMPO, rawDuration / subtitleDuration));
+    if (rawDuration > 0.05 && Math.abs(initialTempo - 1) >= 0.02) {
+      const destination = path.join(TEMP_AUDIO_DIR, `legacy_fit_${Date.now()}_${index}.wav`);
+      await changeTempoFile(segment.path, destination, initialTempo);
+      segment.path = destination;
+      initialSpeedups++;
     }
+    segment.actualDuration = await getMediaDuration(segment.path);
+    segment.naturalEnd = segment.start + segment.actualDuration;
+    fitted.push(segment);
   }
 
-  // Second pass: Detect and resolve overlaps with group-shifting algorithm
-  const adjustedSegments = [];
-
-  for (let i = 0; i < segmentsWithDuration.length; i++) {
-    const segment = segmentsWithDuration[i];
-
-    if (i === 0) {
-      // First segment doesn't need adjustment
-      adjustedSegments.push(segment);
+  for (let index = 0; index < fitted.length - 1; index++) {
+    const current = fitted[index];
+    const next = fitted[index + 1];
+    const slotMs = Math.max(VERSION1_MIN_SLOT_MS, Math.round((next.start - current.start) * 1000) - VERSION1_OVERLAP_GAP_MS);
+    let audioDurationMs = current.actualDuration * 1000;
+    if (audioDurationMs <= slotMs) {
       continue;
     }
 
-    const previousSegment = adjustedSegments[i - 1];
+    const overlapTempo = Math.min(VERSION1_OVERLAP_MAX_TEMPO, audioDurationMs / slotMs);
+    if (overlapTempo >= VERSION1_OVERLAP_RETIME_THRESHOLD) {
+      const destination = path.join(TEMP_AUDIO_DIR, `legacy_overlap_${Date.now()}_${index}.wav`);
+      await changeTempoFile(current.path, destination, overlapTempo);
+      current.path = destination;
+      current.actualDuration = await getMediaDuration(destination);
+      current.naturalEnd = current.start + current.actualDuration;
+      audioDurationMs = current.actualDuration * 1000;
+      overlapSpeedups++;
+    }
 
-    // Check if this segment would overlap with the previous one
-    // Allow 0.2s overlap at the end of the previous segment
-    const previousEffectiveEnd = previousSegment.naturalEnd - 0.2;
-    const wouldOverlap = segment.start < previousEffectiveEnd;
-
-    if (wouldOverlap) {
-      // Calculate how much overlap would occur
-      const overlapAmount = previousEffectiveEnd - segment.start;
-
-      // Log the overlap detection
-      const prevIsGrouped = previousSegment.isGrouped ? ` (grouped with ${previousSegment.original_ids?.length || 0} original IDs)` : '';
-      const currIsGrouped = segment.isGrouped ? ` (grouped with ${segment.original_ids?.length || 0} original IDs)` : '';
-
-      console.log(`Detected overlap of ${overlapAmount.toFixed(2)}s between segments:
-        - Previous: ID ${previousSegment.subtitle_id}${prevIsGrouped}, Start: ${previousSegment.start.toFixed(2)}, Effective End: ${previousEffectiveEnd.toFixed(2)}
-        - Current: ID ${segment.subtitle_id}${currIsGrouped}, Start: ${segment.start.toFixed(2)}, End: ${segment.end.toFixed(2)}`);
-
-      // Calculate the basic adjustment (push to the right)
-      const basicAdjustedStart = previousEffectiveEnd + 0.1;
-      const basicShiftAmount = basicAdjustedStart - segment.start;
-
-      let finalAdjustedStart = basicAdjustedStart;
-      let finalShiftAmount = basicShiftAmount;
-      let adjustmentStrategy = 'push-right';
-      let groupShiftApplied = false;
-
-      // If the adjustment is significant (>0.5s), try to shift the group left into blank spaces
-      if (basicShiftAmount > 0.5) {
-        console.log(`Large adjustment needed (${basicShiftAmount.toFixed(2)}s), looking for blank spaces to shift group left...`);
-
-        // Find all blank spaces in the current adjusted segments
-        const blankSpaces = findBlankSpaces(adjustedSegments);
-
-        if (blankSpaces.length > 0) {
-          console.log(`Found ${blankSpaces.length} blank spaces:`,
-            blankSpaces.map(space => `${space.duration.toFixed(2)}s gap after segment ${space.afterSegmentId}`));
-
-          // Get all remaining segments (current and following) that might need to be shifted
-          const remainingSegments = segmentsWithDuration.slice(i);
-
-          // Calculate distributed group shift across multiple blank spaces
-          const distributedShiftResult = calculateDistributedGroupShift(remainingSegments, blankSpaces, basicShiftAmount);
-
-          if (distributedShiftResult.canUseBlankSpaces && distributedShiftResult.totalShiftAmount > 0) {
-            // Apply the distributed shift
-            const totalLeftShift = Math.min(distributedShiftResult.totalShiftAmount, basicShiftAmount);
-
-            console.log(`Applying distributed shift across ${distributedShiftResult.distributedShifts.length} blank spaces:`);
-            distributedShiftResult.distributedShifts.forEach((shift, index) => {
-              console.log(`  Space ${index + 1}: ${shift.shiftAmount.toFixed(2)}s into gap after segment ${shift.blankSpace.afterSegmentId} (weight: ${shift.weight.toFixed(1)})`);
-            });
-            console.log(`  Total shift: ${totalLeftShift.toFixed(2)}s left for ${remainingSegments.length} segments`);
-
-            // Shift the current segment left instead of right
-            finalAdjustedStart = segment.start - totalLeftShift;
-            finalShiftAmount = -totalLeftShift; // Negative because moving left
-            adjustmentStrategy = distributedShiftResult.strategy;
-            groupShiftApplied = true;
-
-            // Apply distributed shifts to all following segments
-            // Each segment gets shifted by the cumulative amount from spaces to its left
-            for (let j = i + 1; j < segmentsWithDuration.length; j++) {
-              // Calculate how much this segment should be shifted based on its position
-              const segmentIndex = j - i; // 0-based index within the group being shifted
-
-              // For now, apply the same total shift to all segments in the group
-              // In a more advanced version, we could apply different amounts based on position
-              const segmentShift = totalLeftShift;
-
-              segmentsWithDuration[j] = {
-                ...segmentsWithDuration[j],
-                start: segmentsWithDuration[j].start - segmentShift,
-                naturalEnd: segmentsWithDuration[j].start - segmentShift + segmentsWithDuration[j].actualDuration,
-                groupShiftAmount: -segmentShift,
-                distributedShiftApplied: true
-              };
-            }
-
-            console.log(`Distributed shift applied: moved segments ${segment.subtitle_id}-${segmentsWithDuration[segmentsWithDuration.length - 1].subtitle_id} left by ${totalLeftShift.toFixed(2)}s total`);
-          }
-        }
-      }
-
-      // Create adjusted segment
-      const adjustedSegment = {
-        ...segment,
-        start: finalAdjustedStart,
-        // Update the natural end based on the new start time
-        naturalEnd: finalAdjustedStart + segment.actualDuration,
-        // Keep track of the original timing for reference
-        originalStart: segment.start,
-        // Note how much we shifted this segment
-        shiftAmount: finalShiftAmount,
-        adjustmentStrategy,
-        groupShiftApplied
-      };
-
-      // Log the adjustment
-      const direction = finalShiftAmount > 0 ? 'right' : 'left';
-      console.log(`Adjusted segment ${segment.subtitle_id}: ${adjustmentStrategy}, shifted by ${Math.abs(finalShiftAmount).toFixed(2)}s ${direction} to start at ${finalAdjustedStart.toFixed(2)}s`);
-
-      adjustedSegments.push(adjustedSegment);
-    } else {
-      // No overlap, but check if this segment was affected by a previous distributed shift
-      let segmentToAdd = segment;
-      if (segment.groupShiftAmount) {
-        const strategyName = segment.distributedShiftApplied ? 'distributed-shift' : 'group-shift-left';
-        segmentToAdd = {
-          ...segment,
-          shiftAmount: segment.groupShiftAmount,
-          adjustmentStrategy: strategyName,
-          groupShiftApplied: true
-        };
-        console.log(`Segment ${segment.subtitle_id}: affected by ${strategyName}, moved ${Math.abs(segment.groupShiftAmount).toFixed(2)}s left to start at ${segment.start.toFixed(2)}s`);
-      }
-
-      adjustedSegments.push(segmentToAdd);
+    if (audioDurationMs > slotMs) {
+      const destination = path.join(TEMP_AUDIO_DIR, `legacy_fade_${Date.now()}_${index}.wav`);
+      await trimAndFadeFile(current.path, destination, slotMs / 1000);
+      current.path = destination;
+      current.actualDuration = await getMediaDuration(destination);
+      current.naturalEnd = current.start + current.actualDuration;
+      faded++;
     }
   }
 
-  // Log summary of adjustments
-  const adjustedCount = adjustedSegments.filter(s => s.shiftAmount).length;
-  const leftMoves = adjustedSegments.filter(s => s.shiftAmount && s.shiftAmount < 0).length;
-  const rightMoves = adjustedSegments.filter(s => s.shiftAmount && s.shiftAmount > 0).length;
-
-  if (adjustedCount > 0) {
-    console.log(`Smart overlap resolution complete: Adjusted ${adjustedCount} of ${audioSegments.length} segments (${leftMoves} moved left, ${rightMoves} moved right) for optimized narration flow.`);
-  } else {
-    console.log(`No overlaps detected among ${audioSegments.length} segments. No adjustments needed.`);
-  }
-
-  // Final step: Move all segments 0.5s earlier for better timing
-  console.log(`Applying final timing adjustment: moving all segments 0.5s earlier...`);
-  const finalAdjustedSegments = adjustedSegments.map(segment => {
-    const newStart = Math.max(0, segment.start - 0.5); // Don't go below 0
-    return {
-      ...segment,
-      start: newStart,
-      naturalEnd: newStart + segment.actualDuration,
-      // Track this final adjustment
-      finalTimingAdjustment: segment.start - newStart, // How much we actually moved (might be less than 0.5 if original start was < 0.5)
-      originalStartBeforeFinalAdjustment: segment.start
-    };
-  });
-
-  console.log(`Final timing adjustment applied: all segments moved 0.5s earlier (or to start at 0s minimum).`);
-
-  return finalAdjustedSegments;
+  console.log(`Legacy TTS alignment: initial speedups=${initialSpeedups}, overlap speedups=${overlapSpeedups}, fades=${faded}`);
+  return fitted;
 };
-
-/**
- * Process a batch of audio segments to create an intermediate audio file
- * Includes smart overlap detection and resolution for natural narration
- *
- * @param {Array} audioSegments - Array of audio segments to process
- * @param {string} outputPath - Path to save the output file
- * @param {number} batchIndex - Index of the current batch
- * @param {number} totalDuration - Total duration of the audio
- * @param {boolean} [smartOverlapResolution=true] - Whether to use smart overlap resolution
- * @returns {Promise<string>} - Path to the created audio file
- */
 const processBatch = async (audioSegments, outputPath, batchIndex, totalDuration, smartOverlapResolution = true) => {
 
-  // Apply smart overlap resolution if enabled
+  // Apply version 1 fitting and overlap resolution if enabled
   let segmentsToProcess = audioSegments;
   if (smartOverlapResolution && audioSegments.length > 1) {
     try {
-      // Analyze and adjust segments to avoid overlaps
+      // Fit clips before building the delayed audio mix
       segmentsToProcess = await analyzeAndAdjustSegments(audioSegments);
     } catch (error) {
-      console.error(`Error during smart overlap resolution: ${error.message}`);
-      console.error('Falling back to original segments without overlap resolution');
-      segmentsToProcess = audioSegments;
+      console.error(`Error during legacy TTS alignment: ${error.message}`);
+      throw error;
     }
   }
 
@@ -414,10 +301,10 @@ const processBatch = async (audioSegments, outputPath, batchIndex, totalDuration
     const inputIndex = index + 1;
     const delayedStreamName = `a${index}`; // Name for the output stream of this filter chain part
 
-    // Apply resampling (safety), delay, and volume to the correct input stream
+    // Apply resampling and delay to the correct input stream
     // Output this processed stream as [a<index>] (e.g., [a0], [a1], ...)
-    // Use a moderate volume boost (1.5) as we'll preserve full volume during mixing
-    filterComplex += `[${inputIndex}]aresample=44100,adelay=${delayMs}|${delayMs},volume=1.5[${delayedStreamName}]; `;
+    // Keep the generated TTS level unchanged, matching version 1 overlay behavior
+    filterComplex += `[${inputIndex}]aresample=44100,adelay=${delayMs}|${delayMs},volume=1.0[${delayedStreamName}]; `;
     amixInputs.push(`[${delayedStreamName}]`); // Add the delayed stream name to the list for amix
   });
 

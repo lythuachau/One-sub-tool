@@ -7,7 +7,6 @@ import {
   generateNarration,
   cancelNarrationGeneration
 } from '../../../services/narrationService';
-import { isModelAvailable } from '../../../services/modelAvailabilityService';
 
 /**
  * Custom hook for narration handlers
@@ -46,6 +45,8 @@ const useNarrationHandlers = ({
   t,
   subtitleSource,
   translatedSubtitles,
+  vieneuVoiceMode,
+  vieneuVoice,
   isPlaying,
   selectedNarrationModel,
   originalLanguage,
@@ -527,8 +528,14 @@ const useNarrationHandlers = ({
     const { clearNarrationCachesAndFiles } = await import('../utils/cacheManager');
     await clearNarrationCachesAndFiles(setGenerationResults);
 
-    if (!referenceAudio || !referenceAudio.filepath) {
+    const needsReferenceAudio = vieneuVoiceMode === 'reference';
+    if (needsReferenceAudio && (!referenceAudio || !referenceAudio.filepath)) {
       setError(t('narration.noReferenceError', 'Please set up reference audio using one of the options above'));
+      return;
+    }
+
+    if (vieneuVoiceMode === 'preset' && !vieneuVoice) {
+      setError(t('narration.vieneuNoPresetVoice', 'Please choose a VieNeu preset voice'));
       return;
     }
 
@@ -553,35 +560,6 @@ const useNarrationHandlers = ({
       return;
     }
 
-    // Check if the selected model is available
-    try {
-      // Get the model ID from the selectedNarrationModel prop or use the default
-      const modelId = selectedNarrationModel || 'f5tts-v1-base';
-
-      // Check if the model is available
-      const modelAvailable = await isModelAvailable(modelId);
-      if (!modelAvailable) {
-        // Get the language from the selected subtitles
-        const subtitles = getSelectedSubtitles();
-        let language = 'unknown';
-
-        if (subtitles && subtitles.length > 0) {
-          // Try to determine the language from the subtitles
-          if (subtitleSource === 'original' && originalLanguage) {
-            language = originalLanguage.languageName || originalLanguage.languageCode;
-          } else if (subtitleSource === 'translated' && translatedLanguage) {
-            language = translatedLanguage.languageName || translatedLanguage.languageCode;
-          }
-        }
-
-        setError(t('narration.modelNotAvailableError', 'Please download at least one model that supports {{language}} from the Narration Model Management tab in Settings.', { language }));
-        return;
-      }
-    } catch (error) {
-      console.error('Error checking model availability:', error);
-      // Continue anyway, the server will handle the error if the model is not available
-    }
-
     setIsGenerating(true);
     setGenerationStatus(t('narration.preparingGeneration', 'Preparing to generate narration...'));
     setError('');
@@ -601,7 +579,7 @@ const useNarrationHandlers = ({
         window.useGroupedSubtitles = true;
         // Update the React state to reflect that we're now using grouped subtitles
         setUseGroupedSubtitles(true);
-        console.log(`Updated state to use grouped subtitles immediately at F5-TTS generation start`);
+        console.log(`Updated state to use grouped subtitles immediately at VieNeu-TTS generation start`);
       }
 
       // Add subtitle source to generation status message
@@ -624,11 +602,12 @@ const useNarrationHandlers = ({
         swayCoef: parseFloat(advancedSettings.swayCoef),
         cfgStrength: parseFloat(advancedSettings.cfgStrength),
         removeSilence: advancedSettings.removeSilence,
-        // Note: sampleRate is not sent to the API as it's not supported by F5-TTS
+        // Note: sampleRate is controlled by the selected local TTS engine.
         // It's only used in the UI for user preference
         batchSize: advancedSettings.batchSize === 'all' ? subtitlesWithIds.length : parseInt(advancedSettings.batchSize),
         // Include the selected model ID
-        modelId: selectedNarrationModel
+        modelId: selectedNarrationModel,
+        voice: vieneuVoiceMode === 'preset' ? vieneuVoice : undefined
       };
 
       // Handle seed
@@ -712,7 +691,7 @@ const useNarrationHandlers = ({
         // Ensure we have the final results
         setGenerationResults(results);
 
-        // Cache narrations and reference audio to localStorage for F5-TTS
+        // Cache narrations and reference audio to localStorage for VieNeu-TTS
         try {
           // Get current media ID
           const getCurrentMediaId = () => {
@@ -752,10 +731,10 @@ const useNarrationHandlers = ({
 
             // Save to localStorage
             localStorage.setItem('f5tts_narrations_cache', JSON.stringify(cacheEntry));
-            console.log('Cached F5-TTS narrations and reference audio');
+            console.log('Cached VieNeu-TTS narrations and reference audio');
           }
         } catch (error) {
-          console.error('Error caching F5-TTS narrations:', error);
+          console.error('Error caching VieNeu-TTS narrations:', error);
         }
 
         // Update state if we generated narrations for grouped subtitles
@@ -765,7 +744,7 @@ const useNarrationHandlers = ({
           window.useGroupedSubtitles = true;
           // Update the React state to reflect that we're now using grouped subtitles
           setUseGroupedSubtitles(true);
-          console.log(`Stored ${results.length} F5-TTS grouped narrations and updated state`);
+          console.log(`Stored ${results.length} VieNeu-TTS grouped narrations and updated state`);
         } else {
           // Store as original/translated narrations
           if (subtitleSource === 'original') {
@@ -779,8 +758,8 @@ const useNarrationHandlers = ({
 
       // Call the generateNarration function with callbacks
       const result = await generateNarration(
-        referenceAudio.filepath,
-        referenceAudio.text || referenceText,
+        needsReferenceAudio ? referenceAudio.filepath : null,
+        needsReferenceAudio ? (referenceAudio.text || referenceText) : '',
         subtitlesWithIds,
         apiSettings,
         handleProgress,
@@ -1114,8 +1093,14 @@ const useNarrationHandlers = ({
 
   // Retry narration generation for a specific subtitle
   const retryF5TTSNarration = async (subtitleId) => {
-    if (!referenceAudio) {
+    const needsReferenceAudio = vieneuVoiceMode === 'reference';
+    if (needsReferenceAudio && !referenceAudio) {
       setError(t('narration.noReferenceAudioError', 'Please upload or record reference audio first'));
+      return;
+    }
+
+    if (vieneuVoiceMode === 'preset' && !vieneuVoice) {
+      setError(t('narration.vieneuNoPresetVoice', 'Please choose a VieNeu preset voice'));
       return;
     }
 
@@ -1174,6 +1159,7 @@ const useNarrationHandlers = ({
         removeSilence: advancedSettings.removeSilence,
         // Include the selected model ID
         modelId: selectedNarrationModel,
+        voice: vieneuVoiceMode === 'preset' ? vieneuVoice : undefined,
         // CRITICAL FIX: Add a flag to skip clearing the output directory
         skipClearOutput: true
       };
@@ -1289,8 +1275,8 @@ const useNarrationHandlers = ({
 
       // Generate narration for the single subtitle
       await generateNarration(
-        referenceAudio.filepath,
-        referenceAudio.text || referenceText,
+        needsReferenceAudio ? referenceAudio.filepath : null,
+        needsReferenceAudio ? (referenceAudio.text || referenceText) : '',
         [subtitleWithId], // Pass as an array with a single subtitle
         apiSettings,
         handleProgress,
@@ -1311,8 +1297,14 @@ const useNarrationHandlers = ({
 
   // Retry all failed narrations
   const retryFailedNarrations = async () => {
-    if (!referenceAudio) {
+    const needsReferenceAudio = vieneuVoiceMode === 'reference';
+    if (needsReferenceAudio && !referenceAudio) {
       setError(t('narration.noReferenceAudioError', 'Please upload or record reference audio first'));
+      return;
+    }
+
+    if (vieneuVoiceMode === 'preset' && !vieneuVoice) {
+      setError(t('narration.vieneuNoPresetVoice', 'Please choose a VieNeu preset voice'));
       return;
     }
 
@@ -1364,7 +1356,7 @@ const useNarrationHandlers = ({
       }));
 
       try {
-        // For F5-TTS models
+        // Retry the VieNeu-TTS segment with the current reference voice.
         // CRITICAL FIX: Force reset the aligned narration before retrying
 
         if (window.resetAlignedNarration) {
@@ -1386,6 +1378,7 @@ const useNarrationHandlers = ({
           cfgStrength: parseFloat(advancedSettings.cfgStrength),
           removeSilence: advancedSettings.removeSilence,
           modelId: selectedNarrationModel,
+          voice: vieneuVoiceMode === 'preset' ? vieneuVoice : undefined,
           skipClearOutput: true
         };
 
@@ -1399,8 +1392,8 @@ const useNarrationHandlers = ({
 
         // Generate narration for the single subtitle
         await generateNarration(
-          referenceAudio.filepath,
-          referenceAudio.text || referenceText,
+          needsReferenceAudio ? referenceAudio.filepath : null,
+          needsReferenceAudio ? (referenceAudio.text || referenceText) : '',
           [subtitleWithId], // Pass as an array with a single subtitle
           apiSettings,
           (message) => setGenerationStatus(`${message} (ID: ${subtitleId})`),

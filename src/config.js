@@ -16,4 +16,4 @@ export const SERVER_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 export const GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || '';
 
 // Default Gemini model for transcription
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';

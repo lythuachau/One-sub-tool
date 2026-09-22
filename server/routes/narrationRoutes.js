@@ -8,8 +8,6 @@ const multer = require('multer');
 const path = require('path');
 const narrationController = require('../controllers/narrationController');
 const narrationServiceClient = require('../services/narrationServiceClient');
-const edgeTTSController = require('../controllers/edgeTTSController');
-const gttsController = require('../controllers/gttsController');
 
 // Ensure narration directories exist
 narrationController.ensureNarrationDirectories();
@@ -50,6 +48,40 @@ router.post('/upload-reference', upload.single('file'), narrationController.uplo
 
 // Generate narration
 router.post('/generate', narrationController.generateNarration);
+
+// Generate a single non-persistent VieNeu preview and preserve the audio bytes.
+router.options('/preview', (req, res) => res.sendStatus(204));
+router.post('/preview', express.json(), async (req, res) => {
+  try {
+    const serviceStatus = await narrationServiceClient.checkService();
+    if (!serviceStatus.available) {
+      return res.status(503).json({
+        success: false,
+        error: 'Narration service is not available'
+      });
+    }
+
+    const response = await fetch(
+      `http://127.0.0.1:${narrationServiceClient.getNarrationPort()}/api/narration/preview`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'audio/wav' },
+        body: JSON.stringify(req.body || {})
+      }
+    );
+    const data = Buffer.from(await response.arrayBuffer());
+    res.status(response.status);
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'application/octet-stream');
+    const sampleRate = response.headers.get('x-sample-rate');
+    if (sampleRate) res.setHeader('X-Sample-Rate', sampleRate);
+    return res.send(data);
+  } catch (error) {
+    return res.status(502).json({
+      success: false,
+      error: `Failed to create VieNeu preview: ${error.message}`
+    });
+  }
+});
 
 // Get narration service status
 router.get('/status', narrationController.getNarrationStatus);
@@ -94,19 +126,12 @@ router.get('/example-audio/:filename', narrationController.serveExampleAudio);
 // Upload example audio as reference
 router.post('/upload-example-audio', express.json(), narrationController.uploadExampleAudio);
 
-// Edge TTS routes (handled directly by Node.js)
-router.get('/edge-tts/voices', edgeTTSController.getVoices);
-router.post('/edge-tts/generate', edgeTTSController.generateNarration);
-
-// gTTS routes (handled directly by Node.js)
-router.get('/gtts/languages', gttsController.getLanguages);
-router.post('/gtts/generate', gttsController.generateNarration);
-
 // Proxy all other narration requests to the Python service
 router.use('/', async (req, res, next) => {
   // Skip endpoints we handle directly
   if (req.url === '/status' || req.url === '/download-all' || req.url === '/download-aligned' ||
       req.url === '/generate' || req.url === '/record-reference' || req.url === '/upload-reference' ||
+      req.url === '/preview' ||
       req.url === '/clear-output' || req.url === '/save-gemini-audio' ||
       req.url === '/save-f5tts-audio' || req.url === '/save-chatterbox-audio' || req.url === '/modify-audio-speed' ||
       req.url === '/batch-modify-audio-speed' || req.url.startsWith('/audio/') ||

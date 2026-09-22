@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FiCheck, FiZap, FiStar, FiCpu, FiArrowRight, FiTrendingUp, FiActivity } from 'react-icons/fi';
+import { FiCheck, FiZap, FiStar, FiCpu, FiArrowRight, FiTrendingUp } from 'react-icons/fi';
 import CloseButton from './common/CloseButton';
 import '../styles/SegmentRetryModal.css';
+import { useGeminiModels } from '../hooks/useGeminiModels';
+import { getGeminiModelLabel } from '../services/gemini/modelDiscovery';
 
 /**
  * Modal component for retrying a segment with custom options
@@ -24,68 +26,49 @@ const SegmentRetryModal = ({
   userProvidedSubtitles = ''
 }) => {
   const { t } = useTranslation();
+  const { models } = useGeminiModels();
 
   // Step management (1: model selection, 2: subtitle options)
   const [currentStep, setCurrentStep] = useState(1);
 
   // Model selection state
-  const [selectedModel, setSelectedModel] = useState(localStorage.getItem('gemini_model') || 'gemini-2.0-flash');
+  const [selectedModel, setSelectedModel] = useState(localStorage.getItem('gemini_model') || 'gemini-flash-latest');
 
   // Subtitle options state
   const [subtitlesOption, setSubtitlesOption] = useState('none');
   const [customSubtitles, setCustomSubtitles] = useState('');
   const textareaRef = useRef(null);
 
-  // Model options with their icons and colors
-  const modelOptions = [
-    {
-      id: 'gemini-2.5-pro',
-      name: t('models.gemini25Pro', 'Gemini 2.5 Pro'),
-      description: t('models.bestAccuracy', 'Best accuracy'),
-      icon: <FiStar className="model-icon star-icon" />,
-      color: 'var(--md-tertiary)',
-      bgColor: 'rgba(var(--md-tertiary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.5-flash',
-      name: t('models.gemini25Flash', 'Gemini 2.5 Flash'),
-      description: t('models.smarterFaster', 'Smarter & faster'),
-      icon: <FiZap className="model-icon zap-icon" style={{ color: 'var(--md-tertiary)' }} />,
-      color: 'var(--md-tertiary)',
-      bgColor: 'rgba(var(--md-tertiary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.5-flash-lite-preview-06-17',
-      name: t('models.gemini25FlashLite', 'Gemini 2.5 Flash Lite'),
-      description: t('models.fastestAdvanced', 'Fastest 2.5 model'),
-      icon: <FiTrendingUp className="model-icon trending-icon" style={{ color: 'var(--md-tertiary)' }} />,
-      color: 'var(--md-tertiary)',
-      bgColor: 'rgba(var(--md-tertiary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.0-flash',
-      name: t('models.gemini20Flash', 'Gemini 2.0 Flash'),
-      description: t('models.balancedModel', 'Balanced'),
-      icon: <FiActivity className="model-icon activity-icon" />,
-      color: 'var(--md-primary)',
-      bgColor: 'rgba(var(--md-primary-rgb), 0.1)'
-    },
-    {
-      id: 'gemini-2.0-flash-lite',
-      name: t('models.gemini20FlashLite', 'Gemini 2.0 Flash Lite'),
-      description: t('models.fastestModel', 'Fastest'),
-      icon: <FiCpu className="model-icon cpu-icon" />,
-      color: 'var(--success-color)',
-      bgColor: 'rgba(var(--success-color-rgb), 0.1)'
-    }
-  ];
+  const modelOptions = (models.length > 0 ? models : [{ id: selectedModel, name: selectedModel }])
+    .map((model) => {
+      const id = model.id;
+      const isPro = id.includes('pro');
+      const isLite = id.includes('lite');
+      const isFlash = id.includes('flash');
+
+      return {
+        ...model,
+        id,
+        name: getGeminiModelLabel(model),
+        description: model.description || t('models.dynamicModel', 'Detected from the active API key'),
+        icon: isPro
+          ? <FiStar className="model-icon star-icon" />
+          : isLite
+            ? <FiTrendingUp className="model-icon trending-icon" />
+            : isFlash
+              ? <FiZap className="model-icon zap-icon" />
+              : <FiCpu className="model-icon cpu-icon" />,
+        color: isPro ? 'var(--md-tertiary)' : 'var(--md-primary)',
+        bgColor: isPro ? 'rgba(var(--md-tertiary-rgb), 0.1)' : 'rgba(var(--md-primary-rgb), 0.1)'
+      };
+    });
 
   useEffect(() => {
     if (isOpen) {
       // Reset to first step when modal opens
       setCurrentStep(1);
       // Set default model to current model
-      setSelectedModel(localStorage.getItem('gemini_model') || 'gemini-2.5-flash');
+      setSelectedModel(localStorage.getItem('gemini_model') || 'gemini-flash-latest');
       // Reset subtitle options
       setSubtitlesOption('none');
       setCustomSubtitles('');

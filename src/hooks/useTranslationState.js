@@ -71,7 +71,7 @@ export const useTranslationState = (subtitles, onTranslationComplete) => {
   // Use a translation-specific model selection that's independent from settings
   const [selectedModel, setSelectedModel] = useState(() => {
     // Get the model from translation-specific localStorage key or use the global setting as default
-    return localStorage.getItem('translation_model') || localStorage.getItem('gemini_model') || 'gemini-2.0-flash';
+    return localStorage.getItem('translation_model') || localStorage.getItem('gemini_model') || 'gemini-flash-latest';
   });
   const [customTranslationPrompt, setCustomTranslationPrompt] = useState(
     localStorage.getItem('custom_prompt_translation') || null

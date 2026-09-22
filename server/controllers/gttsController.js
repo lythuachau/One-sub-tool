@@ -6,17 +6,16 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
+const {
+  projectRoot,
+  pythonExecutable,
+  formatPythonError
+} = require('../utils/pythonRuntime');
 
 // Import cleanup function
 const { cleanupOldSubtitleDirectories } = require('./narration/directoryManager');
 
 // Check if we're in the project directory and have .venv
-const projectRoot = process.cwd();
-const venvPath = path.join(projectRoot, '.venv');
-const pythonExecutable = process.platform === 'win32' 
-  ? path.join(venvPath, 'Scripts', 'python.exe')
-  : path.join(venvPath, 'bin', 'python');
-
 /**
  * Get available gTTS languages
  */
@@ -59,6 +58,7 @@ except Exception as e:
 
     let stdout = '';
     let stderr = '';
+    let responseHandled = false;
 
     pythonProcess.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -68,7 +68,24 @@ except Exception as e:
       stderr += data.toString();
     });
 
+    pythonProcess.on('error', (error) => {
+      if (responseHandled) return;
+      responseHandled = true;
+      try {
+        fs.unlinkSync(tempScript);
+      } catch (cleanupError) {
+        // Ignore cleanup errors.
+      }
+      console.error('gTTS languages runtime error:', error);
+      res.status(503).json({
+        error: formatPythonError(error),
+        code: 'PYTHON_RUNTIME_UNAVAILABLE'
+      });
+    });
+
     pythonProcess.on('close', (code) => {
+      if (responseHandled) return;
+      responseHandled = true;
       // Clean up temp file
       try {
         fs.unlinkSync(tempScript);
@@ -207,6 +224,10 @@ except Exception as e:
 
           pythonProcess.stderr.on('data', (data) => {
             stderr += data.toString();
+          });
+
+          pythonProcess.on('error', (error) => {
+            reject(new Error(formatPythonError(error)));
           });
 
           pythonProcess.on('close', (code) => {

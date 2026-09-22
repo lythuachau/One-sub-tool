@@ -528,6 +528,10 @@ async function downloadDouyinVideoWithRetry(videoId, videoURL, quality = '360p',
 }
 
 module.exports = {
+  downloadDouyinVideoYtDlp,
+  downloadDouyinVideoFallback,
+  downloadDouyinVideoShortUrlFallback,
+  downloadDouyinVideoSimpleFallback,
   downloadDouyinVideoPuppeteer,
   downloadDouyinVideoWithRetry,
   normalizeDouyinUrl
