@@ -1,6 +1,6 @@
 # One-sub-tool
 
-English documentation for **One-sub-tool v2.2.0**, a local video subtitle and narration tool for Windows.
+English documentation for **One-sub-tool v2.2.1**, a local video subtitle and narration tool for Windows.
 
 Xem hướng dẫn tiếng Việt tại [README.vi.md](README.vi.md).
 
@@ -8,7 +8,7 @@ Xem hướng dẫn tiếng Việt tại [README.vi.md](README.vi.md).
 
 One-sub-tool converts video or audio into timed subtitles, lets you review and translate them, and creates narration without sending local media to a public server. The existing React/Express entry points are kept so the tool can be used locally and extended over time.
 
-## v2.2.0 highlights
+## v2.2.1 highlights
 
 - Gemini model discovery and model availability checks.
 - Optional Whisper transcription through the local subtitle engine.

@@ -374,7 +374,7 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics, sourceKey = 'defa
       if (!matches) return lyric;
 
       replacementCount += matches.length;
-      return { ...lyric, text: text.replace(matcher, replacementText) };
+      return { ...lyric, text: text.replace(matcher, () => replacementText) };
     });
 
     if (replacementCount === 0) return 0;
