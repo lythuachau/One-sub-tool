@@ -38,6 +38,7 @@ const VirtualizedLyricRow = ({ index, style, data }) => {
     getLastDragEnd,
     onDelete,
     onTextEdit,
+    onSplitLyric,
     onInsert,
     onMerge,
     timeFormat
@@ -61,6 +62,7 @@ const VirtualizedLyricRow = ({ index, style, data }) => {
         getLastDragEnd={getLastDragEnd}
         onDelete={onDelete}
         onTextEdit={onTextEdit}
+        onSplitLyric={onSplitLyric}
         onInsert={onInsert}
         onMerge={onMerge}
         hasNextLyric={hasNextLyric}
@@ -80,11 +82,17 @@ const LyricsDisplay = ({
   seekTime = null,
   timeFormat = 'seconds',
   onSaveSubtitles = null, // New callback for when subtitles are saved
+  onUpdateTranslatedLyrics = null,
   videoSource = null, // Video source URL for audio analysis
   translatedSubtitles = null, // Translated subtitles
   videoTitle = 'subtitles' // Video title for download filenames
 }) => {
   const { t } = useTranslation();
+  const [editingSource, setEditingSource] = useState('original');
+  const hasTranslatedSubtitles = translatedSubtitles && translatedSubtitles.length > 0;
+  const sourceLyrics = editingSource === 'translated' && hasTranslatedSubtitles
+    ? translatedSubtitles
+    : matchedLyrics;
   // Initialize zoom with a function that calculates the minimum zoom based on duration
   const [zoom, setZoom] = useState(() => {
     // Try to get the duration from the video element if it exists
@@ -285,8 +293,13 @@ const LyricsDisplay = ({
     handleInsertLyric,
     handleMergeLyrics,
     updateSavedLyrics,
-    handleSplitSubtitles
-  } = useLyricsEditor(matchedLyrics, onUpdateLyrics);
+    handleSplitSubtitles,
+    handleSplitLyric
+  } = useLyricsEditor(
+    sourceLyrics,
+    editingSource === 'translated' ? onUpdateTranslatedLyrics : onUpdateLyrics,
+    editingSource
+  );
 
   // Find current lyric index based on time
   const currentIndex = lyrics.findIndex((lyric, index) => {
@@ -297,6 +310,17 @@ const LyricsDisplay = ({
     return currentTime >= lyric.start &&
       (nextLyric ? currentTime < (lyric.end + (nextLyric.start - lyric.end) / 2) - 0.001 : currentTime <= lyric.end);
   });
+
+  useEffect(() => {
+    if (!hasTranslatedSubtitles && editingSource === 'translated') {
+      setEditingSource('original');
+    }
+  }, [editingSource, hasTranslatedSubtitles]);
+
+  const handleSourceChange = (source) => {
+    if (source === 'translated' && !hasTranslatedSubtitles) return;
+    setEditingSource(source);
+  };
 
   // Reference to the virtualized list
   const listRef = useRef(null);
@@ -574,6 +598,12 @@ const LyricsDisplay = ({
   // Function to save current subtitles to cache
   const handleSave = async () => {
     try {
+      if (editingSource === 'translated') {
+        updateSavedLyrics();
+        onSaveSubtitles?.(lyrics, editingSource);
+        return;
+      }
+
       // Get the current video source
       const currentVideoUrl = localStorage.getItem('current_video_url');
       const currentFileUrl = localStorage.getItem('current_file_url');
@@ -594,18 +624,19 @@ const LyricsDisplay = ({
 
       // Check if we have latest segment subtitles in localStorage
       let subtitlesToSave = lyrics;
-      try {
-        const latestSubtitles = localStorage.getItem('latest_segment_subtitles');
-        if (latestSubtitles) {
-          const parsedSubtitles = JSON.parse(latestSubtitles);
-          if (Array.isArray(parsedSubtitles) && parsedSubtitles.length > 0) {
-            subtitlesToSave = parsedSubtitles;
-            // Clear the localStorage entry to avoid using it again
-            localStorage.removeItem('latest_segment_subtitles');
+      if (editingSource === 'original') {
+        try {
+          const latestSubtitles = localStorage.getItem('latest_segment_subtitles');
+          if (latestSubtitles) {
+            const parsedSubtitles = JSON.parse(latestSubtitles);
+            if (Array.isArray(parsedSubtitles) && parsedSubtitles.length > 0) {
+              subtitlesToSave = parsedSubtitles;
+              localStorage.removeItem('latest_segment_subtitles');
+            }
           }
+        } catch (e) {
+          console.error('Error parsing latest subtitles from localStorage:', e);
         }
-      } catch (e) {
-        console.error('Error parsing latest subtitles from localStorage:', e);
       }
 
       // Save to cache
@@ -641,7 +672,7 @@ const LyricsDisplay = ({
 
         // Call the callback if provided to update parent component state
         if (onSaveSubtitles) {
-          onSaveSubtitles(subtitlesToSave);
+          onSaveSubtitles(subtitlesToSave, editingSource);
         }
 
         // Dispatch custom events to notify that subtitles have been saved
@@ -708,6 +739,28 @@ const LyricsDisplay = ({
 
   return (
     <div className={`lyrics-display ${Object.keys(isDragging()).length > 0 ? 'dragging-active' : ''}`}>
+      {allowEditing && hasTranslatedSubtitles && (
+        <div className="subtitle-edit-source-switch" role="tablist" aria-label={t('lyrics.editSource', 'Subtitle source to edit')}>
+          <button
+            type="button"
+            className={editingSource === 'original' ? 'active' : ''}
+            onClick={() => handleSourceChange('original')}
+            role="tab"
+            aria-selected={editingSource === 'original'}
+          >
+            {t('lyrics.original', 'Phụ đề gốc')}
+          </button>
+          <button
+            type="button"
+            className={editingSource === 'translated' ? 'active' : ''}
+            onClick={() => handleSourceChange('translated')}
+            role="tab"
+            aria-selected={editingSource === 'translated'}
+          >
+            {t('lyrics.translated', 'Phụ đề đã dịch')}
+          </button>
+        </div>
+      )}
       <div className="controls-timeline-container">
         <LyricsHeader
           allowEditing={allowEditing}
@@ -773,6 +826,7 @@ const LyricsDisplay = ({
               getLastDragEnd,
               onDelete: handleDeleteLyric,
               onTextEdit: handleTextEdit,
+              onSplitLyric: handleSplitLyric,
               onInsert: handleInsertLyric,
               onMerge: handleMergeLyrics,
               timeFormat
@@ -787,7 +841,7 @@ const LyricsDisplay = ({
         {allowEditing && (
           <div className="help-text">
             <p dangerouslySetInnerHTML={{
-              __html: t('lyrics.timingInstructions', 'Hiện có ??? dòng phụ đề. Kéo dấu thời gian để điều chỉnh thời gian cho mỗi phụ đề. Chế độ "Dính" sẽ điều chỉnh tất cả phụ đề theo sau. Chế độ "Cuộn" sẽ giúp tự dời tầm nhìn lên dòng sub đang chạy. 5 nút còn lại: Chia nhỏ sub, Lưu, Đặt lại, Hoàn tác, Làm lại')
+              __html: t('lyrics.timingInstructions', 'Hiện có ??? dòng phụ đề. Bấm trực tiếp vào nội dung để sửa; đặt con trỏ rồi nhấn Enter để tách thành dòng mới. Kéo dấu thời gian để điều chỉnh thời gian cho mỗi phụ đề. Chế độ "Dính" sẽ điều chỉnh tất cả phụ đề theo sau. Chế độ "Cuộn" sẽ giúp tự dời tầm nhìn lên dòng sub đang chạy. 5 nút còn lại: Chia nhỏ sub, Lưu, Đặt lại, Hoàn tác, Làm lại')
                 .replace('??? dòng', `<strong>${lyrics.length} dòng</strong>`)
                 .replace('??? subtitle lines', `<strong>${lyrics.length} subtitle lines</strong>`)
                 .replace('???개의 자막 라인', `<strong>${lyrics.length}개의 자막 라인</strong>`)

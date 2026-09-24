@@ -63,8 +63,17 @@ const OutputContainer = ({
     setEditedLyrics(updatedLyrics);
   };
 
+  const handleUpdateTranslatedLyrics = (updatedLyrics) => {
+    setTranslatedSubtitles(updatedLyrics);
+  };
+
   // Handle saving subtitles
-  const handleSaveSubtitles = (savedLyrics) => {
+  const handleSaveSubtitles = (savedLyrics, source = 'original') => {
+    if (source === 'translated') {
+      setTranslatedSubtitles(savedLyrics);
+      return;
+    }
+
     // Update the edited lyrics state with the saved lyrics
     setEditedLyrics(savedLyrics);
     // Also update the subtitlesData in the parent component
@@ -281,6 +290,7 @@ const OutputContainer = ({
               currentTime={currentTabIndex}
               onLyricClick={handleLyricClick}
               onUpdateLyrics={handleUpdateLyrics}
+              onUpdateTranslatedLyrics={handleUpdateTranslatedLyrics}
               onSaveSubtitles={handleSaveSubtitles}
               allowEditing={true}
               duration={videoDuration}

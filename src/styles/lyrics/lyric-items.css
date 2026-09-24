@@ -112,6 +112,8 @@
 
 .lyric-text-input {
   width: 100%;
+  min-height: 48px;
+  resize: vertical;
   padding: 4px 8px;
   margin: -4px 0;
   border: 1px solid var(--border-color);
@@ -121,6 +123,10 @@
   font-size: inherit;
   font-family: inherit;
   transition: all 0.2s ease;
+}
+
+.lyric-text-clickable {
+  cursor: text;
 }
 
 .lyric-text-input:focus {

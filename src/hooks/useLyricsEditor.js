@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { splitSubtitleAtCursor } from '../utils/subtitleSplitter';
 
-export const useLyricsEditor = (initialLyrics, onUpdateLyrics) => {
+export const useLyricsEditor = (initialLyrics, onUpdateLyrics, sourceKey = 'default') => {
   const [lyrics, setLyrics] = useState([]);
   const [history, setHistory] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
@@ -9,6 +10,7 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics) => {
   const [isAtOriginalState, setIsAtOriginalState] = useState(true);
   const [isAtSavedState, setIsAtSavedState] = useState(true);
   const [isSticky, setIsSticky] = useState(true);
+  const sourceKeyRef = useRef(sourceKey);
 
   const dragInfo = useRef({
     dragging: false,
@@ -21,18 +23,30 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics) => {
 
   // Sync with incoming lyrics
   useEffect(() => {
-    if (initialLyrics && initialLyrics.length > 0) {
-      setLyrics(initialLyrics);
-      if (originalLyrics.length === 0) {
-        setOriginalLyrics(JSON.parse(JSON.stringify(initialLyrics)));
-      }
-      if (savedLyrics.length === 0) {
-        setSavedLyrics(JSON.parse(JSON.stringify(initialLyrics)));
-      }
-      setIsAtOriginalState(JSON.stringify(initialLyrics) === JSON.stringify(originalLyrics));
-      setIsAtSavedState(JSON.stringify(initialLyrics) === JSON.stringify(savedLyrics));
+    const incomingLyrics = Array.isArray(initialLyrics) ? initialLyrics : [];
+    const incomingSnapshot = JSON.stringify(incomingLyrics);
+
+    if (sourceKeyRef.current !== sourceKey) {
+      const sourceSnapshot = JSON.parse(JSON.stringify(incomingLyrics));
+      sourceKeyRef.current = sourceKey;
+      setLyrics(sourceSnapshot);
+      setOriginalLyrics(sourceSnapshot);
+      setSavedLyrics(JSON.parse(JSON.stringify(sourceSnapshot)));
+      setHistory([]);
+      setRedoStack([]);
+      setIsAtOriginalState(true);
+      setIsAtSavedState(true);
+      return;
     }
-  }, [initialLyrics, originalLyrics, savedLyrics]);
+
+    setLyrics(previousLyrics => JSON.stringify(previousLyrics) === incomingSnapshot ? previousLyrics : incomingLyrics);
+    setOriginalLyrics(previousOriginal => previousOriginal.length === 0
+      ? JSON.parse(JSON.stringify(incomingLyrics))
+      : previousOriginal);
+    setSavedLyrics(previousSaved => previousSaved.length === 0
+      ? JSON.parse(JSON.stringify(incomingLyrics))
+      : previousSaved);
+  }, [initialLyrics, sourceKey]);
 
   // Track whether current lyrics match original lyrics
   useEffect(() => {
@@ -347,6 +361,21 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics) => {
     showTranslationWarning('You have edited the text of original subtitles. Translations may be outdated. Please translate again.');
   };
 
+  const handleSplitLyric = (index, cursorPosition, textOverride) => {
+    const updatedLyrics = splitSubtitleAtCursor(lyrics, index, cursorPosition, textOverride);
+    if (updatedLyrics === lyrics) return false;
+
+    setHistory(prevHistory => [...prevHistory, JSON.parse(JSON.stringify(lyrics))]);
+    setRedoStack([]);
+    setLyrics(updatedLyrics);
+    if (onUpdateLyrics) {
+      onUpdateLyrics(updatedLyrics);
+    }
+
+    showTranslationWarning('You have split a subtitle line. Review the timing before generating narration.');
+    return true;
+  };
+
   const handleInsertLyric = (index) => {
     setHistory(prevHistory => [...prevHistory, JSON.parse(JSON.stringify(lyrics))]);
 
@@ -561,6 +590,7 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics) => {
     getLastDragEnd,
     handleDeleteLyric,
     handleTextEdit,
+    handleSplitLyric,
     handleInsertLyric,
     handleMergeLyrics,
     handleSplitSubtitles,

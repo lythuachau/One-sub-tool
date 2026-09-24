@@ -82,6 +82,7 @@ const LyricItem = ({
   getLastDragEnd,
   onDelete,
   onTextEdit,
+  onSplitLyric,
   onInsert,
   onMerge,
   hasNextLyric
@@ -90,6 +91,7 @@ const LyricItem = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(lyric.text);
   const textInputRef = useRef(null);
+  const splitAppliedRef = useRef(false);
 
   // State for showing insert arrows
   const [showInsertArrows, setShowInsertArrows] = useState(false);
@@ -169,12 +171,18 @@ const LyricItem = ({
 
   const handleEditClick = (e) => {
     e.stopPropagation();
+    splitAppliedRef.current = false;
     setIsEditing(true);
     setEditText(lyric.text);
     setTimeout(() => textInputRef.current?.focus(), 0);
   };
 
   const handleTextSubmit = () => {
+    if (splitAppliedRef.current) {
+      splitAppliedRef.current = false;
+      setIsEditing(false);
+      return;
+    }
     if (editText.trim() !== lyric.text) {
       onTextEdit(index, editText.trim());
     }
@@ -183,11 +191,36 @@ const LyricItem = ({
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter') {
-      handleTextSubmit();
+      if (e.shiftKey) return;
+
+      e.preventDefault();
+      const splitApplied = onSplitLyric?.(index, e.currentTarget.selectionStart, editText);
+      if (!splitApplied) {
+        handleTextSubmit();
+      } else {
+        splitAppliedRef.current = true;
+        setIsEditing(false);
+      }
     } else if (e.key === 'Escape') {
       setIsEditing(false);
       setEditText(lyric.text);
     }
+  };
+
+  const handleTextClick = (e) => {
+    e.stopPropagation();
+    if (allowEditing) {
+      splitAppliedRef.current = false;
+      setIsEditing(true);
+      setEditText(lyric.text);
+      setTimeout(() => {
+        textInputRef.current?.focus();
+        const endPosition = String(lyric.text ?? '').length;
+        textInputRef.current?.setSelectionRange(endPosition, endPosition);
+      }, 0);
+      return;
+    }
+    onLyricClick(lyric.start);
   };
 
   // Handle insert above
@@ -369,23 +402,22 @@ const LyricItem = ({
 
           <div className="lyric-text">
             {isEditing ? (
-              <input
+              <textarea
                 ref={textInputRef}
-                type="text"
                 value={editText}
                 onChange={(e) => setEditText(e.target.value)}
                 onBlur={handleTextSubmit}
                 onKeyDown={handleKeyPress}
                 className="lyric-text-input"
+                rows={Math.max(2, editText.split('\n').length)}
                 onClick={e => e.stopPropagation()}
               />
             ) : (
-              <span onClick={(e) => {
-                e.stopPropagation(); // Stop propagation to prevent double click handling
-                if (!isEditing) {
-                  onLyricClick(lyric.start);
-                }
-              }}>
+              <span
+                className={allowEditing ? 'lyric-text-clickable' : ''}
+                onClick={handleTextClick}
+                title={allowEditing ? t('lyrics.clickToEdit', 'Click to edit. Press Enter to split at the cursor.') : undefined}
+              >
                 {lyric.text.split('\n').map((line, lineIndex) => (
                   <React.Fragment key={lineIndex}>
                     {lineIndex > 0 && <br />}

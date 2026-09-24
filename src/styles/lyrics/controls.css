@@ -1,5 +1,29 @@
 /* Controls styles for buttons and interactive elements */
 
+.subtitle-edit-source-switch {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+
+.subtitle-edit-source-switch button {
+  border: 1px solid var(--md-outline);
+  border-radius: var(--md-shape-pill);
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  font: inherit;
+}
+
+.subtitle-edit-source-switch button.active {
+  background: var(--md-primary-container);
+  border-color: var(--md-primary);
+  color: var(--md-on-primary-container);
+}
+
 /* Material Design 3 editing controls */
 .editing-controls {
   display: flex;

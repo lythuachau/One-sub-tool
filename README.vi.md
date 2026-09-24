@@ -1,10 +1,10 @@
 # One-sub-tool
 
-**One-sub-tool v1.2.0** là công cụ cá nhân chạy local trên Windows để trích xuất, chỉnh sửa, dịch phụ đề và tạo thuyết minh cho video.
+**One-sub-tool v2.1.0** là công cụ cá nhân chạy local trên Windows để trích xuất, chỉnh sửa, dịch phụ đề và tạo thuyết minh cho video.
 
 Xem tài liệu tiếng Anh tại [README.md](README.md).
 
-## Điểm mới trong v1.2.0
+## Điểm mới trong v2.1.0
 
 - Tự phát hiện model Gemini và kiểm tra model có hoạt động hay không.
 - Có thể chọn Whisper local cho bước trích xuất phụ đề.
@@ -90,3 +90,6 @@ npm run test:services      # kiểm tra nhanh các service
 ## Giấy phép
 
 MIT License.
+- Có thể bấm trực tiếp vào nội dung phụ đề trên timeline để sửa; đặt con trỏ rồi nhấn Enter sẽ tách thành một dòng có mốc thời gian mới.
+- Mốc tách được tính ổn định theo vị trí văn bản, không tạo timestamp ngẫu nhiên; mỗi dòng sau khi tách được dùng độc lập cho TTS.
+- Có thể chọn chỉnh phụ đề gốc hoặc phụ đề đã dịch ngay trên cùng timeline.
