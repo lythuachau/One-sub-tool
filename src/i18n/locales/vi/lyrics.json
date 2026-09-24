@@ -4,7 +4,7 @@
   "autoScroll": "Cuộn",
   "autoScrollEnable": "Bật cuộn tự động",
   "autoScrollDisable": "Tắt cuộn tự động",
-  "timingInstructions": "Hiện có ??? dòng phụ đề. Kéo dấu thời gian để điều chỉnh thời gian cho mỗi phụ đề. Chế độ \"Dính\" sẽ điều chỉnh tất cả phụ đề theo sau. Chế độ \"Cuộn\" sẽ giúp tự dời tầm nhìn lên dòng sub đang chạy. 5 nút còn lại: Chia nhỏ sub, Lưu, Đặt lại, Hoàn tác, Làm lại",
+  "timingInstructions": "Hiện có ??? dòng phụ đề. Bấm trực tiếp vào nội dung để sửa; đặt con trỏ rồi nhấn Enter để tách dòng, nhấn Backspace ở đầu câu để gộp với câu trước. Dùng thanh tìm kiếm để thay thế text thủ công. Kéo dấu thời gian để điều chỉnh thời gian. Chế độ \"Dính\" sẽ điều chỉnh các phụ đề phía sau.",
   "editTooltip": "Chỉnh sửa văn bản phụ đề",
   "deleteTooltip": "Xóa phụ đề",
   "insertTooltip": "Thêm dòng mới",

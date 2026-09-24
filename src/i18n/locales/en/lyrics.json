@@ -4,7 +4,7 @@
   "autoScroll": "Scroll",
   "autoScrollEnable": "Enable auto-scroll",
   "autoScrollDisable": "Disable auto-scroll",
-  "timingInstructions": "Currently have ??? subtitle lines. Drag timestamps to adjust timing for each subtitle. \"Stick\" mode will adjust all following subtitles. \"Scroll\" mode will automatically move view to the current running subtitle. 5 remaining buttons: Split subtitles, Save, Reset, Undo, Redo",
+  "timingInstructions": "Currently have ??? subtitle lines. Click the text to edit; place the cursor and press Enter to split a line, or press Backspace at the start to merge with the previous line. Use find and replace for manual text changes. Drag timestamps to adjust timing.",
   "editTooltip": "Edit lyric text",
   "deleteTooltip": "Delete lyric",
   "insertTooltip": "Add new line",
