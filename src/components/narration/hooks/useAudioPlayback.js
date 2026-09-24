@@ -20,12 +20,18 @@ const useAudioPlayback = ({
   useEffect(() => {
     if (audioRef.current) {
       if (isPlaying) {
-        audioRef.current.play();
+        const playback = audioRef.current.play();
+        if (playback && typeof playback.catch === 'function') {
+          playback.catch((error) => {
+            console.error('Narration audio playback failed:', error);
+            setIsPlaying(false);
+          });
+        }
       } else {
         audioRef.current.pause();
       }
     }
-  }, [isPlaying, currentAudio]);
+  }, [isPlaying, currentAudio, setIsPlaying]);
 
   // Handle audio ended event
   const handleAudioEnded = () => {
