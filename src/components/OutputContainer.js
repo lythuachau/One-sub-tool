@@ -8,6 +8,7 @@ import TranslationSection from './translation';
 import { UnifiedNarrationSection } from './narration';
 import ParallelProcessingStatus from './ParallelProcessingStatus';
 import { hasValidDownloadedVideo, isBlobUrlValid } from '../utils/videoUtils';
+import { persistVideoIdentity } from '../utils/videoIdentity';
 // BackgroundImageGenerator moved back to AppLayout
 
 const OutputContainer = ({
@@ -99,6 +100,15 @@ const OutputContainer = ({
 
     // First check for uploaded file
     const uploadedFileUrl = localStorage.getItem('current_file_url');
+    const currentVideoId = selectedVideo?.id || localStorage.getItem('current_video_id');
+    const currentFileVideoId = localStorage.getItem('current_file_video_id');
+    if (uploadedFile && currentVideoId && currentFileVideoId && currentVideoId !== currentFileVideoId) {
+      localStorage.removeItem('current_file_url');
+      localStorage.removeItem('current_file_video_id');
+      localStorage.removeItem('current_file_source_url');
+      setVideoSource('');
+      return;
+    }
     if (uploadedFileUrl) {
       // Check if it's a blob URL and if we have an uploadedFile
       if (uploadedFileUrl.startsWith('blob:')) {
@@ -121,8 +131,8 @@ const OutputContainer = ({
     // Then check for YouTube video
     if (selectedVideo?.url) {
       // Store the selected video URL in localStorage to maintain state
-      if (selectedVideo.source === 'youtube' || selectedVideo.source === 'douyin' || selectedVideo.source === 'all-sites') {
-        localStorage.setItem('current_video_url', selectedVideo.url);
+      if (selectedVideo.source === 'youtube' || selectedVideo.source === 'douyin' || selectedVideo.source === 'douyin-playwright' || selectedVideo.source === 'all-sites') {
+        persistVideoIdentity(selectedVideo);
       }
 
       // Special case: If we're in SRT-only mode, don't set videoSource

@@ -16,6 +16,7 @@ const { startNarrationService } = require('./server/startNarrationService');
 
 // Import WebSocket progress tracking
 const { initializeProgressWebSocket } = require('./server/services/shared/progressWebSocket');
+const { stopRenderer } = require('./server/services/videoRendererManager');
 
 // Import port management
 const { killProcessesOnPorts, trackProcess, cleanupTrackingFile } = require('./server/utils/portManager');
@@ -109,6 +110,10 @@ process.on('SIGINT', async () => {
 
   try {
     const server = await serverPromise;
+
+    await stopRenderer().catch((error) => {
+      console.error('Error stopping video renderer:', error);
+    });
 
     server.close(() => {
       // Kill the narration service processes

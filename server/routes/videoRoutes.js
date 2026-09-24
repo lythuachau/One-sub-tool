@@ -9,13 +9,17 @@ const path = require('path');
 const multer = require('multer');
 const { VIDEOS_DIR, SERVER_URL } = require('../config');
 const { downloadYouTubeVideo } = require('../services/youtube');
+const { resolveDouyinTarget } = require('../services/douyin/nativeDownloader');
 const { getDownloadProgress } = require('../services/shared/progressTracker');
 const { getVideoDimensions } = require('../services/videoProcessing/durationUtils');
 const {
+  isVideoSourceMatch,
+  writeVideoSourceMetadata,
+  quarantineStaleVideoArtifact
+} = require('../services/shared/videoSourceMetadata');
+const {
   splitVideoIntoSegments,
   splitMediaIntoSegments,
-  optimizeVideo,
-  createAnalysisVideo,
   convertAudioToVideo
 } = require('../services/videoProcessingService');
 
@@ -74,16 +78,27 @@ router.post('/copy-large-file', upload.single('file'), async (req, res) => {
 /**
  * GET /api/video-exists/:videoId - Check if a video exists
  */
-router.get('/video-exists/:videoId', (req, res) => {
+router.get('/video-exists/:videoId', async (req, res) => {
   const { videoId } = req.params;
-  let videoPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
-  let filename = `${videoId}.mp4`;
+  const sourceUrl = req.query.url;
+  let canonicalVideoId = videoId;
+  if (sourceUrl && /(?:douyin\.com|iesdouyin\.com)/i.test(sourceUrl)) {
+    try {
+      const target = await resolveDouyinTarget(sourceUrl);
+      canonicalVideoId = String(target.videoId);
+    } catch (error) {
+      console.warn(`[VIDEO-EXISTS] Douyin URL resolution failed for ${videoId}: ${error.message}`);
+    }
+  }
+
+  let videoPath = path.join(VIDEOS_DIR, `${canonicalVideoId}.mp4`);
+  let filename = `${canonicalVideoId}.mp4`;
 
   // If exact match doesn't exist, look for files starting with videoId
   if (!fs.existsSync(videoPath)) {
     const files = fs.readdirSync(VIDEOS_DIR);
     const matchingFile = files.find(file =>
-      file.startsWith(`${videoId}_`) && file.endsWith('.mp4')
+      file.startsWith(`${canonicalVideoId}_`) && file.endsWith('.mp4')
     );
 
     if (matchingFile) {
@@ -92,16 +107,31 @@ router.get('/video-exists/:videoId', (req, res) => {
     }
   }
 
-  if (fs.existsSync(videoPath)) {
+  if (!fs.existsSync(videoPath) || !sourceUrl) {
+    res.json({ exists: false });
+    return;
+  }
+
+  try {
+    const matches = await isVideoSourceMatch(videoPath, { videoId: canonicalVideoId, sourceUrl });
+    if (!matches) {
+      await quarantineStaleVideoArtifact(videoPath, 'source-mismatch');
+      res.json({ exists: false });
+      return;
+    }
+
     const stats = fs.statSync(videoPath);
     res.json({
       exists: true,
+      videoId: canonicalVideoId,
+      requestedVideoId: videoId,
       url: `/videos/${filename}`,
       size: stats.size,
       createdAt: stats.birthtime
     });
-  } else {
-    res.json({ exists: false });
+  } catch (error) {
+    console.error('Error validating cached video source:', error);
+    res.status(500).json({ exists: false, error: 'Failed to validate cached video' });
   }
 });
 
@@ -129,7 +159,7 @@ router.get('/segment-exists/:segmentId', (req, res) => {
  * POST /api/download-video - Download a YouTube video
  */
 router.post('/download-video', async (req, res) => {
-  const { videoId, useCookies = false } = req.body;
+  const { videoId, sourceUrl, useCookies = false } = req.body;
 
 
 
@@ -139,13 +169,19 @@ router.post('/download-video', async (req, res) => {
 
   const videoPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
 
-  // Check if video already exists
-  if (fs.existsSync(videoPath)) {
+  const expectedSourceUrl = sourceUrl || `https://www.youtube.com/watch?v=${videoId}`;
+
+  // A cache hit is valid only when its sidecar proves the same source URL.
+  if (fs.existsSync(videoPath) && await isVideoSourceMatch(videoPath, { videoId, sourceUrl: expectedSourceUrl })) {
     return res.json({
       success: true,
       message: 'Video already downloaded',
       url: `/videos/${videoId}.mp4`
     });
+  }
+
+  if (fs.existsSync(videoPath)) {
+    await quarantineStaleVideoArtifact(videoPath, 'source-mismatch');
   }
 
   try {
@@ -154,6 +190,12 @@ router.post('/download-video', async (req, res) => {
 
     // Check if the file was created successfully
     if (fs.existsSync(videoPath)) {
+      await writeVideoSourceMetadata({
+        videoPath,
+        videoId,
+        sourceUrl: expectedSourceUrl,
+        method: result.method || 'youtube'
+      });
 
       return res.json({
         success: true,
@@ -268,7 +310,7 @@ router.get('/video-dimensions/:videoId', async (req, res) => {
  */
 router.post('/split-existing-file', async (req, res) => {
   try {
-    const { filename, segmentDuration = 600, fastSplit = false, optimizeVideos = false, optimizedResolution = '360p' } = req.body;
+    const { filename, segmentDuration = 600, fastSplit = false } = req.body;
 
     if (!filename) {
       return res.status(400).json({ error: 'Filename is required' });
@@ -289,27 +331,7 @@ router.post('/split-existing-file', async (req, res) => {
     // Extract media ID from filename
     const mediaId = filename.replace(/\.(mp[34]|webm|mov|avi|wmv|flv|mkv|mp3|wav|aac|ogg|flac)$/i, '');
 
-    let processPath = filePath;
-    let optimizedResult = null;
-
-    // Optimize videos only if requested (not audio files)
-    if (!isAudio && optimizeVideos) {
-      try {
-        const optimizedFilename = `optimized_${mediaId}.mp4`;
-        const optimizedPath = path.join(VIDEOS_DIR, optimizedFilename);
-
-        optimizedResult = await optimizeVideo(processPath, optimizedPath, {
-          resolution: optimizedResolution,
-          fps: 1 // Gemini only processes 1 FPS
-        });
-
-        if (fs.existsSync(optimizedPath)) {
-          processPath = optimizedPath;
-        }
-      } catch (error) {
-        console.error('Error optimizing video:', error);
-      }
-    }
+    const processPath = filePath;
 
     // Split the media file into segments
     const result = await splitMediaIntoSegments(
@@ -338,14 +360,7 @@ router.post('/split-existing-file', async (req, res) => {
         theoreticalDuration: segment.theoreticalDuration
       })),
       message: `${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} split successfully`,
-      optimized: optimizedResult ? {
-        video: `/videos/${path.basename(optimizedResult.path)}`,
-        resolution: optimizedResult.resolution,
-        fps: optimizedResult.fps,
-        width: optimizedResult.width,
-        height: optimizedResult.height,
-        wasOptimized: optimizedResult.optimized !== false
-      } : null
+      optimized: null
     });
   } catch (error) {
     console.error('Error splitting existing file:', error);
@@ -379,32 +394,7 @@ router.post('/upload-and-split-video', express.raw({ limit: '2gb', type: '*/*' }
     // Get segment duration from query params or use default (10 minutes)
     const segmentDuration = parseInt(req.query.segmentDuration || '600');
     const fastSplit = req.query.fastSplit === 'true';
-    const optimizeVideos = req.query.optimizeVideos === 'true';
-    const optimizedResolution = req.query.optimizedResolution || '360p';
-
-    let processPath = mediaPath;
-    let optimizedResult = null;
-
-    // Optimize videos only if requested (not audio files)
-    if (!isAudio && optimizeVideos) {
-      try {
-
-        const optimizedFilename = `optimized_${timestamp}.mp4`;
-        const optimizedPath = path.join(VIDEOS_DIR, optimizedFilename);
-
-        optimizedResult = await optimizeVideo(processPath, optimizedPath, {
-          resolution: optimizedResolution,
-          fps: 1 // Gemini only processes 1 FPS
-        });
-
-        // Use the optimized video for splitting
-        processPath = optimizedPath;
-
-      } catch (error) {
-        console.error('Error optimizing video:', error);
-
-      }
-    }
+    const processPath = mediaPath;
 
     // Split the media file into segments
     const result = await splitMediaIntoSegments(
@@ -426,15 +416,7 @@ router.post('/upload-and-split-video', express.raw({ limit: '2gb', type: '*/*' }
       batchId: result.batchId,
       segments: result.segments.map(segment => `/videos/${path.basename(segment.path)}`),
       message: `${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} uploaded and split successfully`,
-      // Include optimized video information if available and actually optimized
-      optimized: optimizedResult ? {
-        video: `/videos/${path.basename(optimizedResult.path)}`,
-        resolution: optimizedResult.resolution,
-        fps: optimizedResult.fps,
-        width: optimizedResult.width,
-        height: optimizedResult.height,
-        wasOptimized: optimizedResult.optimized !== false
-      } : null
+      optimized: null
     });
   } catch (error) {
     const errorMediaType = req.headers['content-type']?.startsWith('audio/') ? 'audio' : 'video';
@@ -486,50 +468,7 @@ router.post('/split-video', express.raw({ limit: '2gb', type: '*/*' }), async (r
     // Get segment duration from query params or use default (10 minutes = 600 seconds)
     const segmentDuration = parseInt(req.query.segmentDuration || '600');
     const fastSplit = req.query.fastSplit === 'true';
-    // Parse optimizeVideos parameter - default to false to avoid duplication
-    // Check explicitly for 'true' string to ensure we don't optimize unless explicitly requested
-    const optimizeVideos = req.query.optimizeVideos === 'true';
-
-    const optimizedResolution = req.query.optimizedResolution || '360p';
-
-    let processPath = mediaPath;
-    let optimizedResult = null;
-
-    // Optimize videos only if requested (not audio files)
-    if (!isAudio && optimizeVideos) {
-      try {
-
-
-        // Ensure we don't have double extensions in the optimized filename
-        const cleanMediaId = mediaId.replace(/\.(mp[34]|webm|mov|avi|wmv|flv|mkv)$/i, '');
-        const optimizedFilename = `optimized_${cleanMediaId}.mp4`;
-        const optimizedPath = path.join(VIDEOS_DIR, optimizedFilename);
-
-
-        optimizedResult = await optimizeVideo(processPath, optimizedPath, {
-          resolution: optimizedResolution,
-          fps: 1 // Gemini only processes 1 FPS
-        });
-
-        // Double-check that the optimization was successful
-        if (!optimizedResult) {
-          console.error(`[SPLIT-VIDEO] Optimization failed: optimizedResult is null or undefined`);
-          throw new Error('Video optimization failed');
-        }
-
-        // Only use the optimized video if it actually exists
-        if (fs.existsSync(optimizedPath)) {
-          processPath = optimizedPath;
-
-        } else {
-
-          // Keep using the original video path
-        }
-      } catch (error) {
-        console.error('[SPLIT-VIDEO] Error optimizing video:', error);
-
-      }
-    }
+    const processPath = mediaPath;
 
     // Split the media file into segments
     const result = await splitMediaIntoSegments(
@@ -562,15 +501,7 @@ router.post('/split-video', express.raw({ limit: '2gb', type: '*/*' }), async (r
         theoreticalDuration: segment.theoreticalDuration
       })),
       message: `${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} split successfully`,
-      // Include optimized video information if available and actually optimized
-      optimized: optimizedResult ? {
-        video: `/videos/${path.basename(optimizedResult.path)}`,
-        resolution: optimizedResult.resolution,
-        fps: optimizedResult.fps,
-        width: optimizedResult.width,
-        height: optimizedResult.height,
-        wasOptimized: optimizedResult.optimized !== false
-      } : null
+      optimized: null
     });
   } catch (error) {
     const errorMediaType = req.headers['content-type']?.startsWith('audio/') ? 'audio' : 'video';
@@ -583,11 +514,12 @@ router.post('/split-video', express.raw({ limit: '2gb', type: '*/*' }), async (r
 });
 
 /**
- * POST /api/optimize-existing-file - Optimize a file that already exists on the server
+ * POST /api/optimize-existing-file - Legacy compatibility endpoint.
+ * The original file is returned without optimization.
  */
 router.post('/optimize-existing-file', async (req, res) => {
   try {
-    const { filename, resolution = '360p', fps = 1, useVideoAnalysis = true } = req.body;
+    const { filename } = req.body;
 
     if (!filename) {
       return res.status(400).json({ error: 'Filename is required' });
@@ -600,200 +532,83 @@ router.post('/optimize-existing-file', async (req, res) => {
       return res.status(404).json({ error: 'File not found on server' });
     }
 
-    console.log(`[OPTIMIZE-EXISTING] Optimizing existing file: ${filename}`);
-
-    // Determine media type from file extension
     const extension = path.extname(filename).toLowerCase();
     const isAudio = ['.mp3', '.wav', '.aac', '.ogg', '.flac'].includes(extension);
-
-    // Generate timestamp for optimized files
-    const timestamp = Date.now();
-
-    // Always use mp4 for processed files
-    const optimizedFilename = `optimized_${timestamp}.mp4`;
-    const analysisFilename = `analysis_500frames_${timestamp}.mp4`;
-    const optimizedPath = path.join(VIDEOS_DIR, optimizedFilename);
-    const analysisPath = path.join(VIDEOS_DIR, analysisFilename);
-
-    let videoPath = filePath;
-    let optimizedResult = null;
-    let analysisResult = null;
-
-    // If it's an audio file, convert it to video first
-    if (isAudio) {
-      const convertedFilename = `converted_${timestamp}.mp4`;
-      const convertedPath = path.join(VIDEOS_DIR, convertedFilename);
-
-      const conversionResult = await convertAudioToVideo(filePath, convertedPath);
-      if (conversionResult && fs.existsSync(convertedPath)) {
-        videoPath = convertedPath;
-      }
-    }
-
-    // Optimize the video
-    optimizedResult = await optimizeVideo(videoPath, optimizedPath, {
-      resolution: resolution,
-      fps: fps
-    });
-
-    if (!optimizedResult) {
-      throw new Error('Video optimization failed');
-    }
-
-    // Create analysis video if requested and optimization was successful
-    if (useVideoAnalysis && optimizedResult && fs.existsSync(optimizedPath)) {
+    let dimensions = {};
+    if (!isAudio) {
       try {
-        analysisResult = await createAnalysisVideo(optimizedPath, analysisPath);
+        dimensions = await getVideoDimensions(filePath);
       } catch (error) {
-        console.warn(`[OPTIMIZE-EXISTING] Analysis video creation failed: ${error.message}`);
-        // Continue without analysis video
+        console.warn(`[OPTIMIZE-EXISTING] Could not read dimensions: ${error.message}`);
       }
     }
 
-    // Return the result
     res.json({
       success: true,
       originalVideo: `/videos/${filename}`,
-      optimizedVideo: `/videos/${optimizedFilename}`,
-      resolution: optimizedResult.resolution,
-      fps: optimizedResult.fps,
-      width: optimizedResult.width,
-      height: optimizedResult.height,
-      wasOptimized: optimizedResult.optimized !== false,
-      analysis: analysisResult ? {
-        video: `/videos/${analysisFilename}`,
-        frameCount: analysisResult.frameCount,
-        duration: analysisResult.duration
-      } : null,
-      message: 'Video optimized successfully from existing file'
+      optimizedVideo: `/videos/${filename}`,
+      resolution: dimensions.resolution || null,
+      fps: null,
+      width: dimensions.width || null,
+      height: dimensions.height || null,
+      wasOptimized: false,
+      analysis: null,
+      message: 'Video optimization disabled; original file used'
     });
   } catch (error) {
-    console.error('[OPTIMIZE-EXISTING] Error optimizing existing file:', error);
+    console.error('[OPTIMIZE-EXISTING] Error reading existing file:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to optimize existing file'
+      error: error.message || 'Failed to use existing file'
     });
   }
 });
 
 /**
- * POST /api/optimize-video - Optimize a video by scaling it to a lower resolution and reducing the frame rate
- * Also creates an analysis video with 500 frames for Gemini analysis
- * Automatically converts audio files to video at the start
+ * POST /api/optimize-video - Legacy compatibility endpoint.
+ * The uploaded original file is stored and returned without optimization.
  */
 router.post('/optimize-video', express.raw({ limit: '2gb', type: '*/*' }), async (req, res) => {
   try {
-    // Get optimization options from query params
-    const resolution = req.query.resolution || '360p';
-    const fps = parseInt(req.query.fps || '1'); // Default to 1 FPS for Gemini optimization
-    const useVideoAnalysis = req.query.useVideoAnalysis !== 'false'; // Default to true if not specified
-
-    // Determine if this is a video or audio file based on MIME type
     const contentType = req.headers['content-type'] || 'video/mp4';
     const isAudio = contentType.startsWith('audio/');
     const mediaType = isAudio ? 'audio' : 'video';
-
-    // Generate a unique filename for the original file
     const timestamp = Date.now();
     const originalFileExtension = contentType.split('/')[1] || (isAudio ? 'mp3' : 'mp4');
     const originalFilename = `original_${timestamp}.${originalFileExtension}`;
     const originalPath = path.join(VIDEOS_DIR, originalFilename);
 
-    // Always use mp4 for processed files
-    const optimizedFilename = `optimized_${timestamp}.mp4`;
-    const analysisFilename = `analysis_500frames_${timestamp}.mp4`;
-    const optimizedPath = path.join(VIDEOS_DIR, optimizedFilename);
-    const analysisPath = path.join(VIDEOS_DIR, analysisFilename);
-
-    // Save the uploaded file
     fs.writeFileSync(originalPath, req.body);
 
-
-
-    // If it's an audio file, convert it to video first
-    let videoPath = originalPath;
-
-    if (isAudio) {
+    let dimensions = {};
+    if (!isAudio) {
       try {
-
-        const videoFilename = `converted_${timestamp}.mp4`;
-        videoPath = path.join(VIDEOS_DIR, videoFilename);
-
-        await convertAudioToVideo(originalPath, videoPath);
-
+        dimensions = await getVideoDimensions(originalPath);
       } catch (error) {
-        console.error('[OPTIMIZE-VIDEO] Error converting audio to video:', error);
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to convert audio to video'
-        });
+        console.warn(`[OPTIMIZE-VIDEO] Could not read dimensions: ${error.message}`);
       }
     }
-
-    // Optimize the video
-
-
-    const result = await optimizeVideo(videoPath, optimizedPath, {
-      resolution,
-      fps
-    });
-
-    // Determine which video to use for analysis (optimized or original)
-    const wasOptimized = result.optimized !== false;
-    const videoForAnalysis = wasOptimized ? optimizedPath : videoPath;
-
-    // Create an analysis video with 500 frames only if video analysis is enabled
-    let analysisResult = null;
-    if (useVideoAnalysis) {
-      analysisResult = await createAnalysisVideo(videoForAnalysis, analysisPath);
-
-      if (analysisResult.isOriginal) {
-        console.log('[OPTIMIZE-VIDEO] Using optimized video for analysis (fewer than 500 frames)');
-      } else {
-        console.log(`[OPTIMIZE-VIDEO] Created analysis video with ${analysisResult.frameCount} frames from ${analysisResult.originalFrameCount} original frames`);
-      }
-    } else {
-      console.log('[OPTIMIZE-VIDEO] Video analysis disabled, skipping analysis video creation');
-    }
-
-    // Return the optimized and analysis video information
-    // Use the optimized video path based on whether optimization was performed
-    const optimizedVideoPath = wasOptimized ? `/videos/${optimizedFilename}` : `/videos/${originalFilename}`;
 
     res.json({
       success: true,
       originalMedia: `/videos/${originalFilename}`,
-      // Report the original media type to the client
-      mediaType: isAudio ? 'audio' : 'video',
-      optimizedVideo: optimizedVideoPath,
-      resolution: result.resolution,
-      fps: result.fps,
-      width: result.width,
-      height: result.height,
-      duration: result.duration,
-      message: wasOptimized
-        ? `${isAudio ? 'Audio' : 'Video'} optimized successfully to ${result.resolution} at ${result.fps}fps`
-        : `${isAudio ? 'Audio' : 'Video'} resolution (${result.width}x${result.height}) is already ${result.height}p or lower. No optimization needed.`,
-      // Include analysis video information only if analysis was performed
-      analysis: analysisResult ? (analysisResult.isOriginal ? {
-        // If the video has fewer than 500 frames, we use the optimized video (or original if not optimized)
-        video: optimizedVideoPath,
-        frameCount: analysisResult.frameCount,
-        message: 'Using video for analysis (fewer than 500 frames)'
-      } : {
-        video: `/videos/${analysisFilename}`,
-        frameCount: analysisResult.frameCount,
-        originalFrameCount: analysisResult.originalFrameCount,
-        frameInterval: analysisResult.frameInterval,
-        message: `Created 500-frame analysis video from ${analysisResult.originalFrameCount} original frames`
-      }) : null
+      mediaType,
+      optimizedVideo: `/videos/${originalFilename}`,
+      resolution: dimensions.resolution || null,
+      fps: null,
+      width: dimensions.width || null,
+      height: dimensions.height || null,
+      duration: dimensions.duration || null,
+      wasOptimized: false,
+      analysis: null,
+      message: 'Video optimization disabled; original file used'
     });
   } catch (error) {
     const errorMediaType = req.headers['content-type']?.startsWith('audio/') ? 'audio' : 'video';
-    console.error(`[OPTIMIZE-VIDEO] Error optimizing ${errorMediaType}:`, error);
+    console.error(`[OPTIMIZE-VIDEO] Error storing original ${errorMediaType}:`, error);
     res.status(500).json({
       success: false,
-      error: error.message || `Failed to optimize ${errorMediaType}`
+      error: error.message || `Failed to store original ${errorMediaType}`
     });
   }
 });

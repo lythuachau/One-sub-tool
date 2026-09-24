@@ -4,6 +4,7 @@
 
 import { analyzeVideoWithGemini } from '../../services/videoAnalysisService';
 import { setTranscriptionRules } from '../transcriptionRulesStore';
+import { createRequestController, removeRequestController } from '../../services/gemini/requestManagement';
 
 /**
  * Analyze a video file with Gemini and handle user interaction
@@ -102,27 +103,39 @@ export const analyzeVideoAndWaitForUserChoice = async (analysisFile, onStatusUpd
     }, 500);
 
     // Create a promise that will be resolved when the user makes a choice
-    const userChoicePromise = new Promise((resolve) => {
+    const { requestId, signal } = createRequestController({ type: 'analysis-modal' });
+    const userChoicePromise = new Promise((resolve, reject) => {
       const handleUserChoice = (event) => {
         window.removeEventListener('videoAnalysisUserChoice', handleUserChoice);
+        signal.removeEventListener('abort', handleAbort);
         resolve(event.detail);
       };
+      const handleAbort = () => {
+        window.removeEventListener('videoAnalysisUserChoice', handleUserChoice);
+        const error = signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException('Video analysis modal was cancelled', 'AbortError');
+        reject(error);
+      };
       window.addEventListener('videoAnalysisUserChoice', handleUserChoice);
+      signal.addEventListener('abort', handleAbort, { once: true });
     });
 
-    // Wait for the user's choice
-    const userChoice = await userChoicePromise;
+    try {
+      const userChoice = await userChoicePromise;
 
+      // Set the transcription rules globally
+      if (userChoice.transcriptionRules) {
+        setTranscriptionRules(userChoice.transcriptionRules);
+      }
 
-    // Set the transcription rules globally
-    if (userChoice.transcriptionRules) {
-      setTranscriptionRules(userChoice.transcriptionRules);
+      return {
+        analysisResult,
+        userChoice
+      };
+    } finally {
+      removeRequestController(requestId);
     }
-
-    return {
-      analysisResult,
-      userChoice
-    };
   } catch (error) {
     console.error('Error analyzing video:', error);
     throw error;

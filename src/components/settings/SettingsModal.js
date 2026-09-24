@@ -137,9 +137,9 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
   const [videoAnalysisModel, setVideoAnalysisModel] = useState('gemini-flash-latest'); // Resolved against the active API key
   const [videoAnalysisTimeout, setVideoAnalysisTimeout] = useState('20'); // Default to 20 seconds timeout
   const [autoSelectDefaultPreset, setAutoSelectDefaultPreset] = useState(false); // Default to false
-  const [optimizeVideos, setOptimizeVideos] = useState(true); // Default to optimizing videos
+  const [optimizeVideos, setOptimizeVideos] = useState(false); // Original video is always used
   const [optimizedResolution, setOptimizedResolution] = useState('360p'); // Default to 360p
-  const [useOptimizedPreview, setUseOptimizedPreview] = useState(false); // Default to original video in preview
+  const [useOptimizedPreview, setUseOptimizedPreview] = useState(false); // Original video is always used in preview
   const [isFactoryResetting, setIsFactoryResetting] = useState(false); // State for factory reset process
   const [modelCheckState, setModelCheckState] = useState({ status: 'idle', result: null, error: null });
 
@@ -204,7 +204,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
     videoAnalysisModel: 'gemini-flash-latest',
     videoAnalysisTimeout: '20',
     autoSelectDefaultPreset: false,
-    optimizeVideos: true,
+    optimizeVideos: false,
     optimizedResolution: '360p',
     useOptimizedPreview: false,
     thinkingBudgets: {
@@ -260,9 +260,9 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       const savedAutoSelectDefaultPreset = localStorage.getItem('auto_select_default_preset') === 'true'; // Default to false
       const savedTranscriptionPrompt = localStorage.getItem('transcription_prompt') || DEFAULT_TRANSCRIPTION_PROMPT;
       const savedUseOAuth = localStorage.getItem('use_youtube_oauth') === 'true';
-      const savedOptimizeVideos = true; // Video optimization is now always enabled
+      const savedOptimizeVideos = false;
       const savedOptimizedResolution = localStorage.getItem('optimized_resolution') || '360p';
-      const savedUseOptimizedPreview = localStorage.getItem('use_optimized_preview') === 'true'; // Default to false if not set
+      const savedUseOptimizedPreview = false;
       const savedUseCookiesForDownload = localStorage.getItem('use_cookies_for_download') === 'true'; // Default to false if not set
 
       // Load thinking budgets from localStorage
@@ -488,10 +488,9 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
     localStorage.setItem('video_analysis_model', videoAnalysisModel);
     localStorage.setItem('video_analysis_timeout', videoAnalysisTimeout);
     localStorage.setItem('auto_select_default_preset', autoSelectDefaultPreset.toString());
-    // Video optimization is now always enabled - no need to save this setting
-    localStorage.setItem('optimize_videos', 'true');
+    localStorage.setItem('optimize_videos', 'false');
     localStorage.setItem('optimized_resolution', optimizedResolution);
-    localStorage.setItem('use_optimized_preview', useOptimizedPreview.toString());
+    localStorage.setItem('use_optimized_preview', 'false');
     localStorage.setItem('use_cookies_for_download', useCookiesForDownload.toString());
     localStorage.setItem('thinking_budgets', JSON.stringify(thinkingBudgets));
     // Save the Gemini API key to the key manager
@@ -535,8 +534,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       console.error('Error saving settings to server:', error);
     }
 
-    // Notify parent component about API keys, segment duration, model, time format, video optimization settings, and cookie setting
-    // Note: optimizeVideos parameter removed since it's always enabled now
+    // Notify parent component about API keys, segment duration, model, time format, and cookie setting
     onSave(geminiApiKey, youtubeApiKey, geniusApiKey, segmentDuration, geminiModel, timeFormat, showWaveform, optimizedResolution, useOptimizedPreview, useCookiesForDownload);
 
     // Update original settings to match current settings

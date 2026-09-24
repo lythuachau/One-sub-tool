@@ -5,6 +5,7 @@
 import { createLanguageDetectionSchema, addResponseSchema } from '../../utils/schemaUtils';
 import i18n from '../../i18n/i18n';
 import { resolveGeminiModel } from './modelDiscovery';
+import { fetchGemini } from './requestManagement';
 
 /**
  * Detect language of text using Gemini API
@@ -85,7 +86,7 @@ Respond with structured data only.
 
         // Call the Gemini API
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        const response = await fetch(apiUrl, {
+        const response = await fetchGemini(apiUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

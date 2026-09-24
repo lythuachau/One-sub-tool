@@ -31,14 +31,13 @@ export const useAppState = () => {
   // Video processing state
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [uploadedFile, setUploadedFile] = useState(null);
-  // Video optimization is now always enabled - force to true and ensure localStorage is set
+  // Video optimization is disabled; the original media is always used.
   const [optimizeVideos, setOptimizeVideos] = useState(() => {
-    // Always set to true and ensure localStorage reflects this
-    localStorage.setItem('optimize_videos', 'true');
-    return true;
+    localStorage.setItem('optimize_videos', 'false');
+    return false;
   });
   const [optimizedResolution, setOptimizedResolution] = useState(localStorage.getItem('optimized_resolution') || '360p');
-  const [useOptimizedPreview, setUseOptimizedPreview] = useState(localStorage.getItem('use_optimized_preview') === 'true');
+  const [useOptimizedPreview, setUseOptimizedPreview] = useState(false);
   const [useCookiesForDownload, setUseCookiesForDownload] = useState(localStorage.getItem('use_cookies_for_download') === 'true');
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -114,9 +113,13 @@ export const useAppState = () => {
       localStorage.setItem('selected_preset_id', 'general');
     }
 
-    // Set default model if not already set
-    if (!localStorage.getItem('gemini_model')) {
-      localStorage.setItem('gemini_model', 'gemini-flash-latest');
+    const currentGeminiModel = localStorage.getItem('gemini_model');
+    const modelMigrationKey = 'gemini_default_model_35_migrated';
+    if (!currentGeminiModel) {
+      localStorage.setItem('gemini_model', 'gemini-3.5-flash');
+    } else if (currentGeminiModel === 'gemini-2.5-flash' && localStorage.getItem(modelMigrationKey) !== 'true') {
+      localStorage.setItem('gemini_model', 'gemini-3.5-flash');
+      localStorage.setItem(modelMigrationKey, 'true');
     }
 
     // Set default transcription prompt if not already set

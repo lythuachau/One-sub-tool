@@ -254,19 +254,44 @@ export const downloadTXT = (subtitles, filename) => {
  * @param {File} file - The file to convert
  * @returns {Promise<string>} - Promise resolving to base64 string
  */
-export const fileToBase64 = (file) => {
+export const fileToBase64 = (file, { signal } = {}) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    const cleanup = () => {
+      signal?.removeEventListener('abort', handleAbort);
+    };
+    const handleAbort = () => {
+      reader.onabort = null;
+      reader.abort();
+      const error = signal?.reason?.name
+        ? signal.reason
+        : new DOMException('File conversion was aborted', 'AbortError');
+      cleanup();
+      reject(error);
+    };
+
+    if (signal?.aborted) {
+      handleAbort();
+      return;
+    }
+
+    signal?.addEventListener('abort', handleAbort, { once: true });
     reader.readAsDataURL(file);
     reader.onload = () => {
+      cleanup();
       // Extract the base64 data from the data URL
       // Format is: data:[<mediatype>][;base64],<data>
       const base64String = reader.result.split(',')[1];
       resolve(base64String);
     };
     reader.onerror = (error) => {
+      cleanup();
       console.error('Error converting file to base64:', error);
       reject(error);
+    };
+    reader.onabort = () => {
+      cleanup();
+      reject(new DOMException('File conversion was aborted', 'AbortError'));
     };
   });
 };

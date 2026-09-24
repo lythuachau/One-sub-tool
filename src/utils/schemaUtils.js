@@ -120,10 +120,14 @@ export const createTranslationSchema = (multiLanguage = false) => {
                             },
                             texts: {
                                 type: "array",
-                                items: {
-                                    type: "object",
-                                    properties: {
-                                        original: {
+                            items: {
+                                type: "object",
+                                properties: {
+                                    id: {
+                                        type: "string",
+                                        description: "Stable subtitle ID from the request"
+                                    },
+                                    original: {
                                             type: "string",
                                             description: "Original text of the subtitle"
                                         },
@@ -132,8 +136,8 @@ export const createTranslationSchema = (multiLanguage = false) => {
                                             description: "Translated text for the subtitle"
                                         }
                                     },
-                                    required: ["original", "translated"],
-                                    propertyOrdering: ["original", "translated"]
+                                    required: ["id", "original", "translated"],
+                                    propertyOrdering: ["id", "original", "translated"]
                                 }
                             }
                         },
@@ -152,6 +156,10 @@ export const createTranslationSchema = (multiLanguage = false) => {
             items: {
                 type: "object",
                 properties: {
+                    id: {
+                        type: "string",
+                        description: "Stable subtitle ID from the request"
+                    },
                     original: {
                         type: "string",
                         description: "Original text of the subtitle"
@@ -161,8 +169,8 @@ export const createTranslationSchema = (multiLanguage = false) => {
                         description: "Translated text for the subtitle"
                     }
                 },
-                required: ["original", "translated"],
-                propertyOrdering: ["original", "translated"]
+                required: ["id", "original", "translated"],
+                propertyOrdering: ["id", "original", "translated"]
             }
         };
     }

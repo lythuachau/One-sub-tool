@@ -45,8 +45,14 @@ def resolve_reference_audio(value: Any) -> str | None:
     return None
 
 
-def output_path(segment_id: str) -> Path:
-    directory = OUTPUT_DIR / f"subtitle_{segment_id}"
+def safe_output_scope(value: Any) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", clean_text(value)).strip("._-")
+
+
+def output_path(segment_id: str, generation_id: Any = None) -> Path:
+    scope = safe_output_scope(generation_id)
+    output_root = OUTPUT_DIR / scope if scope else OUTPUT_DIR
+    directory = output_root / f"subtitle_{segment_id}"
     directory.mkdir(parents=True, exist_ok=True)
     return directory / "1.wav"
 

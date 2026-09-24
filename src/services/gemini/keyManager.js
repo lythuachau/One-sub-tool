@@ -227,7 +227,7 @@ export const rotateToNextKey = () => {
   if (keys.length <= 1) {
     return getCurrentKey();
   }
-  
+
   const currentIndex = getActiveKeyIndex();
   let newIndex = (currentIndex + 1) % keys.length;
   let attempts = 0;
@@ -238,13 +238,12 @@ export const rotateToNextKey = () => {
     attempts++;
   }
   
-  // If all keys are blacklisted, use the first one anyway
+  // Reuse the first key when all keys are in cooldown, matching the legacy behavior.
   if (attempts >= keys.length) {
     newIndex = 0;
-    // Clear all blacklisted keys if we've gone through all of them
     blacklistedKeys.clear();
   }
-  
+
   setActiveKeyIndex(newIndex);
   return keys[newIndex];
 };

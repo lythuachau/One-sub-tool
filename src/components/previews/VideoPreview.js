@@ -1,6 +1,5 @@
 ﻿import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import MaterialSwitch from '../common/MaterialSwitch';
 import LiquidGlass from '../common/LiquidGlass';
 import '../../styles/common/material-switch.css';
 import {
@@ -28,7 +27,6 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
   const [isFullscreen, setIsFullscreen] = useState(false); // Track fullscreen state
   const [videoUrl, setVideoUrl] = useState('');
   const [optimizedVideoUrl, setOptimizedVideoUrl] = useState('');
-  const [optimizedVideoInfo, setOptimizedVideoInfo] = useState(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
@@ -61,14 +59,14 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
   const [isVideoLoading, setIsVideoLoading] = useState(true);
   // Native track subtitles disabled - using only custom subtitle display
   const [useOptimizedPreview, setUseOptimizedPreview] = useState(() => {
-    return localStorage.getItem('use_optimized_preview') === 'true';
+    return false;
   });
 
   // Listen for changes to the optimized preview setting from Settings modal
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === 'use_optimized_preview') {
-        setUseOptimizedPreview(e.newValue === 'true');
+        setUseOptimizedPreview(false);
       }
     };
 
@@ -188,7 +186,6 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
       setVideoUrl('');
       setOptimizedVideoUrl('');
       setError('');
-      setOptimizedVideoInfo(null); // Reset optimized video info
       setIsDownloading(false); // Reset downloading state
       setDownloadProgress(0); // Reset download progress
 
@@ -237,45 +234,6 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
         }
         setVideoUrl(videoSource);
 
-        // Check if we have an optimized version in localStorage
-        try {
-          const splitResult = JSON.parse(localStorage.getItem('split_result') || '{}');
-          const lastOptimizationTimestamp = localStorage.getItem('last_optimization_timestamp');
-
-          // For blob URLs, we'll use the most recent optimization result
-          // since blob URLs don't contain filename information
-          if (splitResult.optimized && splitResult.optimized.video && lastOptimizationTimestamp) {
-            // Check if this optimization is recent (within last 5 minutes)
-            const optimizationAge = Date.now() - parseInt(lastOptimizationTimestamp);
-            const fiveMinutes = 5 * 60 * 1000;
-
-            if (optimizationAge < fiveMinutes) {
-              const optimizedUrl = `${SERVER_URL}${splitResult.optimized.video}`;
-              // Using recent optimization result for blob URL
-              setOptimizedVideoUrl(optimizedUrl);
-
-              // Store the optimization info
-              setOptimizedVideoInfo({
-                resolution: splitResult.optimized.resolution || '360p',
-                fps: splitResult.optimized.fps || 1,
-                width: splitResult.optimized.width,
-                height: splitResult.optimized.height
-              });
-            } else {
-              // Optimization result too old, clearing
-              setOptimizedVideoUrl('');
-              setOptimizedVideoInfo(null);
-            }
-          } else {
-            // No valid optimization result found
-            setOptimizedVideoUrl('');
-            setOptimizedVideoInfo(null);
-          }
-        } catch (error) {
-          console.error('Error parsing split result from localStorage:', error);
-          setOptimizedVideoUrl('');
-          setOptimizedVideoInfo(null);
-        }
         return;
       }
 
@@ -288,33 +246,6 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
       // For any other URL, try to use it directly
       setVideoUrl(videoSource);
 
-      // Check for optimized version for all video types
-      try {
-        const splitResult = JSON.parse(localStorage.getItem('split_result') || '{}');
-        const lastOptimizationTimestamp = localStorage.getItem('last_optimization_timestamp');
-
-        if (splitResult.optimized && splitResult.optimized.video && lastOptimizationTimestamp) {
-          // Check if this optimization is recent (within last 5 minutes)
-          const optimizationAge = Date.now() - parseInt(lastOptimizationTimestamp);
-          const fiveMinutes = 5 * 60 * 1000;
-
-          if (optimizationAge < fiveMinutes) {
-            const optimizedUrl = `${SERVER_URL}${splitResult.optimized.video}`;
-            // Using recent optimization result for regular URL
-            setOptimizedVideoUrl(optimizedUrl);
-
-            // Store the optimization info
-            setOptimizedVideoInfo({
-              resolution: splitResult.optimized.resolution || '360p',
-              fps: splitResult.optimized.fps || 1,
-              width: splitResult.optimized.width,
-              height: splitResult.optimized.height
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error checking optimization for regular URL:', error);
-      }
     };
 
     loadVideo();
@@ -322,15 +253,14 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
 
   // Notify parent component when videoUrl changes
   useEffect(() => {
-    // Determine which URL to use based on the useOptimizedPreview setting
-    const urlToUse = useOptimizedPreview && optimizedVideoUrl ? optimizedVideoUrl : videoUrl;
+    const urlToUse = videoUrl;
 
     // Debug logging removed for production
 
     if (urlToUse && onVideoUrlReady) {
       onVideoUrlReady(urlToUse);
     }
-  }, [videoUrl, optimizedVideoUrl, useOptimizedPreview, onVideoUrlReady]);
+  }, [videoUrl, onVideoUrlReady]);
 
   // Handle video source switching while preserving playback state
   useEffect(() => {
@@ -341,16 +271,13 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
     const wasPlaying = !videoElement.paused;
     const currentVideoTime = videoElement.currentTime;
 
-    // Determine the new source
-    const newSrc = useOptimizedPreview && optimizedVideoUrl ? optimizedVideoUrl : videoUrl;
+    const newSrc = videoUrl;
 
     // Only update if the source actually changed
     if (newSrc && videoElement.src !== newSrc) {
       console.log('[VideoPreview] Switching video source, preserving state:', {
         wasPlaying,
         currentVideoTime,
-        useOptimizedPreview,
-        optimizedVideoUrl: !!optimizedVideoUrl,
         videoUrl: !!videoUrl,
         newSrc: newSrc.substring(0, 50) + '...'
       });
@@ -432,7 +359,7 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
         videoElement.removeEventListener('error', handleLoadError);
       };
     }
-  }, [useOptimizedPreview, optimizedVideoUrl, videoUrl]);
+  }, [videoUrl, isPlaying]);
 
   // Debug logging removed for production
 
@@ -2099,7 +2026,7 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
                   playsInline
                   controlsList="nodownload nofullscreen noremoteplayback"
                   disablePictureInPicture={false}
-                  src={useOptimizedPreview && optimizedVideoUrl ? optimizedVideoUrl : videoUrl}
+                  src={videoUrl}
                   crossOrigin="anonymous"
                   onError={(e) => {
                     console.error('Video error:', e);
@@ -2112,7 +2039,7 @@ const VideoPreview = ({ currentTime, setCurrentTime, setDuration, videoSource, o
                   }}
                 >
                   <source
-                    src={useOptimizedPreview && optimizedVideoUrl ? optimizedVideoUrl : videoUrl}
+                    src={videoUrl}
                     type="video/mp4"
                     onError={(e) => {
                       console.error('Source error:', e);

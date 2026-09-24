@@ -23,6 +23,11 @@ const serveAudioFile = (req, res) => {
       return res.status(400).json({ error: 'No filename provided' });
     }
 
+    const normalizedFilename = filename.replace(/\\/g, '/');
+    if (path.isAbsolute(normalizedFilename) || normalizedFilename.split('/').includes('..')) {
+      return res.status(400).json({ error: 'Invalid audio filename' });
+    }
+
     // Check if the filename includes a path separator (new structure)
     if (filename.includes(path.sep) || filename.includes('/')) {
       console.log(`[DEBUG] Handling path with separators: ${filename}`);

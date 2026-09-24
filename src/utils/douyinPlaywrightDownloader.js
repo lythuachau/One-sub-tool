@@ -61,7 +61,8 @@ export const downloadDouyinVideoPlaywright = async (douyinUrl, progressCallback 
             videoId,
             url: douyinUrl,
             quality,
-            useCookies
+            useCookies,
+            interactiveVerification: true
           }),
         });
 
@@ -71,6 +72,7 @@ export const downloadDouyinVideoPlaywright = async (douyinUrl, progressCallback 
         }
 
         const result = await downloadResponse.json();
+        const serverVideoId = result.videoId || videoId;
         console.log('[DouyinPlaywright] Download started:', result);
 
         // Native and yt-dlp strategies may finish before the polling phase.
@@ -90,7 +92,7 @@ export const downloadDouyinVideoPlaywright = async (douyinUrl, progressCallback 
         downloadQueue[videoId].status = 'downloading';
         const pollInterval = setInterval(async () => {
           try {
-            const progressResponse = await fetch(`${SERVER_URL}/api/douyin-playwright-progress/${videoId}`);
+            const progressResponse = await fetch(`${SERVER_URL}/api/douyin-playwright-progress/${encodeURIComponent(serverVideoId)}`);
             
             if (!progressResponse.ok) {
               console.error('[DouyinPlaywright] Failed to get progress');

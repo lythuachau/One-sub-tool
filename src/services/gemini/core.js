@@ -17,7 +17,9 @@ import {
 import i18n from '../../i18n/i18n';
 import { getNextAvailableKey, blacklistKey } from './keyManager';
 import { addThinkingConfig } from '../../utils/thinkingBudgetUtils';
-import { resolveGeminiModel } from './modelDiscovery';
+import { persistGeminiModelFallback, resolveGeminiModel } from './modelDiscovery';
+import { createGeminiApiError } from './errorUtils';
+import { requestGeminiWithModelFallback } from './modelRequest';
 
 /**
  * Call the Gemini API with various input types
@@ -42,6 +44,7 @@ export const callGeminiApi = async (input, inputType, options = {}) => {
 
     if (requestedModel !== MODEL) {
         console.warn(`[GeminiAPI] Model ${requestedModel || '(default)'} is unavailable; using ${MODEL}`);
+        persistGeminiModelFallback(requestedModel, MODEL, ['gemini_model', 'video_processing_model']);
     } else if (modelId) {
         console.log(`[GeminiAPI] Using custom model: ${MODEL}`);
     }
@@ -165,42 +168,20 @@ export const callGeminiApi = async (input, inputType, options = {}) => {
             const { requestId, signal } = createRequestController();
 
             try {
-                const response = await fetch(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${geminiApiKey}`,
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(requestData),
-                        signal: signal
-                    }
-                );
+                const { response, model: responseModel } = await requestGeminiWithModelFallback({
+                    model: MODEL,
+                    apiKey: geminiApiKey,
+                    requestData,
+                    signal,
+                    storageKeys: ['gemini_model', 'video_processing_model']
+                });
 
                 if (!response.ok) {
-                    try {
-                        const errorData = await response.json();
-
-                        // Check for 503 status code in the early return path
-                        if (errorData.error?.code === 503 || response.status === 503) {
-                            blacklistKey(geminiApiKey);
-                            const overloadError = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                            overloadError.isOverloaded = true;
-                            throw overloadError;
-                        }
-
-                        throw new Error(`API error: ${errorData.error?.message || response.statusText}`);
-                    } catch (jsonError) {
-                        // Check for 503 status code when JSON parsing fails
-                        if (response.status === 503) {
-                            blacklistKey(geminiApiKey);
-                            const overloadError = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                            overloadError.isOverloaded = true;
-                            throw overloadError;
-                        }
-
-                        throw new Error(`API error: ${response.statusText}. Status code: ${response.status}`);
+                    const apiError = await createGeminiApiError(response, responseModel);
+                    if (apiError.isQuotaError || apiError.isOverloaded) {
+                        blacklistKey(geminiApiKey);
                     }
+                    throw apiError;
                 }
 
                 const data = await response.json();
@@ -245,9 +226,10 @@ export const callGeminiApi = async (input, inputType, options = {}) => {
                 return parseGeminiResponse(data);
             } catch (error) {
                 // Check if this is an AbortError
-                if (error.name === 'AbortError') {
-
-                    throw new Error('Request was aborted');
+                if (error.name === 'AbortError' || signal.aborted) {
+                    const abortError = new Error('Request was aborted');
+                    abortError.name = 'AbortError';
+                    throw abortError;
                 } else {
                     console.error('Error calling Gemini API:', error);
                     // Remove this controller from the map on error
@@ -302,121 +284,20 @@ export const callGeminiApi = async (input, inputType, options = {}) => {
         }
 
 
-        const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${geminiApiKey}`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestData),
-                signal: signal
-            }
-        );
+        const { response, model: responseModel } = await requestGeminiWithModelFallback({
+            model: MODEL,
+            apiKey: geminiApiKey,
+            requestData,
+            signal,
+            storageKeys: ['gemini_model', 'video_processing_model']
+        });
 
         if (!response.ok) {
-            try {
-                // Clone the response before reading it to avoid the "body stream already read" error
-                const responseClone = response.clone();
-                try {
-                    const errorData = await response.json();
-                    console.error('Gemini API error details:', errorData);
-
-                    // Log more detailed information about the error
-                    if (errorData.error) {
-                        console.error('Error code:', errorData.error.code);
-                        console.error('Error message:', errorData.error.message);
-                        console.error('Error status:', errorData.error.status);
-
-                        // Check for specific error messages related to audio/video processing
-                        if (errorData.error.message.includes('invalid argument')) {
-                            console.error('This may be due to an unsupported file format or MIME type');
-                            console.error('Supported audio formats: audio/wav, audio/mp3, audio/aiff, audio/aac, audio/ogg, audio/flac');
-                            console.error('File type used:', input.type);
-                        }
-
-                        // Check for overload errors (503 status code)
-                        if (errorData.error.code === 503 ||
-                            errorData.error.status === 'UNAVAILABLE' ||
-                            errorData.error.message.includes('overloaded')) {
-                            // Blacklist the current API key
-                            blacklistKey(geminiApiKey);
-                            const overloadError = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                            overloadError.isOverloaded = true;
-                            throw overloadError;
-                        }
-
-                        // Check for quota exceeded errors (429 status code)
-                        if (errorData.error.code === 429 ||
-                            errorData.error.status === 'RESOURCE_EXHAUSTED' ||
-                            (errorData.error.message && errorData.error.message.includes('quota'))) {
-                            // Blacklist the current API key
-                            blacklistKey(geminiApiKey);
-                            throw new Error(i18n.t('errors.apiQuotaExceeded', 'Current API key is overloaded, please use a key from another Gmail account, or wait for some time, or add billing at https://aistudio.google.com/usage?tab=billing'));
-                        }
-                    }
-
-                    throw new Error(`API error: ${errorData.error?.message || response.statusText}`);
-                } catch (jsonError) {
-                    console.error('Error parsing Gemini API error response as JSON:', jsonError);
-                    const errorText = await responseClone.text();
-                    console.error('Raw error response:', errorText);
-
-                    // Check for 503 status code directly
-                    if (response.status === 503) {
-                        // Blacklist the current API key
-                        blacklistKey(geminiApiKey);
-                        const overloadError = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                        overloadError.isOverloaded = true;
-                        throw overloadError;
-                    }
-
-                    // Check for 429 status code (quota exceeded)
-                    if (response.status === 429) {
-                        // Blacklist the current API key
-                        blacklistKey(geminiApiKey);
-                        throw new Error(i18n.t('errors.apiQuotaExceeded', 'Current API key is overloaded, please use a key from another Gmail account, or wait for some time, or add billing at https://aistudio.google.com/usage?tab=billing'));
-                    }
-
-                    // Check for 503 status code before throwing generic error
-                    if (response.status === 503) {
-                        blacklistKey(geminiApiKey);
-                        const overloadError = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                        overloadError.isOverloaded = true;
-                        throw overloadError;
-                    }
-
-                    throw new Error(`API error: ${response.statusText}. Status code: ${response.status}`);
-                }
-            } catch (error) {
-                console.error('Error handling Gemini API error response:', error);
-
-                // Check for 503 status code directly
-                if (response.status === 503) {
-                    // Blacklist the current API key
-                    blacklistKey(geminiApiKey);
-                    const overloadError = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                    overloadError.isOverloaded = true;
-                    throw overloadError;
-                }
-
-                // Check for 429 status code (quota exceeded)
-                if (response.status === 429) {
-                    // Blacklist the current API key
-                    blacklistKey(geminiApiKey);
-                    throw new Error(i18n.t('errors.apiQuotaExceeded', 'Current API key is overloaded, please use a key from another Gmail account, or wait for some time, or add billing at https://aistudio.google.com/usage?tab=billing'));
-                }
-
-                // Check for 503 status code before throwing generic error
-                if (response.status === 503) {
-                    blacklistKey(geminiApiKey);
-                    const overloadError = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                    overloadError.isOverloaded = true;
-                    throw overloadError;
-                }
-
-                throw new Error(`API error: ${response.statusText}. Status code: ${response.status}`);
+            const apiError = await createGeminiApiError(response, responseModel);
+            if (apiError.isQuotaError || apiError.isOverloaded) {
+                blacklistKey(geminiApiKey);
             }
+            throw apiError;
         }
 
         const data = await response.json();
@@ -461,49 +342,30 @@ export const callGeminiApi = async (input, inputType, options = {}) => {
         return parseGeminiResponse(data);
     } catch (error) {
         // Check if this is an AbortError
-        if (error.name === 'AbortError') {
-
-            throw new Error('Request was aborted');
+        if (error.name === 'AbortError' || signal.aborted) {
+            const abortError = new Error('Request was aborted');
+            abortError.name = 'AbortError';
+            throw abortError;
         } else {
             console.error('Error calling Gemini API:', error);
+            const normalizedError = error instanceof Error ? error : new Error(String(error));
+            const errorMessage = normalizedError.message || '';
 
-            // Check for overload errors in the error message
-            if (error.message && (
-                error.message.includes('503') ||
-                error.message.includes('Service Unavailable') ||
-                error.message.includes('overloaded') ||
-                error.message.includes('UNAVAILABLE')
-            )) {
-                // Blacklist the current API key
+            if (normalizedError.isOverloaded || /503|service unavailable|overloaded|unavailable/i.test(errorMessage)) {
                 blacklistKey(geminiApiKey);
-
-                if (!error.isOverloaded) {
-                    error.isOverloaded = true;
-                }
-
-                // Replace the error message with a user-friendly localized message
-                error = new Error(i18n.t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)'));
-                error.isOverloaded = true;
+                normalizedError.isOverloaded = true;
             }
 
-            // Check for quota exceeded errors in the error message
-            if (error.message && (
-                error.message.includes('429') ||
-                error.message.includes('quota') ||
-                error.message.includes('RESOURCE_EXHAUSTED')
-            )) {
-                // Blacklist the current API key
+            if (normalizedError.isQuotaError || /429|quota|resource.?exhausted|rate.?limit/i.test(errorMessage)) {
                 blacklistKey(geminiApiKey);
-
-                // Replace the error with a more specific user-friendly message
-                error = new Error(i18n.t('errors.apiQuotaExceeded', 'Current API key is overloaded, please use a key from another Gmail account, or wait for some time, or add billing at https://aistudio.google.com/usage?tab=billing'));
+                normalizedError.isQuotaError = true;
             }
 
             // Remove this controller from the map on error
             if (requestId) {
                 removeRequestController(requestId);
             }
-            throw error;
+            throw normalizedError;
         }
     }
 };

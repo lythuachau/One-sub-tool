@@ -21,6 +21,8 @@ const cleanupOldSubtitleDirectories = async (groupedSubtitles) => {
   }
 };
 
+const createGenerationId = () => `generation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
 /**
  * Custom hook for OmniVoice narration generation
  * @param {Object} params - Hook parameters
@@ -141,7 +143,7 @@ const useChatterboxNarration = ({
    * @param {number} subtitleId - Subtitle ID
    * @returns {Promise<string>} - Filename of saved audio
    */
-  const saveAudioBlobToServer = useCallback(async (audioBlob, subtitleId) => {
+  const saveAudioBlobToServer = useCallback(async (audioBlob, subtitleId, generationId) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
 
@@ -160,6 +162,7 @@ const useChatterboxNarration = ({
             body: JSON.stringify({
               audioData: base64String,
               subtitle_id: subtitleId,
+              generation_id: generationId,
               sampleRate: 24000, // Chatterbox default sample rate
               mimeType: 'audio/wav'
             })
@@ -192,7 +195,7 @@ const useChatterboxNarration = ({
   /**
    * Generate narration for a single subtitle
    */
-  const generateSingleNarration = useCallback(async (subtitle, index, total, voiceFile = null, voiceFilePath = null) => {
+  const generateSingleNarration = useCallback(async (subtitle, index, total, voiceFile = null, voiceFilePath = null, generationId = createGenerationId()) => {
     try {
       setGenerationStatus(t('narration.chatterboxGeneratingProgress', 'Generating {{progress}} of {{total}} narrations with Chatterbox...', {
         progress: index + 1,
@@ -212,7 +215,7 @@ const useChatterboxNarration = ({
       );
 
       // Save audio blob to server and get filename
-      const filename = await saveAudioBlobToServer(audioBlob, subtitle.id || index);
+      const filename = await saveAudioBlobToServer(audioBlob, subtitle.id || index, generationId);
 
       return {
         subtitle_id: subtitle.id || index,
@@ -292,11 +295,12 @@ const useChatterboxNarration = ({
       }
 
       const results = [];
+      const generationId = createGenerationId();
 
       // Generate narrations sequentially to avoid overwhelming the API
       for (let i = 0; i < selectedSubtitles.length; i++) {
         const subtitle = selectedSubtitles[i];
-        const result = await generateSingleNarration(subtitle, i, selectedSubtitles.length, voiceFile, voiceFilePath);
+        const result = await generateSingleNarration(subtitle, i, selectedSubtitles.length, voiceFile, voiceFilePath, generationId);
         results.push(result);
         
         // Update results incrementally

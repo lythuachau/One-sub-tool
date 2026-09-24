@@ -10,6 +10,7 @@ import {
 } from '../../utils/historyUtils';
 import { getVideoDetails } from '../../services/youtubeApiService';
 import DownloadOnlyModal from '../DownloadOnlyModal';
+import { clearVideoIdentity, persistVideoIdentity } from '../../utils/videoIdentity';
 
 // Helper functions for Douyin URL history
 const getDouyinUrlHistory = () => {
@@ -79,19 +80,22 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
         // Convert to douyin-playwright
         const videoId = extractDouyinVideoId(selectedVideo.url);
         if (videoId) {
-          setSelectedVideo({
+          const normalizedVideo = {
             id: videoId,
             url: selectedVideo.url,
             source: 'douyin-playwright',
             title: 'Douyin Video',
             thumbnail: ''
-          });
+          };
+          persistVideoIdentity(normalizedVideo);
+          setSelectedVideo(normalizedVideo);
           setUrlType('douyin-playwright');
           setVideoTitle('Douyin Video');
           return;
         }
       }
 
+      persistVideoIdentity(selectedVideo);
       setVideoTitle(selectedVideo.title || 'Video');
       setUrlType(selectedVideo.source);
 
@@ -257,11 +261,16 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
       window.dispatchEvent(new CustomEvent('video-changed', {
         detail: { previousUrl: previousVideoUrl, newUrl: inputUrl }
       }));
+      localStorage.removeItem('current_video_id');
+      localStorage.removeItem('current_file_video_id');
+      localStorage.removeItem('current_file_source_url');
+      localStorage.removeItem('current_file_name');
     }
 
     if (!inputUrl) {
       setSelectedVideo(null);
       setUrlType('');
+      clearVideoIdentity();
       return;
     }
 
@@ -273,15 +282,15 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
       const videoId = extractYoutubeVideoId(inputUrl);
       if (videoId) {
         const title = await fetchYoutubeVideoTitle(videoId) || 'YouTube Video';
-        // Store the video URL in localStorage to maintain state
-        localStorage.setItem('current_video_url', inputUrl);
-        setSelectedVideo({
+        const nextVideo = {
           id: videoId,
           url: inputUrl,
           source: 'youtube',
           title: title,
           thumbnail: `https://img.youtube.com/vi/${videoId}/0.jpg`
-        });
+        };
+        persistVideoIdentity(nextVideo);
+        setSelectedVideo(nextVideo);
       }
       return;
     }
@@ -291,15 +300,15 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
       setUrlType('douyin-playwright');
       const videoId = extractDouyinVideoId(inputUrl);
       if (videoId) {
-        // Store the video URL in localStorage to maintain state
-        localStorage.setItem('current_video_url', inputUrl);
-        setSelectedVideo({
+        const nextVideo = {
           id: videoId,
           url: inputUrl,
           source: 'douyin-playwright',
           title: 'Douyin Video', // Default title
           thumbnail: '' // No thumbnail available initially
-        });
+        };
+        persistVideoIdentity(nextVideo);
+        setSelectedVideo(nextVideo);
       }
       return;
     }
@@ -312,17 +321,16 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
         const hostname = new URL(inputUrl).hostname;
         const siteName = hostname.replace(/^www\./, '');
 
-        // Store the video URL in localStorage to maintain state
-        localStorage.setItem('current_video_url', inputUrl);
-
-        setSelectedVideo({
+        const nextVideo = {
           id: videoId,
           url: inputUrl,
           source: 'all-sites',
           title: `Video from ${siteName}`,
           thumbnail: '', // No thumbnail available initially
           type: 'video/mp4' // Explicitly set the type
-        });
+        };
+        persistVideoIdentity(nextVideo);
+        setSelectedVideo(nextVideo);
 
         // Set video title for display
         setVideoTitle(`Video from ${siteName}`);
@@ -331,6 +339,7 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
         setError(t('unifiedUrlInput.invalidUrl', 'Invalid URL format. Please enter a valid URL.'));
         setSelectedVideo(null);
         setUrlType('');
+        clearVideoIdentity();
       }
       return;
     }
@@ -339,6 +348,7 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
     setError(t('unifiedUrlInput.invalidUrl', 'Invalid URL format. Please enter a valid URL.'));
     setSelectedVideo(null);
     setUrlType('');
+    clearVideoIdentity();
   };
 
   // Toggle history dropdown
@@ -354,13 +364,15 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
     if (isValidDouyinUrl(historyItem.url)) {
       const videoId = extractDouyinVideoId(historyItem.url);
       if (videoId) {
-        setSelectedVideo({
+        const nextVideo = {
           id: videoId,
           url: historyItem.url,
           source: 'douyin-playwright',
           title: 'Douyin Video',
           thumbnail: ''
-        });
+        };
+        persistVideoIdentity(nextVideo);
+        setSelectedVideo(nextVideo);
         setUrlType('douyin-playwright');
         setShowHistory(false);
         return;
@@ -368,13 +380,15 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
     }
 
     // Use original history item for non-Douyin URLs
-    setSelectedVideo({
+    const nextVideo = {
       id: historyItem.id,
       url: historyItem.url,
       source: historyItem.source,
       title: historyItem.title,
       thumbnail: historyItem.thumbnail || ''
-    });
+    };
+    persistVideoIdentity(nextVideo);
+    setSelectedVideo(nextVideo);
     setUrlType(historyItem.source);
     setShowHistory(false);
   };
@@ -403,7 +417,8 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
           videoId,
           url: selectedVideo.url,
           quality: 'original',
-          useCookies: localStorage.getItem('use_cookies_for_download') === 'true'
+          useCookies: localStorage.getItem('use_cookies_for_download') === 'true',
+          interactiveVerification: true
         }),
       });
 
@@ -412,6 +427,7 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
       }
 
       const downloadData = await response.json();
+      const serverVideoId = downloadData.videoId || videoId;
       const triggerDownload = (filename) => {
         const safeFilename = filename || 'douyin_video.mp4';
         const downloadUrl = `http://localhost:3031/api/douyin-playwright-download/${encodeURIComponent(safeFilename)}`;
@@ -435,7 +451,7 @@ const UnifiedUrlInput = ({ setSelectedVideo, selectedVideo, className }) => {
       // Poll for progress
       const pollProgress = setInterval(async () => {
         try {
-          const progressResponse = await fetch(`http://localhost:3031/api/douyin-playwright-progress/${videoId}`);
+          const progressResponse = await fetch(`http://localhost:3031/api/douyin-playwright-progress/${encodeURIComponent(serverVideoId)}`);
           const progressData = await progressResponse.json();
 
           if (progressData.success) {

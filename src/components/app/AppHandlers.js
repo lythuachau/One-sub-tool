@@ -3,10 +3,12 @@ import { resetGeminiButtonState } from '../../utils/geminiButtonEffects';
 import { cancelYoutubeVideoDownload, extractYoutubeVideoId } from '../../utils/videoDownloader';
 import { cancelDouyinVideoDownload, extractDouyinVideoId } from '../../utils/douyinDownloader';
 import { cancelGenericVideoDownload } from '../../utils/allSitesDownloader';
+import { cancelDouyinDownloadPlaywright } from '../../utils/douyinPlaywrightDownloader';
 import { prepareVideoForSegments, downloadAndPrepareYouTubeVideo } from './VideoProcessingHandlers';
 import { hasValidTokens } from '../../services/youtubeApiService';
 import { hasValidDownloadedVideo } from '../../utils/videoUtils';
 import { getSubtitleEngine } from '../../services/subtitleEngineService';
+import { clearVideoIdentity, persistVideoIdentity } from '../../utils/videoIdentity';
 
 /**
  * Hook for application event handlers
@@ -214,11 +216,14 @@ export const useAppHandlers = (appState) => {
         let videoId;
         if (selectedVideo.source === 'douyin') {
           videoId = extractDouyinVideoId(selectedVideo.url);
+        } else if (selectedVideo.source === 'douyin-playwright') {
+          videoId = extractDouyinVideoId(selectedVideo.url);
         } else if (selectedVideo.source === 'all-sites' || selectedVideo.source === 'all-sites-url') {
           videoId = selectedVideo.id;
         } else {
           videoId = extractYoutubeVideoId(selectedVideo.url);
         }
+        persistVideoIdentity(selectedVideo);
         setCurrentDownloadId(videoId);
 
         // Create a wrapper function that includes the additional parameters
@@ -366,8 +371,14 @@ export const useAppHandlers = (appState) => {
 
       if (cachedVideoUrl) {
         console.log('FORCE RETRY: Using cached video URL');
-        // Create a video object from cached URL
-        input = { url: cachedVideoUrl };
+        const cachedVideoId = localStorage.getItem('current_video_id');
+        const cachedSource = cachedVideoUrl.includes('douyin.com') ? 'douyin-playwright' : 'youtube';
+        input = {
+          id: cachedVideoId,
+          url: cachedVideoUrl,
+          source: cachedSource,
+          title: cachedSource === 'douyin-playwright' ? 'Douyin Video' : 'YouTube Video'
+        };
         inputType = 'youtube';
       } else if (cachedFileUrl) {
         console.log('FORCE RETRY: Using cached file URL');
@@ -404,7 +415,7 @@ export const useAppHandlers = (appState) => {
 
         // Download and prepare the YouTube video
         const downloadedFile = await downloadAndPrepareYouTubeVideo(
-          selectedVideo,
+          input,
           setIsDownloading,
           setDownloadProgress,
           setStatus,
@@ -563,7 +574,9 @@ export const useAppHandlers = (appState) => {
   const handleCancelDownload = () => {
     if (currentDownloadId) {
       // Check the source of the download
-      if (activeTab === 'unified-url' && selectedVideo?.source === 'douyin') {
+      if (activeTab === 'unified-url' && selectedVideo?.source === 'douyin-playwright') {
+        cancelDouyinDownloadPlaywright(currentDownloadId);
+      } else if (activeTab === 'unified-url' && selectedVideo?.source === 'douyin') {
         // Cancel Douyin download
         cancelDouyinVideoDownload(currentDownloadId);
       } else if (activeTab === 'unified-url' && selectedVideo?.source === 'all-sites') {
@@ -610,6 +623,7 @@ export const useAppHandlers = (appState) => {
       }
 
       localStorage.removeItem('current_video_url');
+      clearVideoIdentity();
       localStorage.removeItem('current_file_url');
       localStorage.removeItem('current_file_cache_id'); // Also clear the file cache ID
     }
@@ -660,22 +674,20 @@ export const useAppHandlers = (appState) => {
       localStorage.setItem('gemini_model', geminiModel);
     }
 
-    // Video optimization is now always enabled - no need to save this setting
-
     if (optimizedResolutionSetting) {
       localStorage.setItem('optimized_resolution', optimizedResolutionSetting);
       appState.setOptimizedResolution(optimizedResolutionSetting);
     }
 
     if (useOptimizedPreviewSetting !== undefined) {
-      localStorage.setItem('use_optimized_preview', useOptimizedPreviewSetting.toString());
-      appState.setUseOptimizedPreview(useOptimizedPreviewSetting);
-      console.log('[AppHandlers] Updated useOptimizedPreview setting:', useOptimizedPreviewSetting);
+      localStorage.setItem('use_optimized_preview', 'false');
+      appState.setUseOptimizedPreview(false);
+      console.log('[AppHandlers] Original video preview is enforced');
 
       // Trigger a custom event to immediately notify VideoPreview component
       // This ensures immediate synchronization without waiting for the 500ms interval
       window.dispatchEvent(new CustomEvent('optimizedPreviewChanged', {
-        detail: { value: useOptimizedPreviewSetting }
+        detail: { value: false }
       }));
     }
 

@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import LiquidGlass from '../common/LiquidGlass';
 import { extractAndDownloadAudio } from '../../utils/fileUtils';
-import { SERVER_URL } from '../../config';
 
 const VideoTopsideButtons = ({
   showCustomControls,
@@ -16,11 +15,60 @@ const VideoTopsideButtons = ({
   setError,
   videoRef,
   videoSource,
-  useOptimizedPreview,
-  optimizedVideoUrl,
   videoUrl
 }) => {
   const { t } = useTranslation();
+
+  const refreshSession = useRef(null);
+  const [syncSession, setSyncSession] = useState(null);
+
+  useEffect(() => {
+    return () => {
+      refreshSession.current?.controller.abort();
+      refreshSession.current = null;
+      setIsRefreshingNarration(false);
+    };
+  }, [videoUrl, videoRef, setIsRefreshingNarration]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !syncSession || syncSession.video !== video || syncSession.url !== videoUrl) return;
+    const audio = syncSession.audio;
+    let active = true;
+    const isCurrent = () => active && videoRef.current === video;
+    const syncTime = () => {
+      if (isCurrent()) audio.currentTime = video.currentTime;
+    };
+    const play = () => {
+      if (!isCurrent()) return;
+      syncTime();
+      audio.play().catch(error => {
+        if (isCurrent()) console.warn('Audio play error:', error);
+      });
+    };
+    const pause = () => { if (isCurrent()) audio.pause(); };
+    const timeupdate = () => {
+      if (isCurrent() && Math.abs(audio.currentTime - video.currentTime) > 0.3) syncTime();
+    };
+    const ratechange = () => { if (isCurrent()) audio.playbackRate = video.playbackRate; };
+    const volumechange = event => {
+      if (isCurrent() && Number.isFinite(event.detail?.volume)) {
+        audio.volume = Math.min(1, Math.max(0, event.detail.volume));
+      }
+    };
+    const listeners = { play, pause, seeked: syncTime, timeupdate, ratechange };
+    Object.entries(listeners).forEach(([type, handler]) => video.addEventListener(type, handler));
+    window.addEventListener('narration-volume-change', volumechange);
+    audio.volume = Math.min(1, Math.max(0, window.narrationVolume ?? 1));
+    ratechange();
+    if (!video.paused) play();
+    return () => {
+      active = false;
+      Object.entries(listeners).forEach(([type, handler]) => video.removeEventListener(type, handler));
+      window.removeEventListener('narration-volume-change', volumechange);
+      audio.pause();
+    };
+  }, [syncSession, videoUrl, videoRef]);
 
   return (
     <>
@@ -65,6 +113,10 @@ const VideoTopsideButtons = ({
               }}
           aria-label={t('preview.refreshNarration', 'Refresh Narration')}
           onClick={async () => {
+            refreshSession.current?.controller.abort();
+            const session = { controller: new AbortController(), video: videoRef.current, url: videoUrl };
+            refreshSession.current = session;
+            const isCurrentRefresh = () => refreshSession.current === session && !session.controller.signal.aborted && videoRef.current === session.video;
             try {
               // Pause the video if it's playing
               if (videoRef.current && !videoRef.current.paused) {
@@ -195,7 +247,8 @@ const VideoTopsideButtons = ({
                   'Content-Type': 'application/json',
                   'Accept': 'audio/wav'
                 },
-                body: JSON.stringify({ narrations: narrationData })
+                body: JSON.stringify({ narrations: narrationData }),
+                signal: session.controller.signal
               });
 
               // Check for audio alignment notification after successful response
@@ -219,6 +272,7 @@ const VideoTopsideButtons = ({
 
               // Get the blob from the response
               const blob = await response.blob();
+              if (!isCurrentRefresh()) return;
 
               // Create a blob URL for the aligned narration service
               const blobUrl = URL.createObjectURL(blob);
@@ -231,6 +285,10 @@ const VideoTopsideButtons = ({
               const {
                 getAlignedAudioElement
               } = await import('../../services/alignedNarrationService.js');
+              if (!isCurrentRefresh()) {
+                URL.revokeObjectURL(blobUrl);
+                return;
+              }
 
               // DON'T reset the audio element first - this clears the cache!
               // resetAlignedAudioElement();
@@ -301,114 +359,16 @@ const VideoTopsideButtons = ({
                 }
               }));
 
-              // Set up proper video-audio synchronization
-              console.log('🎬 Setting up video-audio synchronization...');
-              console.log('🎬 Video element:', videoRef.current);
-              console.log('🎬 Video paused:', videoRef.current?.paused);
-              console.log('🎬 Video current time:', videoRef.current?.currentTime);
-
-              if (videoRef.current && audioElement) {
-                console.log('🔗 Setting up video event listeners for audio sync...');
-
-                // Set up video event listeners for synchronized playback
-                const handleVideoPlay = () => {
-                  console.log('▶️ Video play detected, syncing audio...');
-                  audioElement.currentTime = videoRef.current.currentTime;
-                  audioElement.play().catch(e => console.warn('Audio play error:', e));
-                };
-
-                const handleVideoPause = () => {
-                  console.log('⏸️ Video pause detected, pausing audio...');
-                  audioElement.pause();
-                };
-
-                const handleVideoSeeked = () => {
-                  console.log('⏭️ Video seeked, syncing audio time...');
-                  audioElement.currentTime = videoRef.current.currentTime;
-                };
-
-                const handleVideoTimeUpdate = () => {
-                  // Only sync if there's a significant difference
-                  if (Math.abs(audioElement.currentTime - videoRef.current.currentTime) > 0.3) {
-                    audioElement.currentTime = videoRef.current.currentTime;
-                  }
-                };
-
-                const handleVideoRateChange = () => {
-                  console.log('⚡ Video speed changed to:', videoRef.current.playbackRate);
-                  // Sync audio playback rate with video
-                  audioElement.playbackRate = videoRef.current.playbackRate;
-                  console.log('🎵 Audio speed synced to:', audioElement.playbackRate);
-                };
-
-                // Add event listeners
-                videoRef.current.addEventListener('play', handleVideoPlay);
-                videoRef.current.addEventListener('pause', handleVideoPause);
-                videoRef.current.addEventListener('seeked', handleVideoSeeked);
-                videoRef.current.addEventListener('timeupdate', handleVideoTimeUpdate);
-                videoRef.current.addEventListener('ratechange', handleVideoRateChange);
-
-                // Store cleanup function
-                window.cleanupAlignedNarrationSync = () => {
-                  if (videoRef.current) {
-                    videoRef.current.removeEventListener('play', handleVideoPlay);
-                    videoRef.current.removeEventListener('pause', handleVideoPause);
-                    videoRef.current.removeEventListener('seeked', handleVideoSeeked);
-                    videoRef.current.removeEventListener('timeupdate', handleVideoTimeUpdate);
-                    videoRef.current.removeEventListener('ratechange', handleVideoRateChange);
-                  }
-                };
-
-                // Sync initial playback rate
-                audioElement.playbackRate = videoRef.current.playbackRate;
-                console.log('🎵 Initial audio speed set to:', audioElement.playbackRate);
-
-                // Set up volume control integration
-                console.log('🔊 Setting up volume control integration...');
-
-                // Get current narration volume from the system
-                const currentNarrationVolume = window.narrationVolume || 1.0;
-                audioElement.volume = currentNarrationVolume;
-                console.log('🔊 Initial audio volume set to:', audioElement.volume);
-
-                // Listen for volume changes from the narration menu
-                const handleVolumeChange = (event) => {
-                  if (event.detail && typeof event.detail.volume === 'number') {
-                    audioElement.volume = event.detail.volume;
-                    console.log('🔊 Audio volume updated to:', audioElement.volume);
-                  }
-                };
-
-                // Listen for volume change events
-                window.addEventListener('narration-volume-change', handleVolumeChange);
-
-                // Store cleanup function for volume listener
-                const originalCleanup = window.cleanupAlignedNarrationSync;
-                window.cleanupAlignedNarrationSync = () => {
-                  if (originalCleanup) originalCleanup();
-                  window.removeEventListener('narration-volume-change', handleVolumeChange);
-                };
-
-                // If video is currently playing, start audio immediately
-                if (!videoRef.current.paused) {
-                  console.log('▶️ Video is playing, starting audio sync...');
-                  audioElement.currentTime = videoRef.current.currentTime;
-                  audioElement.play().catch(e => console.warn('Initial audio play error:', e));
-                } else {
-                  console.log('⏸️ Video is paused, audio will start when video plays');
-                }
-
-                console.log('✅ Video-audio synchronization set up successfully');
-              }
+              setSyncSession({ video: session.video, url: session.url, audio: audioElement });
 
               console.log('✅ Aligned narration regenerated successfully and integrated with service');
 
             } catch (error) {
+              if (!isCurrentRefresh() || error.name === 'AbortError') return;
               console.error('Error during aligned narration regeneration:', error);
               setError(error.message || 'Failed to refresh narration');
             } finally {
-              // Clear refreshing state
-              setIsRefreshingNarration(false);
+              if (refreshSession.current === session) setIsRefreshingNarration(false);
             }
           }}
           disabled={isRefreshingNarration}
@@ -622,8 +582,8 @@ const VideoTopsideButtons = ({
 
             // Get video title or use default
             const videoTitle = videoSource?.title || 'audio';
-            // Use the current video URL (optimized or original)
-            const currentVideoUrl = useOptimizedPreview && optimizedVideoUrl ? optimizedVideoUrl : videoUrl;
+            // Always extract from the original video source.
+            const currentVideoUrl = videoUrl;
 
             // Show loading state
             setError('');

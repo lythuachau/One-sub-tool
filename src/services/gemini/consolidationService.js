@@ -7,7 +7,7 @@ import i18n from '../../i18n/i18n';
 import { getLanguageCode } from '../../utils/languageUtils';
 import { createConsolidationSchema, addResponseSchema } from '../../utils/schemaUtils';
 import { getDefaultConsolidatePrompt } from './promptManagement';
-import { createRequestController, removeRequestController } from './requestManagement';
+import { createRequestController, removeRequestController , fetchGemini } from './requestManagement';
 import { processStructuredJsonResponse, processTextResponse } from './responseProcessingService';
 import { resolveGeminiModel } from './modelDiscovery';
 
@@ -121,7 +121,7 @@ export const completeDocument = async (subtitlesText, model = '', customPrompt =
         requestData = addResponseSchema(requestData, createConsolidationSchema());
 
 
-        const response = await fetch(apiUrl, {
+        const response = await fetchGemini(apiUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -164,9 +164,10 @@ export const completeDocument = async (subtitlesText, model = '', customPrompt =
         return processedText;
     } catch (error) {
         // Check if this is an AbortError
-        if (error.name === 'AbortError') {
-
-            throw new Error('Document completion request was aborted');
+        if (error.name === 'AbortError' || signal.aborted) {
+            const abortError = new Error('Document completion request was aborted');
+            abortError.name = 'AbortError';
+            throw abortError;
         } else {
             console.error('Document completion error:', error);
             // Remove this controller from the map on error

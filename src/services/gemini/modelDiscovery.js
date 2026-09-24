@@ -1,11 +1,13 @@
 import { getCurrentKey } from './keyManager';
 import { listGeminiModels } from './models/modelSelector';
+import { createRequestController, removeRequestController, fetchGemini } from './requestManagement';
 
 const MODEL_LIST_CACHE_MS = 5 * 60 * 1000;
 const MODEL_PROBE_CACHE_MS = 10 * 60 * 1000;
 const TRANSIENT_MODEL_PROBE_CACHE_MS = 60 * 1000;
-const MODEL_PROBE_TIMEOUT_MS = 12000;
-const MODEL_PROBE_CONCURRENCY = 3;
+const MODEL_PROBE_CONCURRENCY = 1;
+const VERIFIED_MODEL_CACHE_MS = 10 * 60 * 1000;
+const VERIFIED_MODELS_STORAGE_KEY = 'gemini_verified_models_v1';
 const FALLBACK_MODELS = [
   'gemini-flash-latest',
   'gemini-flash-lite-latest',
@@ -29,6 +31,7 @@ let modelListCache = null;
 let modelListFetchedAt = 0;
 let modelListKey = null;
 const modelProbeCache = new Map();
+const runtimeUsableModels = new Map();
 
 const normalizeModelId = (name) => name?.replace(/^models\//, '') || '';
 
@@ -62,6 +65,89 @@ const fallbackOptions = () => FALLBACK_MODELS.map((id) => ({
   supportedGenerationMethods: ['generateContent', 'countTokens']
 }));
 
+const getApiKeyHint = (apiKey) => apiKey ? `${apiKey.length}:${apiKey.slice(-4)}` : '';
+
+const readStoredVerifiedModelResult = (apiKey = getCurrentKey()) => {
+  if (typeof localStorage === 'undefined' || !apiKey) return null;
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(VERIFIED_MODELS_STORAGE_KEY) || 'null');
+    if (!stored || stored.apiKeyHint !== getApiKeyHint(apiKey)) return null;
+    return stored.result || null;
+  } catch (error) {
+    console.warn('Could not read cached Gemini model check:', error.message);
+    return null;
+  }
+};
+
+const readVerifiedModelResult = (apiKey = getCurrentKey()) => {
+  const result = readStoredVerifiedModelResult(apiKey);
+  if (!result?.checkedAt || Date.now() - result.checkedAt > VERIFIED_MODEL_CACHE_MS) {
+    return null;
+  }
+  return result;
+};
+
+const writeVerifiedModelResult = (apiKey, result) => {
+  if (typeof localStorage === 'undefined' || !apiKey || !result) return;
+
+  try {
+    localStorage.setItem(VERIFIED_MODELS_STORAGE_KEY, JSON.stringify({
+      apiKeyHint: getApiKeyHint(apiKey),
+      checkedAt: result.checkedAt,
+      result
+    }));
+    const unavailable503Models = new Set(
+      (result.unavailableModels || [])
+        .filter((model) => model.statusCode === 503 || model.errorCode === 503 || model.errorStatus === 'UNAVAILABLE')
+        .map((model) => normalizeModelId(model.id))
+    );
+    const fallbackModel = preferredOrder(result.usableModels || [], '')[0] || null;
+    if (fallbackModel) {
+      ['gemini_model', 'video_processing_model', 'video_analysis_model', 'translation_model'].forEach((storageKey) => {
+        const currentModel = normalizeModelId(localStorage.getItem(storageKey));
+        if (unavailable503Models.has(currentModel)) {
+          persistGeminiModelFallback(currentModel, fallbackModel, [storageKey]);
+        }
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gemini-models-checked', {
+        detail: { checkedAt: result.checkedAt }
+      }));
+    }
+  } catch (error) {
+    console.warn('Could not cache Gemini model check:', error.message);
+  }
+};
+
+export const getCachedGeminiModelResult = (apiKey = getCurrentKey()) => readVerifiedModelResult(apiKey);
+
+export const getCachedUsableGeminiModels = (apiKey = getCurrentKey()) => {
+  const result = readVerifiedModelResult(apiKey);
+  return result?.usableModels || [];
+};
+
+export const getDefaultGeminiModels = () => fallbackOptions();
+
+export const persistGeminiModelFallback = (failedModel, fallbackModel, storageKeys = []) => {
+  if (typeof localStorage === 'undefined' || !failedModel || !fallbackModel) return;
+  storageKeys.forEach((storageKey) => {
+    if (normalizeModelId(localStorage.getItem(storageKey)) === normalizeModelId(failedModel)) {
+      localStorage.setItem(storageKey, normalizeModelId(fallbackModel));
+    }
+  });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('gemini-model-fallback', {
+      detail: {
+        failedModel: normalizeModelId(failedModel),
+        fallbackModel: normalizeModelId(fallbackModel),
+        storageKeys
+      }
+    }));
+  }
+};
+
 const dedupeModels = (models) => {
   const seen = new Set();
   return models.filter((model) => {
@@ -71,7 +157,7 @@ const dedupeModels = (models) => {
   });
 };
 
-export const getDiscoveredGeminiModels = async ({ force = false, apiKey: providedApiKey = null } = {}) => {
+export const getDiscoveredGeminiModels = async ({ force = false, apiKey: providedApiKey = null, signal } = {}) => {
   const apiKey = providedApiKey || getCurrentKey();
   const now = Date.now();
 
@@ -89,7 +175,7 @@ export const getDiscoveredGeminiModels = async ({ force = false, apiKey: provide
   }
 
   try {
-    const models = await listGeminiModels(apiKey);
+    const models = await listGeminiModels(apiKey, { signal });
     const discovered = dedupeModels(models
       .filter(isGenerationModel)
       .map(toModelOption)
@@ -104,26 +190,45 @@ export const getDiscoveredGeminiModels = async ({ force = false, apiKey: provide
     modelListKey = apiKey;
     return discovered;
   } catch (error) {
+    if (signal?.aborted || error.name === 'AbortError') {
+      throw error;
+    }
     console.warn('Gemini model discovery failed; using fallback models:', error.message);
     return modelListCache && modelListKey === apiKey ? modelListCache : fallbackOptions();
   }
 };
 
-const probeModel = async (modelId, apiKey, { force = false } = {}) => {
+const probeModel = async (modelId, apiKey, { force = false, parentSignal } = {}) => {
   const cacheKey = `${apiKey}:${modelId}`;
   const now = Date.now();
   const cached = modelProbeCache.get(cacheKey);
 
   const cacheDuration = cached?.transient ? TRANSIENT_MODEL_PROBE_CACHE_MS : MODEL_PROBE_CACHE_MS;
   if (!force && cached && now - cached.checkedAt < cacheDuration) {
-    return cached.usable;
+    return {
+      usable: cached.usable,
+      status: cached.status,
+      message: cached.message,
+      errorCode: cached.errorCode,
+      errorStatus: cached.errorStatus
+    };
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), MODEL_PROBE_TIMEOUT_MS);
+  const { requestId, signal, controller } = createRequestController({
+    type: 'model-check',
+    modelId
+  });
+  const abortFromParent = () => controller.abort(parentSignal.reason);
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      abortFromParent();
+    } else {
+      parentSignal.addEventListener('abort', abortFromParent, { once: true });
+    }
+  }
 
   try {
-    const response = await fetch(
+    const response = await fetchGemini(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`,
       {
         method: 'POST',
@@ -147,18 +252,23 @@ const probeModel = async (modelId, apiKey, { force = false } = {}) => {
             }
           }
         }),
-        signal: controller.signal
+        signal
       }
     );
 
     const usable = response.ok;
     let message = '';
+    let errorCode = null;
+    let errorStatus = '';
     if (!usable) {
       try {
         const errorData = await response.json();
         message = errorData?.error?.message || response.statusText;
+        errorCode = errorData?.error?.code || response.status;
+        errorStatus = errorData?.error?.status || '';
       } catch (error) {
         message = response.statusText;
+        errorCode = response.status;
       }
     }
     modelProbeCache.set(cacheKey, {
@@ -166,20 +276,42 @@ const probeModel = async (modelId, apiKey, { force = false } = {}) => {
       checkedAt: now,
       status: response.status,
       message,
+      errorCode,
+      errorStatus,
       transient: [429, 500, 502, 503, 504].includes(response.status)
     });
-    return usable;
+    return {
+      usable,
+      status: response.status,
+      message,
+      errorCode,
+      errorStatus
+    };
   } catch (error) {
+    if (parentSignal?.aborted || signal.aborted) {
+      throw error;
+    }
     modelProbeCache.set(cacheKey, {
       usable: false,
       checkedAt: now,
       status: 0,
       message: error.message,
+      errorCode: null,
+      errorStatus: '',
       transient: true
     });
-    return false;
+    return {
+      usable: false,
+      status: 0,
+      message: error.message,
+      errorCode: null,
+      errorStatus: ''
+    };
   } finally {
-    clearTimeout(timeoutId);
+    if (parentSignal) {
+      parentSignal.removeEventListener('abort', abortFromParent);
+    }
+    removeRequestController(requestId);
   }
 };
 
@@ -200,36 +332,62 @@ const mapWithConcurrency = async (items, mapper, concurrency) => {
   return results;
 };
 
-export const checkGeminiModels = async ({ force = false, apiKey: providedApiKey = null } = {}) => {
+export const checkGeminiModels = async ({ force = false, apiKey: providedApiKey = null, signal: parentSignal } = {}) => {
   const apiKey = providedApiKey || getCurrentKey();
-  const discovered = await getDiscoveredGeminiModels({ force, apiKey });
-
-  if (!apiKey) {
-    return {
-      checkedAt: Date.now(),
-      models: discovered.map((model) => ({ ...model, status: 'unknown' })),
-      usableModels: [],
-      unavailableModels: [],
-      hasApiKey: false
-    };
+  const { requestId, signal, controller } = createRequestController({ type: 'model-check' });
+  const abortFromParent = () => controller.abort(parentSignal.reason);
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      abortFromParent();
+    } else {
+      parentSignal.addEventListener('abort', abortFromParent, { once: true });
+    }
   }
 
-  const models = await mapWithConcurrency(
-    discovered,
-    async (model) => ({
-      ...model,
-      status: await probeModel(model.id, apiKey, { force }) ? 'usable' : 'unavailable'
-    }),
-    MODEL_PROBE_CONCURRENCY
-  );
+  try {
+    const discovered = await getDiscoveredGeminiModels({ force, apiKey, signal });
 
-  return {
-    checkedAt: Date.now(),
-    models,
-    usableModels: models.filter((model) => model.status === 'usable'),
-    unavailableModels: models.filter((model) => model.status === 'unavailable'),
-    hasApiKey: true
-  };
+    if (!apiKey) {
+      return {
+        checkedAt: Date.now(),
+        models: discovered.map((model) => ({ ...model, status: 'unknown' })),
+        usableModels: [],
+        unavailableModels: [],
+        hasApiKey: false
+      };
+    }
+
+    const models = await mapWithConcurrency(
+      discovered,
+      async (model) => {
+        const probe = await probeModel(model.id, apiKey, { force, parentSignal: signal });
+        return {
+          ...model,
+          status: probe.usable ? 'usable' : 'unavailable',
+          statusCode: probe.status,
+          errorCode: probe.errorCode,
+          errorStatus: probe.errorStatus,
+          errorMessage: probe.usable ? '' : probe.message
+        };
+      },
+      MODEL_PROBE_CONCURRENCY
+    );
+
+    const result = {
+      checkedAt: Date.now(),
+      models,
+      usableModels: models.filter((model) => model.status === 'usable'),
+      unavailableModels: models.filter((model) => model.status === 'unavailable'),
+      hasApiKey: true
+    };
+    writeVerifiedModelResult(apiKey, result);
+    return result;
+  } finally {
+    if (parentSignal) {
+      parentSignal.removeEventListener('abort', abortFromParent);
+    }
+    removeRequestController(requestId);
+  }
 };
 
 const preferredOrder = (models, requestedModel) => {
@@ -250,19 +408,48 @@ export const getUsableGeminiModels = async ({ force = false, apiKey: providedApi
 
 export const resolveGeminiModel = async (requestedModel = '', providedApiKey = null) => {
   const apiKey = providedApiKey || getCurrentKey();
-  const models = await getDiscoveredGeminiModels({ apiKey });
+  const cachedResult = readVerifiedModelResult(apiKey);
+  const cachedModels = cachedResult?.usableModels || [];
 
-  if (!apiKey) {
-    return requestedModel || models[0]?.id || FALLBACK_MODELS[0];
+  if (!cachedResult) {
+    return normalizeModelId(requestedModel) || FALLBACK_MODELS[0];
   }
 
-  for (const modelId of preferredOrder(models, requestedModel)) {
-    if (await probeModel(modelId, apiKey)) {
-      return modelId;
-    }
+  const usableIds = new Set(cachedModels.map((model) => model.id));
+  const requestedId = normalizeModelId(requestedModel);
+  if (requestedId && usableIds.has(requestedId)) {
+    return requestedId;
   }
 
-  return requestedModel || models[0]?.id || FALLBACK_MODELS[0];
+  const orderedModels = preferredOrder(cachedModels, '')
+    .filter((modelId) => usableIds.has(modelId));
+  if (orderedModels.length > 0) {
+    return orderedModels[0];
+  }
+
+  throw new Error('No verified Gemini model is currently available. Run model check again later.');
+};
+
+export const getVerifiedGeminiFallbackModel = (failedModel, providedApiKey = null) => {
+  const apiKey = providedApiKey || getCurrentKey();
+  const cachedModels = readStoredVerifiedModelResult(apiKey)?.usableModels || [];
+  const runtimeModels = [...(runtimeUsableModels.get(apiKey) || [])].map((id) => ({ id }));
+  const availableModels = dedupeModels([...cachedModels, ...runtimeModels]);
+  const failedModelId = normalizeModelId(failedModel);
+  const usableIds = new Set(availableModels.map((model) => normalizeModelId(model.id)));
+
+  return preferredOrder(availableModels, '')
+    .map(normalizeModelId)
+    .find((modelId) => modelId && modelId !== failedModelId && usableIds.has(modelId)) || null;
+};
+
+export const recordGeminiModelSuccess = (model, providedApiKey = null) => {
+  const apiKey = providedApiKey || getCurrentKey();
+  const modelId = normalizeModelId(model);
+  if (!apiKey || !modelId) return;
+  const models = runtimeUsableModels.get(apiKey) || new Set();
+  models.add(modelId);
+  runtimeUsableModels.set(apiKey, models);
 };
 
 export const invalidateGeminiModelDiscovery = () => {
@@ -270,6 +457,7 @@ export const invalidateGeminiModelDiscovery = () => {
   modelListFetchedAt = 0;
   modelListKey = null;
   modelProbeCache.clear();
+  runtimeUsableModels.clear();
 };
 
 export const getGeminiModelLabel = (model) => {

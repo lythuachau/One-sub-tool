@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { callGeminiApi, setProcessingForceStopped } from '../services/geminiService';
+import { callGeminiApi, setProcessingForceStopped, getProcessingForceStopped } from '../services/geminiService';
 import { preloadYouTubeVideo } from '../utils/videoPreloader';
 import { generateFileCacheId } from '../utils/cacheUtils';
 import { extractYoutubeVideoId } from '../utils/videoDownloader';
@@ -7,6 +7,7 @@ import { getVideoDuration, processLongVideo, retrySegmentProcessing } from '../u
 import { setCurrentCacheId as setRulesCacheId } from '../utils/transcriptionRulesStore';
 import { setCurrentCacheId as setSubtitlesCacheId } from '../utils/userSubtitlesStore';
 import { getSubtitleEngine, transcribeWithWhisper } from '../services/subtitleEngineService';
+import { getGeminiErrorMessage as getGeminiStatusMessage } from '../services/gemini/errorUtils';
 
 /**
  * Generate a consistent cache ID from any video URL
@@ -56,6 +57,9 @@ export const useSubtitles = (t) => {
             setIsGenerating(false);
             // Reset retrying segments
             setRetryingSegments([]);
+            localStorage.removeItem('video_processing_in_progress');
+            localStorage.removeItem('show_video_analysis');
+            localStorage.removeItem('video_analysis_timestamp');
             // Update status
             setStatus({ message: t('output.requestsAborted', 'All Gemini requests have been aborted'), type: 'info' });
         };
@@ -240,6 +244,9 @@ export const useSubtitles = (t) => {
                     // Process long media file by splitting it into segments
                     subtitles = await processLongVideo(input, setStatus, t, { userProvidedSubtitles });
                 } catch (error) {
+                    if (error.name === 'AbortError' || getProcessingForceStopped()) {
+                        throw error;
+                    }
                     console.error('Error checking media duration:', error);
                     // Fallback to normal processing
                     subtitles = subtitleEngine === 'whisper'
@@ -275,6 +282,16 @@ export const useSubtitles = (t) => {
             return true;
         } catch (error) {
             console.error('Error generating subtitles:', error);
+            if (error.name === 'AbortError' || getProcessingForceStopped()) {
+                localStorage.removeItem('video_processing_in_progress');
+                setStatus({ message: t('output.requestsAborted', 'Processing was stopped.'), type: 'info' });
+                return false;
+            }
+            const categorizedError = getGeminiStatusMessage(error, t, { fallbackToRaw: false });
+            if (categorizedError) {
+                setStatus({ message: categorizedError, type: 'error' });
+                return false;
+            }
             try {
                 // Check for specific Gemini API errors
                 if (error.message && (
@@ -284,8 +301,8 @@ export const useSubtitles = (t) => {
                     // Use specific 503 error message if it's a 503 error
                     const is503Error = error.message.includes('503');
                     const errorMessage = is503Error
-                        ? t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)')
-                        : t('errors.geminiOverloaded', 'Strong model tends to get overloaded, please consider using other model and try again, or try lower the segment duration. Or create a new Google Cloud Project and get an API Key.');
+                        ? t('errors.geminiServiceUnavailable', 'Gemini is temporarily unavailable (503). Wait and retry later.')
+                        : t('errors.geminiOverloaded', 'Gemini is temporarily overloaded. Wait and retry later.');
                     setStatus({ message: errorMessage, type: 'error' });
                 } else if (error.message && error.message.includes('token') && error.message.includes('exceeds the maximum')) {
                     setStatus({ message: t('errors.tokenLimitExceeded'), type: 'error' });
@@ -322,8 +339,8 @@ export const useSubtitles = (t) => {
                     // Use specific 503 error message if it's a 503 error
                     const is503Error = error.message.includes('503');
                     const errorMessage = is503Error
-                        ? t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)')
-                        : t('errors.geminiOverloaded', 'Strong model tends to get overloaded, please consider using other model and try again, or try lower the segment duration. Or create a new Google Cloud Project and get an API Key.');
+                        ? t('errors.geminiServiceUnavailable', 'Gemini is temporarily unavailable (503). Wait and retry later.')
+                        : t('errors.geminiOverloaded', 'Gemini is temporarily overloaded. Wait and retry later.');
                     setStatus({ message: errorMessage, type: 'error' });
                 } else if (error.message && error.message.includes('token') && error.message.includes('exceeds the maximum')) {
                     setStatus({ message: t('errors.tokenLimitExceeded'), type: 'error' });
@@ -387,6 +404,9 @@ export const useSubtitles = (t) => {
                     // Process long media file by splitting it into segments
                     subtitles = await processLongVideo(input, setStatus, t, { userProvidedSubtitles });
                 } catch (error) {
+                    if (error.name === 'AbortError' || getProcessingForceStopped()) {
+                        throw error;
+                    }
                     console.error('Error checking media duration:', error);
                     // Fallback to normal processing
                     subtitles = subtitleEngine === 'whisper'
@@ -450,6 +470,17 @@ export const useSubtitles = (t) => {
             return true;
         } catch (error) {
             console.error('Error regenerating subtitles:', error);
+            if (error.name === 'AbortError' || getProcessingForceStopped()) {
+                localStorage.removeItem('video_processing_in_progress');
+                setStatus({ message: t('output.requestsAborted', 'Processing was stopped.'), type: 'info' });
+                return false;
+            }
+
+            const categorizedError = getGeminiStatusMessage(error, t, { fallbackToRaw: false });
+            if (categorizedError) {
+                setStatus({ message: categorizedError, type: 'error' });
+                return false;
+            }
 
             // Check for specific Gemini API errors
             if (error.message && (
@@ -459,8 +490,8 @@ export const useSubtitles = (t) => {
                 // Use specific 503 error message if it's a 503 error
                 const is503Error = error.message.includes('503');
                 const errorMessage = is503Error
-                    ? t('errors.geminiServiceUnavailable', 'Gemini is currently overloaded, please wait and try again later (error code 503)')
-                    : t('errors.geminiOverloaded', 'Strong model tends to get overloaded, please consider using other model and try again, or try lower the segment duration. Or create a new Google Cloud Project and get an API Key.');
+                    ? t('errors.geminiServiceUnavailable', 'Gemini is temporarily unavailable (503). Wait and retry later.')
+                    : t('errors.geminiOverloaded', 'Gemini is temporarily overloaded. Wait and retry later.');
                 setStatus({ message: errorMessage, type: 'error' });
             } else if (error.message && error.message.includes('token') && error.message.includes('exceeds the maximum')) {
                 setStatus({ message: t('errors.tokenLimitExceeded'), type: 'error' });

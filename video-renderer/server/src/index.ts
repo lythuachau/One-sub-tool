@@ -14,17 +14,151 @@ const app = express();
 // Import unified port configuration from centralized config
 const { PORTS } = require('../../../server/config');
 const port = process.env.PORT || PORTS.VIDEO_RENDERER;
+const remotionConcurrency = Math.max(1, Number.parseInt(process.env.REMOTION_CONCURRENCY || '2', 10));
 
-// Store active render processes for cancellation and status tracking
-const activeRenders = new Map<string, {
-  cancel: () => void;
-  response: express.Response;
-  status: 'active' | 'completed' | 'failed' | 'cancelled';
+type RenderStatus = 'queued' | 'active' | 'completed' | 'failed' | 'cancelled';
+
+type PersistedRender = {
+  renderId: string;
+  status: RenderStatus;
   progress: number;
   outputPath?: string;
   error?: string;
   startTime: number;
-}>();
+  queuePosition?: number;
+  updatedAt: number;
+};
+
+type ActiveRender = {
+  cancel: () => void;
+  response: express.Response;
+  status: RenderStatus;
+  progress: number;
+  outputPath?: string;
+  error?: string;
+  startTime: number;
+  queuePosition?: number;
+};
+
+// Store active render processes for cancellation and status tracking
+const activeRenders = new Map<string, ActiveRender>();
+const persistedRenders = new Map<string, PersistedRender>();
+const lastRenderPersistAt = new Map<string, number>();
+const pendingRenderSlots: Array<{
+  renderId: string;
+  resolve: (release: () => void) => void;
+}> = [];
+let runningRenderId: string | null = null;
+
+const writeRenderEvent = (render: ActiveRender, payload: Record<string, unknown>) => {
+  if (!render.response.writableEnded && !render.response.destroyed) {
+    render.response.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }
+};
+
+const updateQueuePositions = () => {
+  pendingRenderSlots.forEach((entry, index) => {
+    const render = activeRenders.get(entry.renderId);
+    if (!render || render.status === 'cancelled') return;
+    render.status = 'queued';
+    render.queuePosition = index + 1;
+    persistRender(entry.renderId, render);
+    writeRenderEvent(render, {
+      status: 'queued',
+      queuePosition: render.queuePosition
+    });
+  });
+};
+
+const releaseRenderSlot = (renderId: string) => {
+  if (runningRenderId !== renderId) return;
+  runningRenderId = null;
+
+  while (pendingRenderSlots.length > 0) {
+    const next = pendingRenderSlots.shift();
+    if (!next) break;
+
+    const render = activeRenders.get(next.renderId);
+    if (!render || render.status === 'cancelled') continue;
+
+    runningRenderId = next.renderId;
+    render.status = 'active';
+    render.queuePosition = 0;
+    persistRender(next.renderId, render);
+    writeRenderEvent(render, { status: 'started', queuePosition: 0 });
+
+    let released = false;
+    next.resolve(() => {
+      if (released) return;
+      released = true;
+      releaseRenderSlot(next.renderId);
+    });
+    break;
+  }
+
+  updateQueuePositions();
+};
+
+const acquireRenderSlot = (renderId: string) => new Promise<() => void>((resolve) => {
+  const render = activeRenders.get(renderId);
+
+  if (!runningRenderId) {
+    runningRenderId = renderId;
+    if (render) {
+      render.status = 'active';
+      render.queuePosition = 0;
+      persistRender(renderId, render);
+      writeRenderEvent(render, { status: 'started', queuePosition: 0 });
+    }
+
+    let released = false;
+    resolve(() => {
+      if (released) return;
+      released = true;
+      releaseRenderSlot(renderId);
+    });
+    return;
+  }
+
+  pendingRenderSlots.push({ renderId, resolve });
+  updateQueuePositions();
+});
+
+const removePendingRender = (renderId: string) => {
+  const index = pendingRenderSlots.findIndex(entry => entry.renderId === renderId);
+  if (index >= 0) {
+    const [removed] = pendingRenderSlots.splice(index, 1);
+    removed.resolve(() => {});
+  }
+  updateQueuePositions();
+};
+
+const cleanupRendererChildren = async () => {
+  if (process.platform !== 'win32') return;
+
+  const { execFile } = require('child_process');
+  const script = [
+    `$rootPid = ${process.pid}`,
+    '$all = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue',
+    '$descendants = New-Object System.Collections.Generic.HashSet[int]',
+    '$queue = New-Object System.Collections.Generic.Queue[int]',
+    '$queue.Enqueue($rootPid)',
+    'while ($queue.Count -gt 0) {',
+    '  $parentPid = $queue.Dequeue()',
+    '  $all | Where-Object { $_.ParentProcessId -eq $parentPid } | ForEach-Object {',
+    '    if ($descendants.Add([int]$_.ProcessId)) { $queue.Enqueue([int]$_.ProcessId) }',
+    '  }',
+    '}',
+    "$all | Where-Object { $descendants.Contains([int]$_.ProcessId) -and ($_.Name -eq 'chrome-headless-shell.exe' -or $_.Name -eq 'ffmpeg.exe') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+  ].join('; ');
+
+  await new Promise<void>((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true,
+      timeout: 15000
+    }, () => resolve());
+  });
+};
 
 // Ensure directories exist
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -85,6 +219,102 @@ app.use(express.json());
 app.use('/uploads', express.static(uploadsDir));
 app.use('/output', express.static(outputDir));
 
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'video-renderer',
+    port,
+    runningRenderId,
+    queuedRenders: pendingRenderSlots.length,
+    concurrency: remotionConcurrency
+  });
+});
+
+const renderManifestPath = path.join(outputDir, 'render-manifest.json');
+
+const readRenderManifest = () => {
+  try {
+    if (!fs.existsSync(renderManifestPath)) return;
+    const records = JSON.parse(fs.readFileSync(renderManifestPath, 'utf8'));
+    if (!Array.isArray(records)) return;
+
+    records.forEach((record: PersistedRender) => {
+      if (!record?.renderId || !record?.status) return;
+      const recoveredRecord: PersistedRender = {
+        ...record,
+        status: record.status === 'active' || record.status === 'queued' ? 'failed' : record.status,
+        error: record.status === 'active' || record.status === 'queued'
+          ? 'Renderer restarted before this render completed. Retry the render.'
+          : record.error,
+        updatedAt: Date.now()
+      };
+      persistedRenders.set(record.renderId, recoveredRecord);
+    });
+  } catch (error) {
+    console.warn('[Renderer] Could not read render manifest:', error);
+  }
+};
+
+const writeRenderManifest = () => {
+  const temporaryPath = `${renderManifestPath}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(Array.from(persistedRenders.values()), null, 2));
+    fs.renameSync(temporaryPath, renderManifestPath);
+  } catch (error) {
+    console.warn('[Renderer] Could not persist render manifest:', error);
+    try {
+      if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+    } catch (_) {
+      // The manifest is best-effort and must not interrupt rendering.
+    }
+  }
+};
+
+const persistRender = (renderId: string, render: ActiveRender) => {
+  persistedRenders.set(renderId, {
+    renderId,
+    status: render.status,
+    progress: render.progress,
+    outputPath: render.outputPath,
+    error: render.error,
+    startTime: render.startTime,
+    queuePosition: render.queuePosition || 0,
+    updatedAt: Date.now()
+  });
+  writeRenderManifest();
+};
+
+const persistRenderProgress = (renderId: string, render: ActiveRender) => {
+  const now = Date.now();
+  if (render.progress < 1 && now - (lastRenderPersistAt.get(renderId) || 0) < 1000) return;
+  lastRenderPersistAt.set(renderId, now);
+  persistRender(renderId, render);
+};
+
+readRenderManifest();
+
+app.get('/renders', (_req, res) => {
+  const activeRenderIds = new Set(activeRenders.keys());
+  const persisted = Array.from(persistedRenders.values())
+    .filter(render => !activeRenderIds.has(render.renderId));
+  res.json({
+    runningRenderId,
+    queuedRenders: pendingRenderSlots.length,
+    renders: [
+      ...persisted,
+      ...Array.from(activeRenders.entries()).map(([renderId, render]) => ({
+      renderId,
+      status: render.status,
+      progress: render.progress,
+      queuePosition: render.queuePosition || 0,
+      outputPath: render.outputPath,
+      error: render.error,
+      startTime: render.startTime
+      }))
+    ]
+  });
+});
+
 // Upload endpoint for audio and images
 app.post('/upload/:type', upload.single('file'), (req, res) => {
   if (!req.file) {
@@ -120,6 +350,23 @@ app.get('/render-status/:renderId', (req, res) => {
   const { renderId } = req.params;
 
   const activeRender = activeRenders.get(renderId);
+  const persistedRender = persistedRenders.get(renderId);
+  if (!activeRender && !persistedRender) {
+    return res.status(404).json({ error: 'Render not found' });
+  }
+
+  if (!activeRender && persistedRender) {
+    return res.json({
+      status: persistedRender.status,
+      progress: persistedRender.progress,
+      queuePosition: persistedRender.queuePosition || 0,
+      outputPath: persistedRender.outputPath,
+      error: persistedRender.error,
+      startTime: persistedRender.startTime,
+      updatedAt: persistedRender.updatedAt
+    });
+  }
+
   if (!activeRender) {
     return res.status(404).json({ error: 'Render not found' });
   }
@@ -127,6 +374,7 @@ app.get('/render-status/:renderId', (req, res) => {
   res.json({
     status: activeRender.status,
     progress: activeRender.progress,
+    queuePosition: activeRender.queuePosition || 0,
     outputPath: activeRender.outputPath,
     error: activeRender.error,
     startTime: activeRender.startTime
@@ -142,7 +390,7 @@ app.get('/render-stream/:renderId', (req, res) => {
     return res.status(404).json({ error: 'Render not found' });
   }
 
-  if (activeRender.status !== 'active') {
+  if (activeRender.status !== 'active' && activeRender.status !== 'queued') {
     // Render is no longer active, send final status
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -178,7 +426,11 @@ app.get('/render-stream/:renderId', (req, res) => {
   activeRender.response = res;
 
   // Send current progress immediately
-  res.write(`data: ${JSON.stringify({ progress: activeRender.progress })}\n\n`);
+  res.write(`data: ${JSON.stringify({
+    status: activeRender.status,
+    progress: activeRender.progress,
+    queuePosition: activeRender.queuePosition || 0
+  })}\n\n`);
 });
 
 // Cancel render endpoint
@@ -198,8 +450,22 @@ app.post('/cancel-render/:renderId', (req, res) => {
   }
 
   try {
+    if (activeRender.status === 'queued') {
+      removePendingRender(renderId);
+      activeRender.status = 'cancelled';
+      activeRender.error = 'Render was cancelled';
+      persistRender(renderId, activeRender);
+      writeRenderEvent(activeRender, { status: 'cancelled' });
+      if (!activeRender.response.writableEnded) activeRender.response.end();
+      activeRenders.delete(renderId);
+      return res.json({ success: true, message: 'Queued render cancelled successfully' });
+    }
+
     // Cancel the render using Remotion's cancel function
     activeRender.cancel();
+    activeRender.status = 'cancelled';
+    activeRender.error = 'Render was cancelled';
+    persistRender(renderId, activeRender);
 
     // Send cancellation message to the SSE stream
     if (!activeRender.response.writableEnded) {
@@ -258,15 +524,25 @@ app.post('/render', async (req, res) => {
   activeRenders.set(renderId, {
     cancel,
     response: res,
-    status: 'active',
+    status: 'queued',
     progress: 0,
-    startTime: Date.now()
+    startTime: Date.now(),
+    queuePosition: 0
   });
+  persistRender(renderId, activeRenders.get(renderId)!);
 
   // Ensure Remotion temp directories exist before rendering
   ensureRemotionTempDirs();
 
+  let releaseSlot: (() => void) | null = null;
+  let ownsRenderSlot = false;
+
   try {
+    releaseSlot = await acquireRenderSlot(renderId);
+    const admittedRender = activeRenders.get(renderId);
+    if (!admittedRender || admittedRender.status === 'cancelled') return;
+    ownsRenderSlot = true;
+
     const {
       compositionId = 'subtitled-video', // Get compositionId from request, fallback to default
       audioFile,
@@ -603,6 +879,7 @@ app.post('/render', async (req, res) => {
           gl: "vulkan"
         },
         logLevel: 'verbose',
+        concurrency: remotionConcurrency,
         timeoutInMilliseconds: 120000, // Increase timeout to 2 minutes
         cancelSignal,
         onProgress: ({ renderedFrames, encodedFrames }) => {
@@ -613,6 +890,7 @@ app.post('/render', async (req, res) => {
           const activeRender = activeRenders.get(renderId);
           if (activeRender) {
             activeRender.progress = progress;
+            persistRenderProgress(renderId, activeRender);
 
             // Determine the current phase based on progress
             let phase = 'rendering';
@@ -678,6 +956,7 @@ app.post('/render', async (req, res) => {
                 gl: "vulkan"
               },
               logLevel: 'verbose',
+              concurrency: remotionConcurrency,
               timeoutInMilliseconds: 120000, // Increase timeout to 2 minutes
               cancelSignal,
               onProgress: ({ renderedFrames, encodedFrames }) => {
@@ -688,6 +967,7 @@ app.post('/render', async (req, res) => {
                 const activeRender = activeRenders.get(renderId);
                 if (activeRender) {
                   activeRender.progress = progress;
+                  persistRenderProgress(renderId, activeRender);
 
                   // Determine the current phase based on progress
                   let phase = 'rendering';
@@ -736,6 +1016,7 @@ app.post('/render', async (req, res) => {
       activeRender.status = 'completed';
       activeRender.progress = 1.0;
       activeRender.outputPath = videoUrl;
+      persistRender(renderId, activeRender);
 
       // Use the current response object (which may have been updated on reconnection)
       if (!activeRender.response.writableEnded) {
@@ -758,6 +1039,7 @@ app.post('/render', async (req, res) => {
       if (activeRender) {
         activeRender.status = 'cancelled';
         activeRender.error = 'Render was cancelled';
+        persistRender(renderId, activeRender);
 
         // Use the current response object (which may have been updated on reconnection)
         if (!activeRender.response.writableEnded) {
@@ -770,6 +1052,7 @@ app.post('/render', async (req, res) => {
       if (activeRender) {
         activeRender.status = 'failed';
         activeRender.error = errorMessage;
+        persistRender(renderId, activeRender);
 
         // Use the current response object (which may have been updated on reconnection)
         if (!activeRender.response.writableEnded) {
@@ -786,6 +1069,11 @@ app.post('/render', async (req, res) => {
     setTimeout(() => {
       activeRenders.delete(renderId);
     }, 300000); // Keep for 5 minutes
+  } finally {
+    if (releaseSlot && ownsRenderSlot) {
+      await cleanupRendererChildren();
+      releaseSlot();
+    }
   }
 });
 
@@ -794,6 +1082,7 @@ app.listen(port, () => {
   console.log('GPU settings:');
   console.log('REMOTION_CHROME_MODE:', process.env.REMOTION_CHROME_MODE);
   console.log('REMOTION_GL:', process.env.REMOTION_GL);
+  console.log('REMOTION_CONCURRENCY:', remotionConcurrency);
 
   // Track this process (if port manager is available)
   try {

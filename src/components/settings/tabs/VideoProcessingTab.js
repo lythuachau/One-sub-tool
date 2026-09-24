@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 import StandardSlider from '../../common/StandardSlider';
 import { SegmentsIcon, VideoAnalysisIcon, OptimizationIcon, DisplayIcon } from '../icons/TabIcons';
@@ -6,7 +6,7 @@ import { FiCpu } from 'react-icons/fi';
 import MaterialSwitch from '../../common/MaterialSwitch';
 import '../../../styles/common/material-switch.css';
 import { useGeminiModels } from '../../../hooks/useGeminiModels';
-import { getGeminiModelLabel, resolveGeminiModel } from '../../../services/gemini/modelDiscovery';
+import { getGeminiModelLabel } from '../../../services/gemini/modelDiscovery';
 
 const VideoProcessingTab = ({
   segmentDuration,
@@ -27,12 +27,6 @@ const VideoProcessingTab = ({
   setVideoAnalysisTimeout,
   autoSelectDefaultPreset,
   setAutoSelectDefaultPreset,
-  optimizeVideos,
-  setOptimizeVideos,
-  optimizedResolution,
-  setOptimizedResolution,
-  useOptimizedPreview,
-  setUseOptimizedPreview,
   thinkingBudgets,
   setThinkingBudgets,
   useCookiesForDownload,
@@ -41,25 +35,7 @@ const VideoProcessingTab = ({
   const { t } = useTranslation();
   const { models, isLoading: modelsLoading } = useGeminiModels();
 
-  useEffect(() => {
-    if (models.length === 0) return;
-
-    let active = true;
-    Promise.all([
-      resolveGeminiModel(geminiModel),
-      resolveGeminiModel(videoAnalysisModel)
-    ]).then(([resolvedGeminiModel, resolvedVideoAnalysisModel]) => {
-      if (!active) return;
-      setGeminiModel(resolvedGeminiModel);
-      setVideoAnalysisModel(resolvedVideoAnalysisModel);
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [models, geminiModel, videoAnalysisModel, setGeminiModel, setVideoAnalysisModel]);
-
-  const modelOptions = models.length > 0 ? models : [];
+  const modelOptions = models;
   const hasGeminiModelOption = modelOptions.some((model) => model.id === geminiModel);
   const hasVideoAnalysisModelOption = modelOptions.some((model) => model.id === videoAnalysisModel);
 
@@ -323,60 +299,20 @@ const VideoProcessingTab = ({
           </div>
         </div>
 
-        {/* Video Optimization Card */}
+        {/* Video Source Card */}
         <div className="settings-card optimization-card">
           <div className="settings-card-header">
             <div className="settings-card-icon">
               <OptimizationIcon />
             </div>
-            <h4>{t('settings.videoOptimizationSection', 'Video Optimization')}</h4>
+            <h4>{t('settings.videoSourceSection', 'Video Source')}</h4>
           </div>
           <div className="settings-card-content">
-            {/* Video optimization is now always enabled - no toggle needed */}
             <div className="compact-setting">
               <p
                 className="setting-description optimization-always-enabled"
-                dangerouslySetInnerHTML={{
-                  __html: t('settings.optimizeVideosAlwaysEnabled', 'Videos are automatically optimized for Gemini processing. This reduces file size and upload time while maintaining quality for AI analysis. Gemini processes videos at 1 FPS by default.')
-                }}
-              />
-            </div>
-
-            <div className="compact-setting">
-              <label htmlFor="optimized-resolution">
-                {t('settings.optimizedResolution', 'Optimized Resolution')}
-              </label>
-              <p className="setting-description">
-                {t('settings.optimizedResolutionDescription', 'Select the resolution for Gemini processing. Higher resolutions don\'t improve AI accuracy significantly but increase file size and upload time. 360p is recommended for most content.')}
-              </p>
-              <select
-                id="optimized-resolution"
-                value={optimizedResolution}
-                onChange={(e) => setOptimizedResolution(e.target.value)}
-                className="enhanced-select"
               >
-                <option value="240p">{t('settings.resolution240p', '240p (Fastest, smallest files)')}</option>
-                <option value="360p">{t('settings.resolution360p', '360p (Recommended for Gemini)')}</option>
-              </select>
-            </div>
-
-            <div className="compact-setting">
-              <div className="setting-header">
-                <label htmlFor="use-optimized-preview">
-                  {t('settings.useOptimizedPreview', 'Use optimized video for preview')}
-                </label>
-                <div className="material-switch-container">
-                  <MaterialSwitch
-                    id="use-optimized-preview"
-                    checked={useOptimizedPreview}
-                    onChange={(e) => setUseOptimizedPreview(e.target.checked)}
-                    ariaLabel={t('settings.useOptimizedPreview', 'Use optimized video for preview')}
-                    icons={true}
-                  />
-                </div>
-              </div>
-              <p className="setting-description">
-                {t('settings.useOptimizedPreviewDescription.simplified', 'Use the optimized video for preview instead of the original. Improves performance and reduces memory usage. The optimized video has the same quality that Gemini processes (1 FPS, optimized resolution).')}
+                {t('settings.originalVideoAlwaysUsed', 'Video optimization is disabled. The original video is used for analysis, splitting, preview, and rendering.')}
               </p>
             </div>
           </div>

@@ -130,6 +130,8 @@ const generateNarration = async (req, res) => {
     const lang = settings?.lang || 'en';
     const tld = settings?.tld || 'com';
     const slow = settings?.slow || false;
+    const generationId = String(settings?.generationId || `gtts_${Date.now()}_${uuidv4().slice(0, 8)}`)
+      .replace(/[^A-Za-z0-9_-]+/g, '_');
 
     // Set up Server-Sent Events
     res.writeHead(200, {
@@ -160,7 +162,7 @@ const generateNarration = async (req, res) => {
         const tempScript = path.join(os.tmpdir(), `gtts_generate_${uuidv4()}.py`);
 
         // Create subtitle directory (same as F5-TTS/Chatterbox pattern)
-        const subtitleDir = path.join(outputDir, `subtitle_${subtitle.id || i}`);
+        const subtitleDir = path.join(outputDir, generationId, `subtitle_${subtitle.id || i}`);
         if (!fs.existsSync(subtitleDir)) {
           fs.mkdirSync(subtitleDir, { recursive: true });
         }
@@ -176,7 +178,7 @@ const generateNarration = async (req, res) => {
         }
 
         // Full filename for response (includes subtitle directory)
-        const fullFilename = `subtitle_${subtitle.id || i}/${filename}`;
+        const fullFilename = `${generationId}/subtitle_${subtitle.id || i}/${filename}`;
 
         const scriptContent = `
 import json

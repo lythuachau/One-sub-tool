@@ -19,6 +19,15 @@ const { getMediaDuration } = require('../../../services/videoProcessing/duration
 // Maximum number of segments to process in a single batch
 const MAX_SEGMENTS_PER_BATCH = 200;
 
+const resolveNarrationPath = (filename) => {
+  const root = path.resolve(OUTPUT_AUDIO_DIR);
+  const resolved = path.resolve(root, String(filename || '').replace(/[\\/]+/g, path.sep));
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error('Invalid narration filename');
+  }
+  return resolved;
+};
+
 /**
  * Download aligned narration audio (one file)
  *
@@ -77,7 +86,7 @@ const downloadAlignedAudio = async (req, res) => {
       // Gemini narrations might have audioData property (base64 encoded audio)
       if (narration.filename) {
         // First, try the filename as provided
-        let filePath = path.join(OUTPUT_AUDIO_DIR, narration.filename);
+        let filePath = resolveNarrationPath(narration.filename);
         console.log(`Checking for audio file: ${filePath}`);
 
         // List the contents of the subtitle directory to help debug
@@ -91,7 +100,7 @@ const downloadAlignedAudio = async (req, res) => {
             // try looking for "subtitle_X/1.wav" instead
             if (!fs.existsSync(filePath) && narration.filename.includes('f5tts_1.wav')) {
               const alternativeFilename = narration.filename.replace('f5tts_1.wav', '1.wav');
-              const alternativePath = path.join(OUTPUT_AUDIO_DIR, alternativeFilename);
+              const alternativePath = resolveNarrationPath(alternativeFilename);
 
               console.log(`Trying alternative path: ${alternativePath}`);
 
@@ -171,7 +180,7 @@ const downloadAlignedAudio = async (req, res) => {
 
       // Check file size to ensure it's a valid audio file (only for file-based narrations)
       if (narration.filename) {
-        const filePath = path.join(OUTPUT_AUDIO_DIR, narration.filename);
+        const filePath = resolveNarrationPath(narration.filename);
         const stats = fs.statSync(filePath);
         if (stats.size === 0) {
 
@@ -198,7 +207,7 @@ const downloadAlignedAudio = async (req, res) => {
 
       // For file-based narrations (F5-TTS or Gemini)
       if (narration.filename) {
-        const filePath = path.join(OUTPUT_AUDIO_DIR, narration.filename);
+        const filePath = resolveNarrationPath(narration.filename);
         audioSegments.push({
           path: filePath,
           start: start,

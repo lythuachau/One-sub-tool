@@ -10,7 +10,13 @@ from .narration_config import OUTPUT_AUDIO_DIR
 
 logger = logging.getLogger(__name__)
 
-def get_subtitle_directory(subtitle_id):
+def _normalize_scope(value):
+    if value is None:
+        return ''
+    return ''.join(char if char.isalnum() or char in ('_', '-') else '_' for char in str(value)).strip('._-')
+
+
+def get_subtitle_directory(subtitle_id, generation_id=None):
     """
     Get the directory path for a specific subtitle ID
     
@@ -20,9 +26,11 @@ def get_subtitle_directory(subtitle_id):
     Returns:
         str: The directory path for the subtitle ID
     """
-    return os.path.join(OUTPUT_AUDIO_DIR, f"subtitle_{subtitle_id}")
+    scope = _normalize_scope(generation_id)
+    root = os.path.join(OUTPUT_AUDIO_DIR, scope) if scope else OUTPUT_AUDIO_DIR
+    return os.path.join(root, f"subtitle_{subtitle_id}")
 
-def ensure_subtitle_directory(subtitle_id):
+def ensure_subtitle_directory(subtitle_id, generation_id=None):
     """
     Ensure a subtitle-specific directory exists
     
@@ -32,7 +40,7 @@ def ensure_subtitle_directory(subtitle_id):
     Returns:
         str: The directory path that was created
     """
-    subtitle_dir = get_subtitle_directory(subtitle_id)
+    subtitle_dir = get_subtitle_directory(subtitle_id, generation_id)
     if not os.path.exists(subtitle_dir):
         os.makedirs(subtitle_dir, exist_ok=True)
         logger.debug(f"Created subtitle directory: {subtitle_dir}")

@@ -52,7 +52,7 @@ export const startYoutubeVideoDownload = (youtubeUrl, forceRefresh = false, useC
       // Check if the video already exists on the server (unless forceRefresh is true)
       if (!downloadQueue[videoId].forceRefresh) {
         console.log(`[startYoutubeVideoDownload] Checking if ${videoId} already exists`);
-        const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}`);
+        const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}?url=${encodeURIComponent(youtubeUrl)}`);
         const checkData = await checkResponse.json();
         console.log(`[startYoutubeVideoDownload] Video exists check for ${videoId}:`, checkData);
 
@@ -89,6 +89,7 @@ export const startYoutubeVideoDownload = (youtubeUrl, forceRefresh = false, useC
         },
         body: JSON.stringify({
           videoId,
+          sourceUrl: youtubeUrl,
           forceRefresh: downloadQueue[videoId].forceRefresh, // Pass the forceRefresh flag to the server
           useCookies: useCookies // Pass the cookie setting to the server
         }),
@@ -311,7 +312,7 @@ export const downloadYoutubeVideo = async (youtubeUrl, onProgress = () => {}, fo
       } else if (status.status === 'checking') {
         // Check if the video exists on the server
         try {
-          const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}`);
+          const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}?url=${encodeURIComponent(originalUrl)}`);
           const checkData = await checkResponse.json();
 
           if (checkData.exists) {

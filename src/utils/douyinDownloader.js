@@ -45,7 +45,7 @@ export const startDouyinVideoDownload = (douyinUrl, forceRefresh = false) => {
 
       // Check if the video already exists on the server (unless forceRefresh is true)
       if (!downloadQueue[videoId].forceRefresh) {
-        const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}`);
+        const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}?url=${encodeURIComponent(douyinUrl)}`);
         const checkData = await checkResponse.json();
 
         if (checkData.exists) {
@@ -275,7 +275,7 @@ export const downloadDouyinVideo = async (douyinUrl, onProgress = () => {}, forc
       } else if (status.status === 'checking') {
         // Check if the video exists on the server
         try {
-          const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}`);
+          const checkResponse = await fetch(`${SERVER_URL}/api/video-exists/${videoId}?url=${encodeURIComponent(originalUrl)}`);
           const checkData = await checkResponse.json();
 
           if (checkData.exists) {

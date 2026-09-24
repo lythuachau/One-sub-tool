@@ -12,8 +12,7 @@ const SERVER_URL = 'http://localhost:3031'; // Backend server port
  * @param {Function} onProgress - Progress callback function
  * @param {boolean} fastSplit - Whether to use fast splitting mode (uses stream copy instead of re-encoding)
  * @param {Object} options - Additional options
- * @param {boolean} options.optimizeVideos - Whether to optimize videos before splitting
- * @param {string} options.optimizedResolution - Resolution to use for optimized videos ('360p' or '240p')
+ * Original media is always used; optimization options are ignored for compatibility.
  * @returns {Promise<Object>} - Object containing segment URLs and metadata
  */
 export const splitVideoOnServer = async (mediaFile, segmentDuration = 600, onProgress = () => {}, fastSplit = false, options = {}) => {
@@ -76,15 +75,7 @@ export const splitVideoOnServer = async (mediaFile, segmentDuration = 600, onPro
 
     }
 
-    // Video optimization is now always handled by the optimize-video endpoint
-    // Set optimizeVideos to false here to avoid duplication since optimization happens before splitting
-    const optimizeVideos = false; // Always false to avoid duplication with optimize-video endpoint
-    const optimizedResolution = options.optimizedResolution || '360p'; // Default to 360p
-
-    // Create URL with query parameters
-    // IMPORTANT: Convert boolean to string 'false' explicitly to ensure server parses it correctly
-    const optimizeVideosStr = optimizeVideos ? 'true' : 'false';
-    const url = `${SERVER_URL}/api/split-video?mediaId=${mediaId}&segmentDuration=${segmentDuration}&fastSplit=${fastSplit}&mediaType=${mediaType}&optimizeVideos=${optimizeVideosStr}&optimizedResolution=${optimizedResolution}`;
+    const url = `${SERVER_URL}/api/split-video?mediaId=${mediaId}&segmentDuration=${segmentDuration}&fastSplit=${fastSplit}&mediaType=${mediaType}`;
 
 
 
@@ -181,7 +172,6 @@ const splitFileOnServer = async (mediaFile, segmentDuration, onProgress, fastSpl
   try {
     // Extract filename from server path
     const filename = mediaFile.serverPath.split('/').pop();
-    const mediaId = filename.replace(/\.(mp[34]|webm|mov|avi|wmv|flv|mkv)$/i, '');
 
     onProgress(20, 'output.splittingVideo', 'Splitting video into segments...');
 
@@ -195,8 +185,6 @@ const splitFileOnServer = async (mediaFile, segmentDuration, onProgress, fastSpl
         filename: filename,
         segmentDuration: segmentDuration,
         fastSplit: fastSplit,
-        optimizeVideos: options.optimizeVideos || false,
-        optimizedResolution: options.optimizedResolution || '360p'
       })
     });
 

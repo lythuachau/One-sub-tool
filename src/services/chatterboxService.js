@@ -104,13 +104,16 @@ export const checkChatterboxAvailabilitySingle = async () => {
       };
     }
 
-    // Mark service as initialized when health check passes with TTS model loaded
-    chatterboxServiceInitialized = true;
+    const ready = healthData.ready ?? healthData.models_loaded?.tts ?? false;
+    chatterboxServiceInitialized = Boolean(ready);
 
     return {
-      available: true,
+      available: Boolean(healthData.available),
+      ready: Boolean(ready),
+      needsWakeUp: Boolean(healthData.available && !ready),
       device: healthData.device,
-      models: healthData.models_loaded
+      models: healthData.models_loaded,
+      message: ready ? undefined : 'OmniVoice service is running; model is not loaded yet.'
     };
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -167,6 +170,8 @@ export const wakeUpChatterboxService = async () => {
 
     return {
       success: true,
+      ready: Boolean(result.ready ?? result.models_loaded?.tts ?? true),
+      models: result.models_loaded,
       message: result.message || 'OmniVoice service awakened successfully'
     };
   } catch (error) {
@@ -202,13 +207,17 @@ export const wakeUpChatterboxService = async () => {
 export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 2000, attemptWakeUp = true) => {
   // First, try to connect directly to see if service is already running
   let directCheck = await checkChatterboxAvailabilitySingle();
-  if (directCheck.available) {
+  if (directCheck.available && directCheck.ready) {
     return directCheck;
   }
 
-  // If not available and wake-up is enabled, try to wake up the service
+  if (directCheck.available && !attemptWakeUp) {
+    return directCheck;
+  }
+
+  // A running service can still need to load the model on first use.
   if (attemptWakeUp) {
-    console.log('🔧 Chatterbox not available, attempting to wake up service...');
+    console.log('🔧 OmniVoice model is not ready, attempting to wake up service...');
     const wakeUpResult = await wakeUpChatterboxService();
 
     if (!wakeUpResult.success) {
@@ -240,7 +249,7 @@ export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 200
       const result = await checkChatterboxAvailabilitySingle();
 
       // If successful, return immediately
-      if (result.available) {
+      if (result.available && result.ready) {
         return result;
       }
 

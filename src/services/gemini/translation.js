@@ -8,16 +8,19 @@ import { createTranslationSchema, addResponseSchema } from '../../utils/schemaUt
 import { addThinkingConfig } from '../../utils/thinkingBudgetUtils';
 import { getDefaultTranslationPrompt } from './promptManagement';
 import { getTranscriptionRules } from '../../utils/transcriptionRulesStore';
-import { createRequestController, removeRequestController, abortAllRequests, getProcessingForceStopped } from './requestManagement';
-import { resolveGeminiModel } from './modelDiscovery';
+import { createRequestController, removeRequestController, abortAllRequests, getProcessingForceStopped, fetchGemini } from './requestManagement';
+import { persistGeminiModelFallback, recordGeminiModelSuccess, resolveGeminiModel } from './modelDiscovery';
 import { getNextAvailableKey } from './keyManager';
+import { createGeminiApiError } from './errorUtils';
 
 const TRANSLATION_FALLBACK_MODELS = [
+    'gemini-3.5-flash',
+    'gemini-2.5-flash-lite',
     'gemini-flash-latest',
-    'gemini-2.5-flash',
-    'gemini-3.6-flash',
     'gemini-3.5-flash-lite'
 ];
+
+const getSubtitleId = (subtitle, index) => String(subtitle?.id || subtitle?.subtitle_id || `subtitle_${index + 1}`);
 
 const isTransientTranslationError = (status, message = '') => {
     const normalized = message.toLowerCase();
@@ -26,6 +29,15 @@ const isTransientTranslationError = (status, message = '') => {
         normalized.includes('overloaded') ||
         normalized.includes('temporarily unavailable') ||
         normalized.includes('service unavailable');
+};
+
+const getRetryAfterDelayMs = (response, fallbackDelay) => {
+    const value = response.headers.get('Retry-After');
+    if (!value) return fallbackDelay;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds)) return Math.min(Math.max(0, seconds * 1000), 60000);
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? Math.min(Math.max(0, timestamp - Date.now()), 60000) : fallbackDelay;
 };
 
 const waitForRetry = (delayMs, signal) => new Promise((resolve, reject) => {
@@ -41,13 +53,22 @@ const waitForRetry = (delayMs, signal) => new Promise((resolve, reject) => {
     }, { once: true });
 });
 
-const requestTranslationWithFallback = async ({
+let translationQueue = Promise.resolve();
+
+const enqueueTranslationRequest = (task) => {
+    const queuedTask = translationQueue.then(task, task);
+    translationQueue = queuedTask.catch(() => undefined);
+    return queuedTask;
+};
+
+const requestTranslationWithFallbackInternal = async ({
     model,
     apiKey,
     requestDataFactory,
     signal
 }) => {
     const candidateModels = [...new Set([model, ...TRANSLATION_FALLBACK_MODELS].filter(Boolean))];
+    const attemptedModels = new Set();
     let lastError = null;
 
     for (const candidateModel of candidateModels) {
@@ -57,12 +78,14 @@ const requestTranslationWithFallback = async ({
         } catch (error) {
             console.warn(`[Translation] Could not validate model ${candidateModel}: ${error.message}`);
         }
+        if (attemptedModels.has(resolvedModel)) continue;
+        attemptedModels.add(resolvedModel);
 
         for (let attempt = 0; attempt < 3; attempt += 1) {
             try {
                 const requestData = requestDataFactory(resolvedModel);
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${resolvedModel}:generateContent?key=${apiKey}`;
-                const response = await fetch(apiUrl, {
+                const response = await fetchGemini(apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestData),
@@ -70,28 +93,19 @@ const requestTranslationWithFallback = async ({
                 });
 
                 if (response.ok) {
+                    recordGeminiModelSuccess(resolvedModel, apiKey);
                     return { data: await response.json(), model: resolvedModel, apiUrl };
                 }
 
-                let errorData = {};
-                try {
-                    errorData = await response.json();
-                } catch (error) {
-                    errorData = {};
-                }
-
-                const message = errorData.error?.message || response.statusText || `HTTP ${response.status}`;
-                const apiError = new Error(`Gemini API error: ${message}`);
+                const apiError = await createGeminiApiError(response, resolvedModel);
                 apiError.status = response.status;
                 apiError.model = resolvedModel;
-                apiError.isTransient = isTransientTranslationError(response.status, message);
+                apiError.isTransient = !apiError.isDailyQuota && isTransientTranslationError(response.status, apiError.gemini?.message);
+                apiError.isFallbackEligible = apiError.isDailyQuota || apiError.isTransient || response.status === 404;
                 lastError = apiError;
 
                 if (apiError.isTransient && attempt < 2) {
-                    const retryAfter = Number(response.headers.get('Retry-After'));
-                    const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
-                        ? Math.min(retryAfter * 1000, 60000)
-                        : [5000, 15000, 45000][attempt];
+                    const delayMs = apiError.retryAfter ?? getRetryAfterDelayMs(response, [5000, 15000, 45000][attempt]);
                     window.dispatchEvent(new CustomEvent('translation-status', {
                         detail: { message: i18n.t('translation.retryingModel', 'Model {{model}} is busy. Retrying in {{seconds}} seconds...', { model: resolvedModel, seconds: Math.round(delayMs / 1000) }) }
                     }));
@@ -99,7 +113,7 @@ const requestTranslationWithFallback = async ({
                     continue;
                 }
 
-                if (apiError.isTransient || response.status === 404) break;
+                if (apiError.isFallbackEligible) break;
                 throw apiError;
             } catch (error) {
                 if (error.name === 'AbortError' || error.message.includes('aborted')) throw error;
@@ -108,7 +122,7 @@ const requestTranslationWithFallback = async ({
             }
         }
 
-        if (lastError && !lastError.isTransient && lastError.status !== 404) throw lastError;
+        if (lastError && !lastError.isFallbackEligible) throw lastError;
         if (candidateModel !== candidateModels[candidateModels.length - 1]) {
             window.dispatchEvent(new CustomEvent('translation-status', {
                 detail: { message: i18n.t('translation.switchingModel', 'Switching to a fallback translation model...') }
@@ -118,6 +132,8 @@ const requestTranslationWithFallback = async ({
 
     throw lastError || new Error('Gemini translation request failed');
 };
+
+const requestTranslationWithFallback = (options) => enqueueTranslationRequest(() => requestTranslationWithFallbackInternal(options));
 
 /**
  * Translate subtitles to different language(s) while preserving timing
@@ -136,7 +152,11 @@ const requestTranslationWithFallback = async ({
  * @returns {Promise<Array>} - Array of translated subtitles
  */
 const translateSubtitles = async (subtitles, targetLanguage, model = '', customPrompt = null, splitDuration = 0, includeRules = false, delimiter = ' ', useParentheses = false, bracketStyle = null, chainItems = null, fileContext = null) => {
-    model = await resolveGeminiModel(model || localStorage.getItem('gemini_model') || '');
+    const requestedModel = model || localStorage.getItem('translation_model') || localStorage.getItem('gemini_model') || '';
+    model = await resolveGeminiModel(requestedModel);
+    if (requestedModel !== model) {
+        persistGeminiModelFallback(requestedModel, model, ['translation_model', 'gemini_model']);
+    }
     // Check if we're in format mode (empty target languages array)
     const isFormatMode = Array.isArray(targetLanguage) && targetLanguage.length === 0;
 
@@ -235,7 +255,7 @@ const translateSubtitles = async (subtitles, targetLanguage, model = '', customP
     }
 
     // Format subtitles as text lines for Gemini (text only, no timestamps, no numbering)
-    const subtitleText = subtitles.map(sub => sub.text).join('\n');
+    const subtitleText = subtitles.map((sub, index) => `[${getSubtitleId(sub, index)}] ${sub.text}`).join('\n');
 
     // Create the prompt for translation
     let translationPrompt;
@@ -344,17 +364,15 @@ const translateSubtitles = async (subtitles, targetLanguage, model = '', customP
                 detail: { requestedModel: requestedTranslationModel, selectedModel: model }
             }));
         }
-        const apiUrl = responseResult.apiUrl;
         const data = responseResult.data;
 
 
         // Process the translation response
         let translatedTexts = [];
         let retryCount = 0;
-        const maxRetries = 10;
 
         // Function to process the response and extract translated texts
-        const processResponse = (responseData) => {
+        const processResponseRaw = (responseData, sourceSubtitles = subtitles) => {
             // Check if this is a structured JSON response
             if (responseData.candidates?.[0]?.content?.parts?.[0]?.structuredJson) {
 
@@ -505,8 +523,8 @@ const translateSubtitles = async (subtitles, targetLanguage, model = '', customP
 
 
                                 // Get all translations for each subtitle
-                                for (let i = 0; i < subtitles.length; i++) {
-                                    const originalText = subtitles[i].text;
+                                for (let i = 0; i < sourceSubtitles.length; i++) {
+                                    const originalText = sourceSubtitles[i].text;
 
                                     // Create a map of language to translated text
                                     const translationMap = {
@@ -657,65 +675,107 @@ const translateSubtitles = async (subtitles, targetLanguage, model = '', customP
             return [];
         };
 
-        // Try to process the response
-        translatedTexts = processResponse(data);
+        const extractResponseIds = (responseData) => {
+            const structuredJson = responseData.candidates?.[0]?.content?.parts?.[0]?.structuredJson;
+            if (Array.isArray(structuredJson)) {
+                return structuredJson.map(item => item?.id || item?.subtitle_id || null);
+            }
+            if (structuredJson?.translations && Array.isArray(structuredJson.translations)) {
+                const primaryLanguage = structuredJson.translations.find(item => Array.isArray(item?.texts));
+                return primaryLanguage?.texts?.map(item => item?.id || item?.subtitle_id || null) || [];
+            }
+            return [];
+        };
 
-        // Check if we have the correct number of translations
-        while (translatedTexts.length !== subtitles.length && retryCount < maxRetries) {
-            console.warn(`Translation count mismatch: got ${translatedTexts.length}, expected ${subtitles.length}. Retrying (${retryCount + 1}/${maxRetries})...`);
+        const alignTranslationResults = (responseData, values, sourceSubtitles = subtitles) => {
+            const expectedIds = sourceSubtitles.map((subtitle, index) => getSubtitleId(subtitle, index));
+            const responseIds = extractResponseIds(responseData);
+            const hasIds = responseIds.some(Boolean);
+            const hasTranslationValue = (value) => value && (typeof value === 'object' || String(value).trim());
+
+            if (!hasIds) {
+                return {
+                    values,
+                    missingIds: expectedIds.filter((id, index) => !hasTranslationValue(values[index]))
+                };
+            }
+
+            const byId = new Map();
+            responseIds.forEach((id, index) => {
+                if (id && hasTranslationValue(values[index]) && !byId.has(String(id))) {
+                    byId.set(String(id), values[index]);
+                }
+            });
+
+            const alignedValues = expectedIds.map(id => byId.get(id) || '');
+            return {
+                values: alignedValues,
+                missingIds: expectedIds.filter(id => !byId.has(id))
+            };
+        };
+
+        const processResponse = (responseData, sourceSubtitles = subtitles) => {
+            const values = processResponseRaw(responseData, sourceSubtitles);
+            return alignTranslationResults(responseData, values, sourceSubtitles);
+        };
+
+        // Try to process the response
+        let translationState = processResponse(data);
+        translatedTexts = translationState.values;
+        let missingSubtitleIds = translationState.missingIds;
+
+        // Retry only missing subtitle IDs instead of resending the full request.
+        const maxRetries = 2;
+        while (missingSubtitleIds.length > 0 && retryCount < maxRetries) {
+            const currentMissingSubtitleIds = missingSubtitleIds;
+            const missingSubtitles = subtitles.filter((subtitle, index) => currentMissingSubtitleIds.includes(getSubtitleId(subtitle, index)));
+            console.warn(`Missing ${missingSubtitles.length} subtitle translations. Retrying only missing IDs (${retryCount + 1}/${maxRetries})...`);
             retryCount++;
 
-            // No adjustments to the translations - we'll rely solely on the retry mechanism
             try {
-                // Simplified retry prompt that focuses on the correct number of subtitles
-                const retryPrompt = `Here is my request: ${translationPrompt} with ${subtitles.length} subtitle lines, but your last answer was incomplete which had ${translatedTexts.length}, please make it ${subtitles.length}`;
+                const retryText = missingSubtitles.map((subtitle, index) => `[${getSubtitleId(subtitle, subtitles.indexOf(subtitle))}] ${subtitle.text}`).join('\n');
+                const retryPrompt = customPrompt
+                    ? customPrompt.replace('{subtitlesText}', retryText).replace('{targetLanguage}', isMultiLanguage ? targetLanguage.join(', ') : targetLanguage)
+                    : getDefaultTranslationPrompt(retryText, targetLanguage, isMultiLanguage);
 
-                // Use the same request structure as the original request
-                const retryRequestData = {
-                    contents: [
-                        {
-                            role: "user",
-                            parts: [
-                                { text: retryPrompt }
-                            ]
-                        }
-                    ],
-                    generationConfig: {
-                        temperature: 0.2,
-                        topK: 32,
-                        topP: 0.95,
-                        maxOutputTokens: 65536,
-                    },
-                };
-
-                // Always use structured output for retries too
-                const schemaRequestData = addResponseSchema(retryRequestData, createTranslationSchema(isMultiLanguage));
-
-                const retryResponse = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(schemaRequestData),
-                    signal: signal
+                const retryResult = await requestTranslationWithFallback({
+                    model,
+                    apiKey,
+                    signal,
+                    requestDataFactory: (candidateModel) => {
+                        const retryRequestData = {
+                            contents: [{ role: 'user', parts: [{ text: retryPrompt }] }],
+                            generationConfig: {
+                                temperature: 0.2,
+                                topK: 32,
+                                topP: 0.95,
+                                maxOutputTokens: 65536
+                            }
+                        };
+                        return addThinkingConfig(addResponseSchema(retryRequestData, createTranslationSchema(isMultiLanguage)), candidateModel);
+                    }
                 });
 
-                if (!retryResponse.ok) {
-                    throw new Error(`Retry failed with status ${retryResponse.status}`);
-                }
-
-                const retryData = await retryResponse.json();
-                translatedTexts = processResponse(retryData);
+                const retryState = processResponse(retryResult.data, missingSubtitles);
+                const retryValuesById = new Map();
+                missingSubtitles.forEach((subtitle, index) => {
+                    retryValuesById.set(getSubtitleId(subtitle, subtitles.indexOf(subtitle)), retryState.values[index] || '');
+                });
+                const currentTranslatedTexts = translatedTexts;
+                translatedTexts = subtitles.map((subtitle, index) => retryValuesById.has(getSubtitleId(subtitle, index))
+                    ? retryValuesById.get(getSubtitleId(subtitle, index))
+                    : currentTranslatedTexts[index]);
+                missingSubtitleIds = missingSubtitleIds.filter(id => !retryValuesById.get(id));
             } catch (retryError) {
                 console.error('Translation retry failed:', retryError);
-                break; // Exit the retry loop if the API call fails
+                throw retryError;
             }
         }
 
         // If we still don't have the right number of translations after all retries
-        if (translatedTexts.length !== subtitles.length) {
-            console.error(`Failed to get the correct number of translations after ${maxRetries} retries. Got ${translatedTexts.length}, expected ${subtitles.length}.`);
-            throw new Error(`Translation failed: received ${translatedTexts.length} translations but expected ${subtitles.length}. Please try again.`);
+        if (missingSubtitleIds.length > 0 || translatedTexts.length !== subtitles.length || translatedTexts.some(text => !text || !String(text).trim())) {
+            console.error(`Failed to translate IDs after ${maxRetries} retries: ${missingSubtitleIds.join(', ')}`);
+            throw new Error(`Translation failed for subtitle IDs: ${missingSubtitleIds.join(', ') || 'unknown'}. Please try again.`);
         }
 
         // Create translated subtitles by combining original timing with translated text
@@ -850,9 +910,10 @@ const translateSubtitles = async (subtitles, targetLanguage, model = '', customP
         return translatedSubtitles;
     } catch (error) {
         // Check if this is an AbortError
-        if (error.name === 'AbortError') {
-
-            throw new Error('Translation request was aborted');
+        if (error.name === 'AbortError' || signal.aborted) {
+            const abortError = new Error('Translation request was aborted');
+            abortError.name = 'AbortError';
+            throw abortError;
         } else {
             console.error('Translation error:', error);
             // Remove this controller from the map on error

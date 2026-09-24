@@ -5,8 +5,12 @@
 import { fileToBase64 } from '../utils/fileUtils';
 import { createVideoAnalysisSchema, addResponseSchema } from '../utils/schemaUtils';
 import { addThinkingConfig } from '../utils/thinkingBudgetUtils';
-import { resolveGeminiModel } from './gemini/modelDiscovery';
+import { persistGeminiModelFallback, resolveGeminiModel } from './gemini/modelDiscovery';
 import i18n from '../i18n/i18n';
+import { createRequestController, removeRequestController } from './gemini/requestManagement';
+import { getNextAvailableKey } from './gemini/keyManager';
+import { createGeminiApiError } from './gemini/errorUtils';
+import { requestGeminiWithModelFallback } from './gemini/modelRequest';
 
 // Translation function shorthand
 const t = (key, fallback) => i18n.t(key, fallback);
@@ -23,7 +27,7 @@ const MAX_TERMINOLOGY_ITEMS = 50;
 export const abortVideoAnalysis = () => {
   if (activeAnalysisController) {
 
-    activeAnalysisController.abort();
+    activeAnalysisController.controller.abort(new DOMException('Video analysis was cancelled', 'AbortError'));
     activeAnalysisController = null;
     return true;
   }
@@ -92,20 +96,20 @@ const sanitizeAnalysisResult = (analysisResult) => {
  * @returns {Promise<Object>} - Analysis results
  */
 export const analyzeVideoWithGemini = async (videoFile, onStatusUpdate) => {
-  // Create a new AbortController and store it
-  activeAnalysisController = new AbortController();
-  const signal = activeAnalysisController.signal;
+  const { requestId, signal, controller } = createRequestController({ type: 'video-analysis' });
+  activeAnalysisController = { requestId, controller };
   try {
-    const geminiApiKey = localStorage.getItem('gemini_api_key');
+    const geminiApiKey = getNextAvailableKey();
     if (!geminiApiKey) {
       throw new Error('Gemini API key not found');
     }
 
     // Get the selected model from localStorage or use the default
     const requestedModel = localStorage.getItem('video_analysis_model') || '';
-    const MODEL = await resolveGeminiModel(requestedModel);
+    const MODEL = await resolveGeminiModel(requestedModel, geminiApiKey);
     if (requestedModel !== MODEL) {
       console.warn(`[VideoAnalysis] Model ${requestedModel || '(default)'} is unavailable; using ${MODEL}`);
+      persistGeminiModelFallback(requestedModel, MODEL, ['video_analysis_model']);
     }
 
     // Get video duration
@@ -114,14 +118,17 @@ export const analyzeVideoWithGemini = async (videoFile, onStatusUpdate) => {
     try {
       // Import dynamically to avoid circular dependencies
       const { getVideoDuration } = await import('../utils/durationUtils');
-      videoDuration = await getVideoDuration(videoFile);
+      videoDuration = await getVideoDuration(videoFile, { signal });
 
     } catch (error) {
+      if (error.name === 'AbortError' || signal.aborted) {
+        throw error;
+      }
       console.warn('Could not determine video duration:', error);
     }
 
     // Convert the video file to base64
-    const base64Data = await fileToBase64(videoFile);
+    const base64Data = await fileToBase64(videoFile, { signal });
 
     // Determine how comprehensive the rule set should be based on video length
     const isLongVideo = videoDuration > 600; // More than 10 minutes
@@ -177,21 +184,17 @@ Provide your analysis in a structured format that can be used to guide the trans
     onStatusUpdate({ message: t('input.analyzingVideo', 'Analyzing video content...'), type: 'loading' });
 
     // Call the Gemini API
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${geminiApiKey}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestData),
-        signal: signal // Add the abort signal
-      }
-    );
+    const { response, model: responseModel } = await requestGeminiWithModelFallback({
+      model: MODEL,
+      apiKey: geminiApiKey,
+      requestData,
+      signal,
+      storageKeys: ['video_analysis_model'],
+      enableThinking: false
+    });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
+      throw await createGeminiApiError(response, responseModel);
     }
 
     const data = await response.json();
@@ -240,17 +243,16 @@ Provide your analysis in a structured format that can be used to guide the trans
   } catch (error) {
     console.error('Error analyzing video:', error);
 
-    // Clear the active controller
-    activeAnalysisController = null;
-
     // Check if this is an abort error
-    if (error.name === 'AbortError') {
-      throw new Error('Video analysis was cancelled');
+    if (error.name === 'AbortError' || signal.aborted) {
+      const abortError = new Error('Video analysis was cancelled');
+      abortError.name = 'AbortError';
+      throw abortError;
     }
 
     throw error;
   } finally {
-    // Clear the active controller in case of success
+    removeRequestController(requestId);
     activeAnalysisController = null;
   }
 };

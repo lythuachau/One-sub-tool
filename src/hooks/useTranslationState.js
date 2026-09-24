@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { translateSubtitles, /* abortAllRequests, */ cancelTranslation, setProcessingForceStopped, getProcessingForceStopped } from '../services/geminiService';
+import { getGeminiErrorMessage } from '../services/gemini/errorUtils';
 
 // Constants for localStorage keys
 const TRANSLATION_CACHE_KEY = 'translated_subtitles_cache';
@@ -387,8 +388,7 @@ export const useTranslationState = (subtitles, onTranslationComplete) => {
       if (err.message && (err.message.includes('cancelled') || err.message.includes('aborted'))) {
         setTranslationStatus(t('translation.cancelled', 'Translation cancelled by user'));
       } else {
-        // Use the specific error message if available, otherwise use generic message
-        setError(err.message || t('translation.error', 'Error translating subtitles. Please try again.'));
+        setError(getGeminiErrorMessage(err, t) || t('translation.error', 'Error translating subtitles. Please try again.'));
       }
     } finally {
       setIsTranslating(false);

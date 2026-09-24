@@ -459,9 +459,12 @@ export const generateNarration = async (
   onComplete = () => {}
 ) => {
   try {
+    const generationId = settings?.generationId || `generation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const generationSettings = { ...settings, generationId };
+
     // Check if we should skip clearing the output directory
     // This is used for retrying a single narration to avoid deleting all other narrations
-    const skipClearOutput = settings && settings.skipClearOutput === true;
+    const skipClearOutput = generationSettings.skipClearOutput === true;
 
     if (!skipClearOutput) {
       // Clear all narration output files before generating new ones
@@ -493,7 +496,7 @@ export const generateNarration = async (
         reference_audio: referenceAudio,
         reference_text: referenceText,
         subtitles: subtitles,
-        settings: settings
+        settings: generationSettings
       }),
       signal // Add the abort signal to the fetch request
     });

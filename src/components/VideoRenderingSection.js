@@ -4,7 +4,10 @@ import StandardSlider from './common/StandardSlider';
 import SubtitleCustomizationPanel, { defaultCustomization } from './SubtitleCustomizationPanel';
 import RemotionVideoPreview from './RemotionVideoPreview';
 import QueueManagerPanel from './QueueManagerPanel';
+import { SERVER_URL } from '../config';
 import '../styles/VideoRenderingSection.css';
+
+const VIDEO_RENDERER_URL = 'http://127.0.0.1:3033';
 
 const VideoRenderingSection = ({
   selectedVideo,
@@ -52,6 +55,14 @@ const VideoRenderingSection = ({
   const [currentQueueItem, setCurrentQueueItem] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isRefreshingNarration, setIsRefreshingNarration] = useState(false);
+  const isRenderingRef = useRef(false);
+  const renderQueueRef = useRef([]);
+  const startNextPendingRenderRef = useRef(null);
+
+  const setRenderingState = (value) => {
+    isRenderingRef.current = value;
+    setIsRendering(value);
+  };
 
   // Panel resizing states with localStorage persistence
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
@@ -197,7 +208,12 @@ const VideoRenderingSection = ({
     } else {
       localStorage.removeItem('videoRenderQueue');
     }
+    renderQueueRef.current = renderQueue;
   }, [renderQueue]);
+
+  useEffect(() => {
+    isRenderingRef.current = isRendering;
+  }, [isRendering]);
 
   useEffect(() => {
     if (currentQueueItem && currentRenderId) {
@@ -234,7 +250,7 @@ const VideoRenderingSection = ({
   // Check if a render is still active on the server and reconnect
   const checkRenderStatus = async (renderId, queueItem) => {
     try {
-      const response = await fetch(`http://localhost:3033/render-status/${renderId}`);
+      const response = await fetch(`${VIDEO_RENDERER_URL}/render-status/${renderId}`);
 
       if (response.ok) {
         const data = await response.json();
@@ -242,7 +258,7 @@ const VideoRenderingSection = ({
         if (data.status === 'active') {
           // Render is still active, reconnect to it
           console.log('Reconnecting to active render:', renderId);
-          setIsRendering(true);
+          setRenderingState(true);
 
           // Update queue item status to processing
           setRenderQueue(prev => prev.map(item =>
@@ -312,7 +328,7 @@ const VideoRenderingSection = ({
       setRenderStatus(t('videoRendering.reconnecting', 'Reconnecting to render...'));
 
       // Connect to the render stream
-      const response = await fetch(`http://localhost:3033/render-stream/${renderId}`, {
+      const response = await fetch(`${VIDEO_RENDERER_URL}/render-stream/${renderId}`, {
         method: 'GET',
         signal: controller.signal
       });
@@ -342,6 +358,24 @@ const VideoRenderingSection = ({
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
+
+              if (data.status === 'queued') {
+                setRenderQueue(prev => prev.map(item =>
+                  item.id === queueItem.id
+                    ? { ...item, status: 'pending', queuePosition: data.queuePosition || 1 }
+                    : item
+                ));
+                setRenderStatus(t('videoRendering.waitingForRenderer', 'Waiting for renderer slot #{{position}}...', {
+                  position: data.queuePosition || 1
+                }));
+              } else if (data.status === 'started') {
+                setRenderQueue(prev => prev.map(item =>
+                  item.id === queueItem.id
+                    ? { ...item, status: 'processing', queuePosition: 0 }
+                    : item
+                ));
+                setRenderStatus(t('videoRendering.rendering', 'Rendering video...'));
+              }
 
               // Handle progress updates
               if (data.progress !== undefined) {
@@ -453,7 +487,7 @@ const VideoRenderingSection = ({
         ));
       }
     } finally {
-      setIsRendering(false);
+      setRenderingState(false);
       setCurrentRenderId(null);
       setAbortController(null);
       setCurrentQueueItem(null);
@@ -774,11 +808,39 @@ const VideoRenderingSection = ({
   };
 
   // Upload file to video-renderer server
+  const ensureVideoRenderer = async () => {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await fetch(`${SERVER_URL}/api/video-renderer/ensure`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (response.ok && data.success) {
+          return data;
+        }
+
+        lastError = data.error || `Renderer startup failed with status ${response.status}`;
+      } catch (requestError) {
+        lastError = requestError.message;
+      }
+
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, [1000, 3000][attempt - 1]));
+      }
+    }
+
+    throw new Error(`Video renderer unavailable at localhost:3033. ${lastError || 'Start the renderer service and try again.'}`);
+  };
+
   const uploadFileToRenderer = async (file, type = 'video') => {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`http://localhost:3033/upload/${type}`, {
+    const response = await fetch(`${VIDEO_RENDERER_URL}/upload/${type}`, {
       method: 'POST',
       body: formData
     });
@@ -835,6 +897,8 @@ const VideoRenderingSection = ({
 
   // Simple render function - allows queueing multiple renders
   const handleRender = async () => {
+    const shouldStartImmediately = !isRenderingRef.current;
+
     // Create queue item for display
     const queueItem = {
       id: `render_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -842,7 +906,7 @@ const VideoRenderingSection = ({
       subtitles: selectedSubtitles,
       settings: renderSettings,
       customization: subtitleCustomization,
-      status: isRendering ? 'pending' : 'processing',
+      status: shouldStartImmediately ? 'processing' : 'pending',
       progress: 0,
       timestamp: Date.now(), // Store as timestamp number, not formatted string
       outputPath: null,
@@ -850,10 +914,15 @@ const VideoRenderingSection = ({
     };
 
     // Always add to queue for display
-    setRenderQueue(prev => [queueItem, ...prev]);
+    setRenderQueue(prev => {
+      const nextQueue = [queueItem, ...prev];
+      renderQueueRef.current = nextQueue;
+      return nextQueue;
+    });
 
     // If not currently rendering, start this one immediately
-    if (!isRendering) {
+    if (shouldStartImmediately) {
+      isRenderingRef.current = true;
       setCurrentQueueItem(queueItem);
       await handleStartRender(queueItem);
     }
@@ -862,16 +931,34 @@ const VideoRenderingSection = ({
   // Simple function to start next pending render
   const startNextPendingRender = async () => {
     // Find the next pending item
-    const nextItem = renderQueue.find(item => item.status === 'pending');
-    if (!nextItem || isRendering) return;
+    const nextItem = renderQueueRef.current.find(item => item.status === 'pending');
+    if (!nextItem || isRenderingRef.current) return;
 
     // Mark as processing and start
-    setRenderQueue(prev => prev.map(item =>
-      item.id === nextItem.id ? { ...item, status: 'processing' } : item
-    ));
+    setRenderQueue(prev => {
+      const nextQueue = prev.map(item =>
+        item.id === nextItem.id ? { ...item, status: 'processing' } : item
+      );
+      renderQueueRef.current = nextQueue;
+      return nextQueue;
+    });
+    isRenderingRef.current = true;
     setCurrentQueueItem(nextItem);
     await handleStartRender(nextItem);
   };
+
+  startNextPendingRenderRef.current = startNextPendingRender;
+
+  useEffect(() => {
+    if (!selectedVideoFile || currentQueueItem || isRenderingRef.current) return undefined;
+    if (!renderQueueRef.current.some(item => item.status === 'pending')) return undefined;
+
+    const timer = setTimeout(() => {
+      startNextPendingRenderRef.current?.();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [selectedVideoFile, renderQueue, currentQueueItem]);
 
   // Start rendering
   const handleStartRender = async (queueItem = null) => {
@@ -880,7 +967,7 @@ const VideoRenderingSection = ({
     setAbortController(controller);
 
     try {
-      setIsRendering(true);
+      setRenderingState(true);
       setRenderProgress(0);
       setRenderStatus(t('videoRendering.starting', 'Starting render...'));
       setError('');
@@ -897,6 +984,9 @@ const VideoRenderingSection = ({
       }
 
       // Upload video file if it's a File object
+      setRenderStatus(t('videoRendering.startingRenderer', 'Starting video renderer...'));
+      await ensureVideoRenderer();
+
       let audioFile;
       if (selectedVideoFile instanceof File) {
         setRenderStatus(t('videoRendering.uploadingVideo', 'Uploading video...'));
@@ -949,7 +1039,7 @@ const VideoRenderingSection = ({
 
           // Upload the file to renderer and get HTTP URL
           const uploadedNarrationFilename = await uploadFileToRenderer(narrationFileObj, 'audio');
-          narrationUrl = `http://localhost:3033/uploads/${uploadedNarrationFilename}`;
+          narrationUrl = `${VIDEO_RENDERER_URL}/uploads/${uploadedNarrationFilename}`;
         }
       }
 
@@ -968,8 +1058,11 @@ const VideoRenderingSection = ({
 
       setRenderStatus(t('videoRendering.rendering', 'Rendering video...'));
 
+      // The renderer may have been restarted while files were being prepared.
+      await ensureVideoRenderer();
+
       // Send the POST request for rendering
-      const response = await fetch('http://localhost:3033/render', {
+      const response = await fetch(`${VIDEO_RENDERER_URL}/render`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1014,6 +1107,30 @@ const VideoRenderingSection = ({
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
+
+              if (data.status === 'queued') {
+                const targetQueueItem = queueItem || currentQueueItem;
+                if (targetQueueItem) {
+                  setRenderQueue(prev => prev.map(item =>
+                    item.id === targetQueueItem.id
+                      ? { ...item, status: 'pending', queuePosition: data.queuePosition || 1 }
+                      : item
+                  ));
+                }
+                setRenderStatus(t('videoRendering.waitingForRenderer', 'Waiting for renderer slot #{{position}}...', {
+                  position: data.queuePosition || 1
+                }));
+              } else if (data.status === 'started') {
+                const targetQueueItem = queueItem || currentQueueItem;
+                if (targetQueueItem) {
+                  setRenderQueue(prev => prev.map(item =>
+                    item.id === targetQueueItem.id
+                      ? { ...item, status: 'processing', queuePosition: 0 }
+                      : item
+                  ));
+                }
+                setRenderStatus(t('videoRendering.rendering', 'Rendering video...'));
+              }
 
               // Handle Chrome download progress for first-time users
               if (data.chromeDownload) {
@@ -1168,7 +1285,7 @@ const VideoRenderingSection = ({
         }
       }
     } finally {
-      setIsRendering(false);
+      setRenderingState(false);
       setCurrentRenderId(null);
       setAbortController(null);
 
@@ -1189,7 +1306,7 @@ const VideoRenderingSection = ({
     setRenderStatus(t('videoRendering.cancelling', 'Cancelling render...'));
 
     if (!currentRenderId) {
-      setIsRendering(false);
+      setRenderingState(false);
       setRenderStatus(t('videoRendering.cancelled', 'Render cancelled'));
       setAbortController(null);
       setCurrentQueueItem(null);
@@ -1199,7 +1316,7 @@ const VideoRenderingSection = ({
 
     try {
       // Call the cancel endpoint on the server
-      const response = await fetch(`http://localhost:3033/cancel-render/${currentRenderId}`, {
+      const response = await fetch(`${VIDEO_RENDERER_URL}/cancel-render/${currentRenderId}`, {
         method: 'POST'
       });
 
@@ -1211,7 +1328,7 @@ const VideoRenderingSection = ({
         console.error('Failed to cancel render:', errorText);
         setRenderStatus(t('videoRendering.cancelFailed', 'Failed to cancel render'));
         // Force cleanup on server cancel failure
-        setIsRendering(false);
+        setRenderingState(false);
         setCurrentRenderId(null);
         setAbortController(null);
         setCurrentQueueItem(null);
@@ -1221,7 +1338,7 @@ const VideoRenderingSection = ({
       console.error('Error cancelling render:', error);
       setRenderStatus(t('videoRendering.cancelError', 'Error cancelling render'));
       // Force cleanup on error
-      setIsRendering(false);
+      setRenderingState(false);
       setCurrentRenderId(null);
       setAbortController(null);
       setCurrentQueueItem(null);

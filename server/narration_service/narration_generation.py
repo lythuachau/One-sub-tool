@@ -44,6 +44,7 @@ def generate_narration():
         subtitles = data.get('subtitles', [])
         settings = data.get('settings', {})
         requested_model_id = settings.get('modelId') # User can override active model
+        generation_id = settings.get('generationId') or f"f5tts_{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
         logger.info(f"[DEBUG] Requested model ID from frontend: {requested_model_id}")
         logger.debug(f"Reference Text: '{reference_text[:100]}...'")
@@ -125,7 +126,7 @@ def generate_narration():
 
                     # --- Prepare for Generation ---
                     # Ensure the subtitle directory exists
-                    subtitle_dir = ensure_subtitle_directory(subtitle_id)
+                    subtitle_dir = ensure_subtitle_directory(subtitle_id, generation_id)
 
                     # Get the next file number for this subtitle
                     file_number = get_next_file_number(subtitle_dir)
@@ -134,7 +135,8 @@ def generate_narration():
                     filename = f"{file_number}.wav"
 
                     # Full path includes the subtitle directory - use forward slashes for URLs
-                    full_filename = f"subtitle_{subtitle_id}/{filename}"
+                    safe_generation_id = re.sub(r'[^A-Za-z0-9_-]+', '_', str(generation_id)).strip('._-')
+                    full_filename = f"{safe_generation_id}/subtitle_{subtitle_id}/{filename}"
                     output_path = os.path.join(subtitle_dir, filename)
 
                     logger.debug(f"Generating narration audio for subtitle {subtitle_id}, output path: {output_path}")

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next';
 import { convertAudioToVideo } from '../../utils/audioToVideoConverter';
 import { SERVER_URL } from '../../config';
+import { clearVideoIdentity } from '../../utils/videoIdentity';
 import '../../styles/FileUploadInput.css';
 
 const FileUploadInput = ({ uploadedFile, setUploadedFile, onVideoSelect, className, isSrtOnlyMode, setIsSrtOnlyMode, setStatus, subtitlesData, setVideoSegments, setSegmentsStatus }) => {
@@ -109,7 +110,7 @@ const FileUploadInput = ({ uploadedFile, setUploadedFile, onVideoSelect, classNa
         setIsLoading(true);
 
         // Clear ALL video-related storage first
-        localStorage.removeItem('current_video_url');
+        clearVideoIdentity();
         localStorage.removeItem('current_file_cache_id');
         localStorage.removeItem('split_result'); // Clear any cached split result
 
@@ -239,6 +240,7 @@ const FileUploadInput = ({ uploadedFile, setUploadedFile, onVideoSelect, classNa
       } else {
         setUploadedFile(null);
         setFileInfo(null);
+        clearVideoIdentity();
         if (localStorage.getItem('current_file_url')) {
           URL.revokeObjectURL(localStorage.getItem('current_file_url'));
           localStorage.removeItem('current_file_url');

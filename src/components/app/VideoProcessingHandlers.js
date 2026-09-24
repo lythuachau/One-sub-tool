@@ -4,6 +4,7 @@ import { extractYoutubeVideoId, downloadYoutubeVideo } from '../../utils/videoDo
 import { extractDouyinVideoId, downloadDouyinVideo } from '../../utils/douyinDownloader';
 import { downloadDouyinVideoPlaywright } from '../../utils/douyinPlaywrightDownloader';
 import { downloadGenericVideo } from '../../utils/allSitesDownloader';
+import { persistDownloadedVideoIdentity, persistVideoIdentity } from '../../utils/videoIdentity';
 
 // Function to ensure video compatibility
 const ensureVideoCompatibility = async (videoFile) => {
@@ -62,9 +63,6 @@ export const prepareVideoForSegments = async (videoFile, setStatus, setVideoSegm
       throw new Error(`Video file is too small (${videoFile.size} bytes), likely not a valid video`);
     }
 
-    // Get video optimization settings from localStorage
-    const optimizedResolution = localStorage.getItem('optimized_resolution') || '360p'; // Default to 360p
-
     // Set status to loading
     setStatus({ message: t('output.preparingVideo', 'Preparing video for segment processing...'), type: 'loading' });
 
@@ -108,11 +106,7 @@ export const prepareVideoForSegments = async (videoFile, setStatus, setVideoSegm
           type: 'loading'
         });
       },
-      true, // Enable fast splitting by default
-      {
-        optimizeVideos: false, // Set to false to avoid duplication - we'll optimize on the server if needed
-        optimizedResolution
-      }
+      true
     );
 
 
@@ -189,6 +183,7 @@ export const downloadAndPrepareYouTubeVideo = async (
   }
 
   try {
+    persistVideoIdentity(selectedVideo);
     // Set downloading state to true to disable the generate button
     setIsDownloading(true);
     setDownloadProgress(0);
@@ -518,8 +513,21 @@ export const downloadAndPrepareYouTubeVideo = async (
         }
       }
 
-      // Preserve the original video URL before tab change
-      const originalVideoUrl = localStorage.getItem('current_video_url');
+      const sourceMethod = selectedVideo.source === 'douyin-playwright'
+        ? 'douyin-playwright'
+        : selectedVideo.source;
+      file.sourceVideoId = videoId;
+      file.sourceUrl = selectedVideo.url;
+      file.sourceMethod = sourceMethod;
+      persistDownloadedVideoIdentity({
+        videoId,
+        sourceUrl: selectedVideo.url,
+        fileName: file.name,
+        sourceMethod
+      });
+
+      // Preserve the selected source identity before tab change
+      const originalVideoUrl = selectedVideo.url;
 
       // Switch to the upload tab without resetting state (system-initiated, don't update user preference)
       handleTabChange('file-upload', false);
@@ -527,6 +535,7 @@ export const downloadAndPrepareYouTubeVideo = async (
       // Restore the original video URL after tab change (so we can redownload later)
       if (originalVideoUrl) {
         localStorage.setItem('current_video_url', originalVideoUrl);
+        localStorage.setItem('current_video_id', String(videoId));
       }
 
       // Process the file as if it was uploaded

@@ -6,7 +6,7 @@
 import { getLanguageCode } from '../../utils/languageUtils';
 import { createSummarizationSchema, addResponseSchema } from '../../utils/schemaUtils';
 import { getDefaultSummarizePrompt } from './promptManagement';
-import { createRequestController, removeRequestController } from './requestManagement';
+import { createRequestController, removeRequestController , fetchGemini } from './requestManagement';
 import { processStructuredJsonResponse, processTextResponse } from './responseProcessingService';
 import { resolveGeminiModel } from './modelDiscovery';
 
@@ -107,7 +107,7 @@ export const summarizeDocument = async (subtitlesText, model = '', customPrompt 
         requestData = addResponseSchema(requestData, createSummarizationSchema());
 
 
-        const response = await fetch(apiUrl, {
+        const response = await fetchGemini(apiUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -149,9 +149,10 @@ export const summarizeDocument = async (subtitlesText, model = '', customPrompt 
         return processedText;
     } catch (error) {
         // Check if this is an AbortError
-        if (error.name === 'AbortError') {
-
-            throw new Error('Summary request was aborted');
+        if (error.name === 'AbortError' || signal.aborted) {
+            const abortError = new Error('Summary request was aborted');
+            abortError.name = 'AbortError';
+            throw abortError;
         } else {
             console.error('Summary error:', error);
             // Remove this controller from the map on error

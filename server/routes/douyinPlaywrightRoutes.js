@@ -9,13 +9,24 @@ const fs = require('fs');
 const { VIDEOS_DIR } = require('../config');
 const { downloadDouyinVideo, getAvailableQualities } = require('../services/douyin/playwrightDownloader');
 const {
+  validateVideoArtifact,
+  quarantineInvalidArtifact
+} = require('../services/douyin/videoArtifactValidator');
+const {
   downloadDouyinVideoYtDlp,
   downloadDouyinVideoFallback,
   downloadDouyinVideoShortUrlFallback,
   downloadDouyinVideoSimpleFallback
 } = require('../services/douyin/downloader');
-const { downloadDouyinNative } = require('../services/douyin/nativeDownloader');
+const { downloadDouyinNative, resolveDouyinTarget } = require('../services/douyin/nativeDownloader');
+const { downloadDouyinWithEvilApi } = require('../services/douyin/evilApiDownloader');
 const { getDownloadProgress } = require('../services/shared/progressTracker');
+const {
+  normalizeSourceUrl,
+  isVideoSourceMatch,
+  writeVideoSourceMetadata,
+  quarantineStaleVideoArtifact
+} = require('../services/shared/videoSourceMetadata');
 
 // Track active downloads to prevent duplicates
 const activeDownloads = new Map();
@@ -23,6 +34,9 @@ const activeDownloads = new Map();
 // Track completed downloads with their actual filenames
 const completedDownloads = new Map();
 const failedDownloads = new Map();
+const videoIdAliases = new Map();
+
+const canonicalVideoIdFor = videoId => videoIdAliases.get(String(videoId)) || String(videoId);
 
 const toPublicPath = filename => `/videos/${encodeURIComponent(filename)}`;
 
@@ -30,11 +44,35 @@ const summarizeError = error => String(error?.message || error || 'Unknown error
   .replace(/\s+/g, ' ')
   .slice(0, 600);
 
+const isAccessFailure = error => /403|forbidden|private|deleted|fresh cookies|unavailable|region-restricted/i.test(error);
+
+async function verifyDownloadedArtifact(filePath, method) {
+  const validation = await validateVideoArtifact(filePath);
+  if (validation.valid) return validation;
+
+  await quarantineInvalidArtifact(filePath, validation.reason);
+  throw new Error(`${method} produced an invalid video: ${validation.reason}`);
+}
+
+async function quarantineAttemptFiles(videoId) {
+  const candidates = [
+    path.join(VIDEOS_DIR, `${videoId}.mp4`),
+    path.join(VIDEOS_DIR, `${videoId}.mp4.part`),
+    path.join(VIDEOS_DIR, `${videoId}.webm`),
+    path.join(VIDEOS_DIR, `${videoId}.mkv`)
+  ];
+  await Promise.all(candidates.map(async file => {
+    const validation = await validateVideoArtifact(file);
+    if (!validation.valid) await quarantineInvalidArtifact(file, validation.reason || 'failed-download');
+  }));
+}
+
 async function tryNonBrowserDownload(videoId, url, quality, useCookies) {
   const failures = [];
 
   try {
-    const result = await downloadDouyinNative(url, videoId);
+    const result = await downloadDouyinWithEvilApi(url, videoId, quality);
+    await verifyDownloadedArtifact(result.path, 'douyin-tiktok-download-api');
     return {
       ...result,
       filename: result.filename || path.basename(result.path),
@@ -42,6 +80,23 @@ async function tryNonBrowserDownload(videoId, url, quality, useCookies) {
       failures
     };
   } catch (error) {
+    await quarantineAttemptFiles(videoId);
+    const detail = summarizeError(error);
+    failures.push({ method: 'douyin-tiktok-download-api', error: detail });
+    console.warn(`[DOUYIN] Evil API resolver failed for ${videoId}: ${detail}`);
+  }
+
+  try {
+    const result = await downloadDouyinNative(url, videoId);
+    await verifyDownloadedArtifact(result.path, 'douyin-native');
+    return {
+      ...result,
+      filename: result.filename || path.basename(result.path),
+      publicPath: toPublicPath(result.filename || path.basename(result.path)),
+      failures
+    };
+  } catch (error) {
+    await quarantineAttemptFiles(videoId);
     const detail = summarizeError(error);
     failures.push({ method: 'douyin-native', error: detail });
     console.warn(`[DOUYIN] Native resolver failed for ${videoId}: ${detail}`);
@@ -60,8 +115,7 @@ async function tryNonBrowserDownload(videoId, url, quality, useCookies) {
     try {
       const result = await download();
       const filename = path.basename(result.path);
-      const stats = await fs.promises.stat(result.path);
-      if (stats.size < 100 * 1024) throw new Error(`Downloaded file is too small (${stats.size} bytes)`);
+      await verifyDownloadedArtifact(result.path, method);
       return {
         ...result,
         method,
@@ -70,9 +124,11 @@ async function tryNonBrowserDownload(videoId, url, quality, useCookies) {
         failures
       };
     } catch (error) {
+      await quarantineAttemptFiles(videoId);
       const detail = summarizeError(error);
       failures.push({ method, error: detail });
       console.warn(`[DOUYIN] ${method} failed for ${videoId}: ${detail}`);
+      if (isAccessFailure(detail)) break;
     }
   }
 
@@ -83,7 +139,14 @@ async function tryNonBrowserDownload(videoId, url, quality, useCookies) {
  * POST /api/download-douyin-playwright - Download Douyin video using Playwright
  */
 router.post('/download-douyin-playwright', async (req, res) => {
-  const { videoId, url, quality = '720p', forceRefresh = false, useCookies = false } = req.body;
+  const {
+    videoId,
+    url,
+    quality = '720p',
+    forceRefresh = false,
+    useCookies = false,
+    interactiveVerification = true
+  } = req.body;
 
   if (!videoId || !url) {
     return res.status(400).json({
@@ -92,30 +155,62 @@ router.post('/download-douyin-playwright', async (req, res) => {
     });
   }
 
+  const requestedVideoId = String(videoId);
+
   try {
-    console.log(`[DOUYIN-PLAYWRIGHT] Processing download: ${videoId} - ${url}`);
+    const target = await resolveDouyinTarget(url);
+    const canonicalVideoId = String(target.videoId);
+    videoIdAliases.set(requestedVideoId, canonicalVideoId);
+    console.log(`[DOUYIN-PLAYWRIGHT] Processing download: ${requestedVideoId} -> ${canonicalVideoId} - ${url}`);
 
     // Check if download is already in progress
-    if (activeDownloads.has(videoId) && !forceRefresh) {
-      console.log(`[DOUYIN-PLAYWRIGHT] Download already in progress for: ${videoId}`);
+    if (activeDownloads.has(canonicalVideoId) && !forceRefresh) {
+      const activeDownload = activeDownloads.get(canonicalVideoId);
+      if (normalizeSourceUrl(activeDownload.url) !== normalizeSourceUrl(url)) {
+        return res.status(409).json({
+          success: false,
+          error: 'A different source URL is already downloading for this video ID'
+        });
+      }
+      console.log(`[DOUYIN-PLAYWRIGHT] Download already in progress for: ${canonicalVideoId}`);
       return res.json({
         success: true,
         message: 'Download already in progress',
-        videoId,
+        videoId: canonicalVideoId,
+        requestedVideoId,
         inProgress: true
       });
     }
 
-    failedDownloads.delete(videoId);
+    failedDownloads.delete(canonicalVideoId);
 
-    // Check if file already exists and is not a force refresh
+    // Check if file already exists and is not a force refresh. A filename or
+    // videoId alone is not enough to identify a valid cache entry.
     // Look for files that start with the videoId (since actual filename includes title)
     let existingFile = null;
     if (fs.existsSync(VIDEOS_DIR)) {
-      const files = fs.readdirSync(VIDEOS_DIR);
-      existingFile = files.find(file =>
-        (file === `${videoId}.mp4` || file.startsWith(`${videoId}_`)) && file.endsWith('.mp4')
+      const files = fs.readdirSync(VIDEOS_DIR).filter(file =>
+        (file === `${canonicalVideoId}.mp4` || file.startsWith(`${canonicalVideoId}_`)) && file.endsWith('.mp4')
       );
+      for (const file of files) {
+        const candidatePath = path.join(VIDEOS_DIR, file);
+        const validation = await validateVideoArtifact(candidatePath);
+        if (!validation.valid) {
+          await quarantineInvalidArtifact(candidatePath, validation.reason);
+          continue;
+        }
+
+        const matchesSource = await isVideoSourceMatch(candidatePath, {
+          videoId: canonicalVideoId,
+          sourceUrl: url
+        });
+        if (matchesSource && !forceRefresh) {
+          existingFile = file;
+          break;
+        }
+
+        await quarantineStaleVideoArtifact(candidatePath, forceRefresh ? 'force-refresh' : 'source-mismatch');
+      }
     }
 
     if (existingFile && !forceRefresh) {
@@ -124,7 +219,8 @@ router.post('/download-douyin-playwright', async (req, res) => {
       return res.json({
         success: true,
         message: 'Video already downloaded',
-        videoId,
+        videoId: canonicalVideoId,
+        requestedVideoId,
         filename: existingFile,
         path: toPublicPath(existingFile),
         alreadyExists: true,
@@ -133,39 +229,60 @@ router.post('/download-douyin-playwright', async (req, res) => {
       });
     }
 
-    // Resolve ordinary Douyin links without starting a browser. Playwright is
-    // kept as the final fallback for links requiring JavaScript or cookies.
-    const localResult = await tryNonBrowserDownload(videoId, url, quality, useCookies);
+    console.log('[DOUYIN-PLAYWRIGHT] Verified source identity:', {
+      requestedVideoId,
+      resolvedVideoId: canonicalVideoId,
+      requestedUrl: url,
+      resolvedUrl: target.resolvedUrl
+    });
+
+    const localResult = await tryNonBrowserDownload(canonicalVideoId, target.resolvedUrl, quality, useCookies);
+    localResult.resolvedVideoId = localResult.resolvedVideoId || canonicalVideoId;
+    localResult.resolvedSourceUrl = localResult.resolvedSourceUrl || target.resolvedUrl;
     if (localResult.path) {
+      await writeVideoSourceMetadata({
+        videoPath: localResult.path,
+        videoId: canonicalVideoId,
+        sourceUrl: url,
+        method: localResult.method || 'download',
+        resolvedVideoId: localResult.resolvedVideoId,
+        resolvedSourceUrl: localResult.resolvedSourceUrl,
+        title: localResult.title
+      });
       return res.json({
         success: true,
         message: 'Video downloaded without a browser',
-        videoId,
+        videoId: canonicalVideoId,
+        requestedVideoId,
         filename: localResult.filename,
         path: localResult.publicPath,
         completed: true,
         method: localResult.method,
+        resolvedVideoId: localResult.resolvedVideoId || null,
+        resolvedSourceUrl: localResult.resolvedSourceUrl || null,
         fallbackAttempts: localResult.failures
       });
     }
 
     // Mark download as active
-    activeDownloads.set(videoId, {
+    activeDownloads.set(canonicalVideoId, {
       url,
       quality,
       startTime: Date.now(),
       useCookies,
+      interactiveVerification,
       fallbackAttempts: localResult.failures
     });
 
     // Start the download process
-    console.log(`[DOUYIN-PLAYWRIGHT] Starting Playwright download for: ${videoId}`);
+    console.log(`[DOUYIN-PLAYWRIGHT] Starting Playwright download for: ${canonicalVideoId}`);
 
     // Return immediately to client for polling
     res.json({
       success: true,
       message: 'Download started',
-      videoId,
+      videoId: canonicalVideoId,
+      requestedVideoId,
       inProgress: true
     });
 
@@ -173,37 +290,53 @@ router.post('/download-douyin-playwright', async (req, res) => {
     (async () => {
       try {
         // Perform the actual download
-        const downloadedPath = await downloadDouyinVideo(url, videoId, quality, useCookies);
+        const downloadResult = await downloadDouyinVideo(target.resolvedUrl, canonicalVideoId, quality, useCookies, {
+          interactiveVerification
+        });
+        const downloadedPath = downloadResult.path;
+
+        await verifyDownloadedArtifact(downloadedPath, 'playwright');
 
         // Get the filename from the downloaded path
         const filename = path.basename(downloadedPath);
+        await writeVideoSourceMetadata({
+          videoPath: downloadedPath,
+          videoId: canonicalVideoId,
+          sourceUrl: url,
+          method: 'playwright',
+          resolvedVideoId: downloadResult.resolvedVideoId,
+          resolvedSourceUrl: downloadResult.resolvedSourceUrl,
+          title: downloadResult.title
+        });
 
         console.log(`[DOUYIN-PLAYWRIGHT] Download completed: ${filename}`);
 
         // Store completed download info for progress polling
-        completedDownloads.set(videoId, {
+        completedDownloads.set(canonicalVideoId, {
           filename,
           path: downloadedPath,
           url: toPublicPath(filename),
+          resolvedVideoId: downloadResult.resolvedVideoId,
+          resolvedSourceUrl: downloadResult.resolvedSourceUrl,
           completedAt: Date.now()
         });
-        failedDownloads.delete(videoId);
+        failedDownloads.delete(canonicalVideoId);
 
         // Clean up active downloads tracking
-        activeDownloads.delete(videoId);
+        activeDownloads.delete(canonicalVideoId);
 
       } catch (downloadError) {
-        console.error(`[DOUYIN-PLAYWRIGHT] Download failed for ${videoId}:`, downloadError);
+        console.error(`[DOUYIN-PLAYWRIGHT] Download failed for ${canonicalVideoId}:`, downloadError);
 
         // Clean up tracking
-        const downloadState = activeDownloads.get(videoId);
-        activeDownloads.delete(videoId);
-        completedDownloads.delete(videoId);
+        const downloadState = activeDownloads.get(canonicalVideoId);
+        activeDownloads.delete(canonicalVideoId);
+        completedDownloads.delete(canonicalVideoId);
         const attempts = [
           ...(downloadState?.fallbackAttempts || []),
           { method: 'playwright', error: summarizeError(downloadError) }
         ];
-        failedDownloads.set(videoId, {
+        failedDownloads.set(canonicalVideoId, {
           error: `Douyin download failed: ${attempts.map(item => `${item.method}: ${item.error}`).join(' | ')}`.slice(0, 2400),
           attempts
         });
@@ -212,7 +345,7 @@ router.post('/download-douyin-playwright', async (req, res) => {
 
   } catch (error) {
     // Clean up active downloads tracking
-    activeDownloads.delete(videoId);
+    activeDownloads.delete(canonicalVideoIdFor(videoId));
     
     console.error('[DOUYIN-PLAYWRIGHT] Error processing download:', error);
     
@@ -229,7 +362,7 @@ router.post('/download-douyin-playwright', async (req, res) => {
 /**
  * GET /api/douyin-playwright-download/:filename - Download completed Douyin video file
  */
-router.get('/douyin-playwright-download/:filename', (req, res) => {
+router.get('/douyin-playwright-download/:filename', async (req, res) => {
   const { filename } = req.params;
 
   if (!filename) {
@@ -242,11 +375,12 @@ router.get('/douyin-playwright-download/:filename', (req, res) => {
   try {
     const filePath = path.join(VIDEOS_DIR, filename);
 
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
+    const validation = await validateVideoArtifact(filePath);
+    if (!validation.valid) {
+      await quarantineInvalidArtifact(filePath, validation.reason);
       return res.status(404).json({
         success: false,
-        error: 'File not found'
+        error: 'Video file is missing or invalid'
       });
     }
 
@@ -280,14 +414,15 @@ router.get('/douyin-playwright-download/:filename', (req, res) => {
 /**
  * GET /api/douyin-playwright-progress/:videoId - Get download progress
  */
-router.get('/douyin-playwright-progress/:videoId', (req, res) => {
+router.get('/douyin-playwright-progress/:videoId', async (req, res) => {
   const { videoId } = req.params;
+  const canonicalVideoId = canonicalVideoIdFor(videoId);
   
   try {
-    const progressInfo = getDownloadProgress(videoId);
-    const isActive = activeDownloads.has(videoId);
-    const completedInfo = completedDownloads.get(videoId);
-    const failedInfo = failedDownloads.get(videoId);
+    const progressInfo = getDownloadProgress(canonicalVideoId);
+    const isActive = activeDownloads.has(canonicalVideoId);
+    const completedInfo = completedDownloads.get(canonicalVideoId);
+    const failedInfo = failedDownloads.get(canonicalVideoId);
 
     // Extract progress percentage from progress info object
     const progressPercentage = progressInfo?.progress || 0;
@@ -299,17 +434,24 @@ router.get('/douyin-playwright-progress/:videoId', (req, res) => {
     let fileExists = false;
     if (completedInfo) {
       const fullPath = path.join(VIDEOS_DIR, completedInfo.filename);
-      fileExists = fs.existsSync(fullPath);
+      fileExists = (await validateVideoArtifact(fullPath)).valid;
+      if (!fileExists) {
+        await quarantineInvalidArtifact(fullPath, 'completed-artifact-invalid');
+        completedDownloads.delete(canonicalVideoId);
+      }
     }
 
     res.json({
       success: true,
-      videoId,
+      videoId: canonicalVideoId,
+      requestedVideoId: videoId,
       progress: progressPercentage,
       isActive,
       completed: isCompleted && fileExists,
       filename: completedInfo?.filename || null,
       path: (isCompleted && fileExists) ? completedInfo.url : null,
+      resolvedVideoId: completedInfo?.resolvedVideoId || null,
+      resolvedSourceUrl: completedInfo?.resolvedSourceUrl || null,
       error: failedInfo?.error || null,
       fallbackAttempts: failedInfo?.attempts || []
     });
@@ -373,20 +515,21 @@ router.get('/douyin-playwright-status', (req, res) => {
  */
 router.delete('/douyin-playwright-cancel/:videoId', (req, res) => {
   const { videoId } = req.params;
+  const canonicalVideoId = canonicalVideoIdFor(videoId);
   
   try {
-    if (activeDownloads.has(videoId)) {
-      activeDownloads.delete(videoId);
-      console.log(`[DOUYIN-PLAYWRIGHT] Cancelled download: ${videoId}`);
+    if (activeDownloads.has(canonicalVideoId)) {
+      activeDownloads.delete(canonicalVideoId);
+      console.log(`[DOUYIN-PLAYWRIGHT] Cancelled download: ${canonicalVideoId}`);
       
       res.json({
         success: true,
-        message: `Download cancelled for ${videoId}`
+        message: `Download cancelled for ${canonicalVideoId}`
       });
     } else {
       res.status(404).json({
         success: false,
-        error: `No active download found for ${videoId}`
+        error: `No active download found for ${canonicalVideoId}`
       });
     }
     

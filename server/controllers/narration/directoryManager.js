@@ -18,8 +18,15 @@ const TEMP_AUDIO_DIR = path.join(NARRATION_DIR, 'temp');
  * @param {string|number} subtitle_id - The subtitle ID
  * @returns {string} - The directory path for the subtitle ID
  */
-const getSubtitleDirectory = (subtitle_id) => {
-  return path.join(OUTPUT_AUDIO_DIR, `subtitle_${subtitle_id}`);
+const normalizeScope = (value) => {
+  if (value === undefined || value === null) return '';
+  return String(value).trim().replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^[-_.]+|[-_.]+$/g, '');
+};
+
+const getSubtitleDirectory = (subtitle_id, generationId = '') => {
+  const scope = normalizeScope(generationId);
+  const root = scope ? path.join(OUTPUT_AUDIO_DIR, scope) : OUTPUT_AUDIO_DIR;
+  return path.join(root, `subtitle_${subtitle_id}`);
 };
 
 /**
@@ -27,8 +34,8 @@ const getSubtitleDirectory = (subtitle_id) => {
  * @param {string|number} subtitle_id - The subtitle ID
  * @returns {string} - The directory path that was created
  */
-const ensureSubtitleDirectory = (subtitle_id) => {
-  const subtitleDir = getSubtitleDirectory(subtitle_id);
+const ensureSubtitleDirectory = (subtitle_id, generationId = '') => {
+  const subtitleDir = getSubtitleDirectory(subtitle_id, generationId);
   if (!fs.existsSync(subtitleDir)) {
     fs.mkdirSync(subtitleDir, { recursive: true });
   }
@@ -49,16 +56,8 @@ const clearNarrationOutputFiles = () => {
         const stats = fs.statSync(itemPath);
 
         if (stats.isDirectory()) {
-          // For directories (subtitle folders), delete all files inside
-          const subtitleFiles = fs.readdirSync(itemPath);
-          subtitleFiles.forEach(file => {
-            const filePath = path.join(itemPath, file);
-            fs.unlinkSync(filePath);
-            deletedCount++;
-          });
-
-          // Then remove the directory itself
-          fs.rmdirSync(itemPath);
+          fs.rmSync(itemPath, { recursive: true, force: true });
+          deletedCount++;
         } else {
           // For files in the root output directory (legacy files)
           fs.unlinkSync(itemPath);

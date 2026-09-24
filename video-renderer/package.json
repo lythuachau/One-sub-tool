@@ -14,6 +14,9 @@
     "server:start": "cross-env PORT=3033 node server/dist/index.js",
     "server:dev": "concurrently \"npm run start\" \"npm run server:start\""
   },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
   "eslintConfig": {
     "extends": [
       "react-app",

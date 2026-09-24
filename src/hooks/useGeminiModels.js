@@ -1,10 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getUsableGeminiModels } from '../services/gemini/modelDiscovery';
+import {
+  getUsableGeminiModels,
+  getCachedGeminiModelResult,
+  getDefaultGeminiModels
+} from '../services/gemini/modelDiscovery';
+import { getCurrentKey } from '../services/gemini/keyManager';
+
+const getSelectableModels = () => {
+  const cachedResult = getCachedGeminiModelResult(getCurrentKey());
+  return cachedResult ? cachedResult.usableModels : getDefaultGeminiModels();
+};
 
 export const useGeminiModels = () => {
-  const [models, setModels] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [models, setModels] = useState(getSelectableModels);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(() => {
+    const cachedResult = getCachedGeminiModelResult(getCurrentKey());
+    return cachedResult && cachedResult.usableModels.length === 0
+      ? new Error('No verified Gemini translation models are available')
+      : null;
+  });
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -22,31 +37,24 @@ export const useGeminiModels = () => {
   }, []);
 
   useEffect(() => {
-    let active = true;
     const handleKeyChange = () => {
-      refresh();
+      const selectableModels = getSelectableModels();
+      const cachedResult = getCachedGeminiModelResult(getCurrentKey());
+      setModels(selectableModels);
+      setError(cachedResult && cachedResult.usableModels.length === 0
+        ? new Error('No verified Gemini translation models are available')
+        : null);
+      setIsLoading(false);
     };
 
-    getUsableGeminiModels()
-      .then((discovered) => {
-        if (active) {
-          setModels(discovered);
-          setError(discovered.length > 0 ? null : new Error('No verified Gemini translation models are available'));
-        }
-      })
-      .catch((discoveryError) => {
-        if (active) setError(discoveryError);
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
-      });
     window.addEventListener('gemini-api-key-changed', handleKeyChange);
+    window.addEventListener('gemini-models-checked', handleKeyChange);
 
     return () => {
-      active = false;
       window.removeEventListener('gemini-api-key-changed', handleKeyChange);
+      window.removeEventListener('gemini-models-checked', handleKeyChange);
     };
-  }, [refresh]);
+  }, []);
 
   return { models, isLoading, error, refresh };
 };

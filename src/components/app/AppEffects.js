@@ -177,9 +177,8 @@ export const useAppEffects = (props) => {
       }
 
       if (event.key === 'optimize_videos' || !event.key) {
-        // Video optimization is now always enabled - force to true
-        localStorage.setItem('optimize_videos', 'true');
-        setOptimizeVideos(true);
+        localStorage.setItem('optimize_videos', 'false');
+        setOptimizeVideos(false);
       }
 
       if (event.key === 'optimized_resolution' || !event.key) {
@@ -188,8 +187,8 @@ export const useAppEffects = (props) => {
       }
 
       if (event.key === 'use_optimized_preview' || !event.key) {
-        const newUseOptimizedPreview = localStorage.getItem('use_optimized_preview') === 'true';
-        setUseOptimizedPreview(newUseOptimizedPreview);
+        localStorage.setItem('use_optimized_preview', 'false');
+        setUseOptimizedPreview(false);
       }
 
       // Sync localStorage to server when API keys change

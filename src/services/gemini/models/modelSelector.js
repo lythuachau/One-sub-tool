@@ -1,3 +1,5 @@
+import { fetchGemini } from '../requestManagement';
+
 /**
  * Functions for selecting appropriate Gemini models
  */
@@ -7,7 +9,7 @@
  * @param {string} apiKey - Gemini API key
  * @returns {Promise<Array>} - List of available models
  */
-export const listGeminiModels = async (apiKey) => {
+export const listGeminiModels = async (apiKey, { signal } = {}) => {
   try {
     if (!apiKey) {
       apiKey = localStorage.getItem('gemini_api_key');
@@ -17,11 +19,29 @@ export const listGeminiModels = async (apiKey) => {
     }
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-    const response = await fetch(apiUrl);
+    const response = await fetchGemini(apiUrl, { signal });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
+      const rawBody = await response.text();
+      let errorData = {};
+      try {
+        errorData = rawBody ? JSON.parse(rawBody) : {};
+      } catch (parseError) {
+        console.warn('[GeminiAPI] Model list error was not valid JSON:', parseError.message);
+      }
+      const providerError = errorData.error || {};
+      const error = new Error(`Gemini API error (${response.status}): ${providerError.message || rawBody || response.statusText}`);
+      error.statusCode = response.status;
+      error.gemini = {
+        httpStatus: response.status,
+        code: providerError.code || response.status,
+        status: providerError.status || response.statusText || null,
+        model: 'models',
+        message: providerError.message || rawBody || response.statusText,
+        details: providerError.details || null,
+        retryAfter: response.headers.get('Retry-After') || null
+      };
+      throw error;
     }
 
     const data = await response.json();

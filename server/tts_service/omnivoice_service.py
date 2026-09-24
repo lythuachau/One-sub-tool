@@ -86,15 +86,56 @@ def _status() -> dict[str, Any]:
         "available": available,
         "ready": model is not None,
         "engine": "omnivoice",
+        "model_name": os.getenv("OMNIVOICE_MODEL", "k2-fsa/OmniVoice"),
+        "model_state": "ready" if model is not None else ("error" if model_error else "not_loaded"),
         "device": device_info(),
         "models_loaded": {"tts": model is not None},
         "initialization_error": model_error or import_error,
     }
 
 
+def _model_catalog() -> dict[str, Any]:
+    available, import_error = package_available("omnivoice")
+    model_id = os.getenv("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
+    model_info = {
+        "id": model_id,
+        "name": "OmniVoice",
+        "engine": "omnivoice",
+        "provider": "local",
+        "language": "multi",
+        "languages": ["vi", "en", "zh"],
+        "available": available,
+        "ready": model is not None,
+        "installed": available,
+        "model_path": None,
+        "initialization_error": model_error or import_error,
+    }
+    return {
+        "models": [model_info] if available else [],
+        "active_model": model_id if available else None,
+        "cached_models": [],
+    }
+
+
 @app.get("/health")
 def health():
     return jsonify(_status())
+
+
+@app.get("/api/narration/status")
+def narration_status():
+    return jsonify(_status())
+
+
+@app.get("/api/narration/models")
+def models():
+    return jsonify(_model_catalog())
+
+
+@app.get("/api/narration/models/active")
+def active_model():
+    catalog = _model_catalog()
+    return jsonify({"active_model": catalog["active_model"]})
 
 
 @app.post("/wake-up")

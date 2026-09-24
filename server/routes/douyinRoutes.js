@@ -8,7 +8,14 @@ const fs = require('fs');
 const path = require('path');
 const { VIDEOS_DIR } = require('../config');
 const { downloadDouyinVideoWithRetry } = require('../services/douyin');
+const { downloadDouyinWithEvilApi } = require('../services/douyin/evilApiDownloader');
+const { resolveDouyinTarget } = require('../services/douyin/nativeDownloader');
 const { getDownloadProgress } = require('../services/shared/progressTracker');
+const {
+  isVideoSourceMatch,
+  writeVideoSourceMetadata,
+  quarantineStaleVideoArtifact
+} = require('../services/shared/videoSourceMetadata');
 
 /**
  * POST /api/download-douyin-video - Download a Douyin video
@@ -22,28 +29,86 @@ router.post('/download-douyin-video', async (req, res) => {
     return res.status(400).json({ error: 'Video ID and URL are required' });
   }
 
-  const videoPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
-
-  // Check if video already exists
-  if (fs.existsSync(videoPath)) {
-    return res.json({
-      success: true,
-      message: 'Video already downloaded',
-      url: `/videos/${videoId}.mp4`
-    });
-  }
+  const requestedVideoId = String(videoId);
+  let canonicalVideoId = requestedVideoId;
+  let videoPath = path.join(VIDEOS_DIR, `${canonicalVideoId}.mp4`);
 
   try {
+    const target = await resolveDouyinTarget(url);
+    canonicalVideoId = String(target.videoId);
+    videoPath = path.join(VIDEOS_DIR, `${canonicalVideoId}.mp4`);
+
+    // A cache hit is valid only when its sidecar proves the same source URL.
+    if (fs.existsSync(videoPath) && await isVideoSourceMatch(videoPath, {
+      videoId: canonicalVideoId,
+      sourceUrl: url
+    })) {
+      return res.json({
+        success: true,
+        message: 'Video already downloaded',
+        videoId: canonicalVideoId,
+        requestedVideoId,
+        url: `/videos/${canonicalVideoId}.mp4`
+      });
+    }
+
+    if (fs.existsSync(videoPath)) {
+      await quarantineStaleVideoArtifact(videoPath, 'source-mismatch');
+    }
+
+    try {
+      const evilResult = await downloadDouyinWithEvilApi(target.resolvedUrl, canonicalVideoId);
+      if (fs.existsSync(evilResult.path)) {
+        if (evilResult.path !== videoPath) {
+          await fs.promises.rm(videoPath, { force: true });
+          await fs.promises.rename(evilResult.path, videoPath);
+          evilResult.path = videoPath;
+          evilResult.filename = `${canonicalVideoId}.mp4`;
+        }
+        await writeVideoSourceMetadata({
+          videoPath: evilResult.path,
+          videoId: canonicalVideoId,
+          sourceUrl: url,
+          method: evilResult.method,
+          resolvedVideoId: evilResult.resolvedVideoId,
+          resolvedSourceUrl: evilResult.resolvedSourceUrl,
+          title: evilResult.title
+        });
+        return res.json({
+          success: true,
+          message: 'Video downloaded successfully with Douyin_TikTok_Download_API',
+          videoId: canonicalVideoId,
+          requestedVideoId,
+          url: `/videos/${encodeURIComponent(evilResult.filename)}`,
+          method: evilResult.method,
+          resolvedVideoId: evilResult.resolvedVideoId,
+          resolvedSourceUrl: evilResult.resolvedSourceUrl
+        });
+      }
+    } catch (evilError) {
+      console.warn(`[DOUYIN] Douyin_TikTok_Download_API failed for ${canonicalVideoId}: ${evilError.message}`);
+    }
+
     // Download the video using yt-dlp with retry and fallback
-    const result = await downloadDouyinVideoWithRetry(videoId, url, quality, useCookies);
+    const result = await downloadDouyinVideoWithRetry(canonicalVideoId, target.resolvedUrl, quality, useCookies);
 
     // Check if the file was created successfully
     if (fs.existsSync(videoPath)) {
+      await writeVideoSourceMetadata({
+        videoPath,
+        videoId: canonicalVideoId,
+        sourceUrl: url,
+        resolvedSourceUrl: target.resolvedUrl,
+        resolvedVideoId: canonicalVideoId,
+        method: result.method || 'douyin'
+      });
 
       return res.json({
         success: true,
         message: result.message || 'Video downloaded successfully',
-        url: `/videos/${videoId}.mp4`,
+        videoId: canonicalVideoId,
+        requestedVideoId,
+        url: `/videos/${canonicalVideoId}.mp4`,
         method: result.method
       });
     } else {

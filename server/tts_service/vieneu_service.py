@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import importlib.resources
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from flask import Flask, Response, jsonify, request, stream_with_context
 from flask_cors import CORS
 
 from runtime import (
+    OUTPUT_DIR,
     audio_response,
     clean_text,
     device_info,
@@ -87,6 +89,29 @@ def _status() -> dict[str, Any]:
     }
 
 
+def _model_catalog() -> dict[str, Any]:
+    available, import_error = package_available("vieneu")
+    model_id = os.getenv("VIENEU_MODEL", "vieneu")
+    model_info = {
+        "id": model_id,
+        "name": "VieNeu-TTS",
+        "engine": "vieneu",
+        "provider": "local",
+        "language": "vi",
+        "languages": ["vi"],
+        "available": available,
+        "ready": model is not None,
+        "installed": available,
+        "model_path": None,
+        "initialization_error": model_error or import_error,
+    }
+    return {
+        "models": [model_info] if available else [],
+        "active_model": model_id if available else None,
+        "cached_models": [],
+    }
+
+
 def _event(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -141,10 +166,26 @@ def status():
     return jsonify(_status())
 
 
+@app.get("/api/narration/models")
+def models():
+    return jsonify(_model_catalog())
+
+
+@app.get("/api/narration/models/active")
+def active_model():
+    catalog = _model_catalog()
+    return jsonify({"active_model": catalog["active_model"]})
+
+
 @app.get("/api/narration/voices")
 def voices():
     metadata = _preset_voice_metadata()
     return jsonify({"engine": "vieneu", **metadata})
+
+
+@app.get("/health")
+def health():
+    return jsonify(_status())
 
 
 @app.post("/api/narration/preview")
@@ -192,6 +233,7 @@ def generate():
             yield _event({"type": "complete", "results": [], "total": 0})
             return
         results: list[dict[str, Any]] = []
+        generation_id = settings.get("generation_id")
         with model_lock:
             for index, subtitle in enumerate(subtitles):
                 segment_id = subtitle_id(subtitle, index)
@@ -201,12 +243,12 @@ def generate():
                     continue
                 try:
                     generated = _infer(tts, text, reference_audio, reference_text, settings)
-                    destination = output_path(segment_id)
+                    destination = output_path(segment_id, generation_id)
                     sample_rate = write_wav(generated, destination, 48000)
                     result = {
                         "subtitle_id": segment_id,
                         "text": text,
-                        "filename": f"subtitle_{segment_id}/1.wav",
+                        "filename": str(destination.relative_to(OUTPUT_DIR)).replace(os.sep, "/"),
                         "filepath": str(destination),
                         "sample_rate": sample_rate,
                         "start": subtitle.get("start", 0),

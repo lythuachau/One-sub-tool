@@ -5,6 +5,7 @@
 
 // import { addResponseSchema } from '../../utils/schemaUtils'; // No longer needed if schema is removed
 import { resolveGeminiModel } from './modelDiscovery';
+import { fetchGemini } from './requestManagement';
 
 // createSubtitleGroupingSchema can be removed or commented out if not used.
 
@@ -161,7 +162,7 @@ DO NOT include any explanations, comments, or any other text in your response. R
 
     const responseData = await (async () => {
       try {
-        const response = await fetch(apiUrl, {
+        const response = await fetchGemini(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', },
           body: JSON.stringify(requestData)

@@ -29,6 +29,7 @@ const videoCompatibilityRoutes = require('./server/routes/videoCompatibilityRout
 const downloadOnlyRoutes = require('./server/routes/downloadOnlyRoutes');
 const diagnosticsRoutes = require('./server/routes/diagnostics');
 const subtitleEngineRoutes = require('./server/routes/subtitleEngineRoutes');
+const videoRendererRoutes = require('./server/routes/videoRendererRoutes');
 const { scanModels } = require('./server/utils/scan-models');
 
 // Initialize Express app
@@ -354,6 +355,7 @@ app.use('/api/narration', narrationRoutes);
 app.use('/api/test', testAudioRoute);
 app.use('/api/diagnostics', diagnosticsRoutes);
 app.use('/api', subtitleEngineRoutes);
+app.use('/api/video-renderer', videoRendererRoutes);
 
 // Simple model scanning endpoint - no Python bullshit!
 app.post('/api/scan-models', async (req, res) => {

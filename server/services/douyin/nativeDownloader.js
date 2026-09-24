@@ -52,6 +52,19 @@ async function expandShortLink(url) {
   return response.url || url;
 }
 
+async function resolveDouyinTarget(inputUrl) {
+  const resolvedUrl = /v\.douyin\.com/i.test(inputUrl)
+    ? await expandShortLink(inputUrl)
+    : inputUrl;
+  const videoId = extractVideoId(resolvedUrl) || extractVideoId(inputUrl);
+
+  if (!videoId) {
+    throw new Error('Douyin redirect did not resolve to a video page');
+  }
+
+  return { inputUrl, resolvedUrl, videoId };
+}
+
 function parseRouterData(html) {
   const match = html.match(/window\._ROUTER_DATA\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/);
   if (!match?.[1]) throw new Error('Douyin share page missing _ROUTER_DATA');
@@ -62,25 +75,28 @@ function parseRouterData(html) {
   }
 }
 
-function findItemList(node) {
+function findTargetItem(node, videoId) {
   if (!node || typeof node !== 'object') return null;
   if (Array.isArray(node)) {
     for (const item of node) {
-      const found = findItemList(item);
+      if (getItemVideoId(item) === videoId) return item;
+      const found = findTargetItem(item, videoId);
       if (found) return found;
     }
     return null;
   }
 
-  if (Array.isArray(node.item_list) && node.item_list.length > 0) {
-    return node.item_list;
-  }
+  if (getItemVideoId(node) === videoId && node.video) return node;
 
   for (const value of Object.values(node)) {
-    const found = findItemList(value);
+    const found = findTargetItem(value, videoId);
     if (found) return found;
   }
   return null;
+}
+
+function getItemVideoId(item) {
+  return String(item?.aweme_id || item?.awemeId || item?.item_id || item?.id || '');
 }
 
 function pickPlayUrl(item) {
@@ -112,15 +128,8 @@ function safeTitle(value) {
 }
 
 async function resolveDouyinMedia(inputUrl) {
-  let pageUrl = inputUrl;
-  let videoId = extractVideoId(inputUrl);
-
-  if (!videoId || /v\.douyin\.com/i.test(inputUrl)) {
-    pageUrl = await expandShortLink(inputUrl);
-    videoId = extractVideoId(pageUrl) || videoId;
-  }
-
-  if (!videoId) throw new Error('Could not extract Douyin video id from link');
+  const target = await resolveDouyinTarget(inputUrl);
+  const { videoId } = target;
 
   const shareUrl = `https://www.iesdouyin.com/share/video/${videoId}/`;
   const response = await fetch(shareUrl, {
@@ -130,7 +139,7 @@ async function resolveDouyinMedia(inputUrl) {
   if (!response.ok) throw new Error(`Douyin share page HTTP ${response.status}`);
 
   const router = parseRouterData(await response.text());
-  const item = findItemList(router)?.[0];
+  const item = findTargetItem(router, videoId);
   if (!item) throw new Error('Douyin video metadata not found (private or deleted?)');
 
   const mediaUrl = pickPlayUrl(item);
@@ -138,6 +147,7 @@ async function resolveDouyinMedia(inputUrl) {
 
   return {
     videoId,
+    resolvedUrl: target.resolvedUrl,
     mediaUrl,
     title: typeof item.desc === 'string' ? item.desc : ''
   };
@@ -216,11 +226,16 @@ async function downloadDouyinNative(url, requestedVideoId) {
     path: outputPath,
     filename,
     method: 'douyin-native',
+    resolvedVideoId: resolved.videoId,
+    resolvedSourceUrl: resolved.resolvedUrl,
+    title: resolved.title,
     size: stats.size
   };
 }
 
 module.exports = {
   downloadDouyinNative,
-  resolveDouyinMedia
+  resolveDouyinMedia,
+  resolveDouyinTarget,
+  extractVideoId
 };

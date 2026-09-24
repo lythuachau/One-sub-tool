@@ -9,6 +9,11 @@ const path = require('path');
 const { VIDEOS_DIR } = require('../config');
 const { downloadVideoWithRetry } = require('../services/allSites/downloader');
 const { getDownloadProgress } = require('../services/shared/progressTracker');
+const {
+  isVideoSourceMatch,
+  writeVideoSourceMetadata,
+  quarantineStaleVideoArtifact
+} = require('../services/shared/videoSourceMetadata');
 
 /**
  * POST /api/download-generic-video - Download a video from any supported site
@@ -24,13 +29,17 @@ router.post('/download-generic-video', async (req, res) => {
 
   const videoPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
 
-  // Check if video already exists
-  if (fs.existsSync(videoPath)) {
+  // A cache hit is valid only when its sidecar proves the same source URL.
+  if (fs.existsSync(videoPath) && await isVideoSourceMatch(videoPath, { videoId, sourceUrl: url })) {
     return res.json({
       success: true,
       message: 'Video already downloaded',
       url: `/videos/${videoId}.mp4`
     });
+  }
+
+  if (fs.existsSync(videoPath)) {
+    await quarantineStaleVideoArtifact(videoPath, 'source-mismatch');
   }
 
   try {
@@ -39,6 +48,12 @@ router.post('/download-generic-video', async (req, res) => {
 
     // Check if the file was created successfully
     if (fs.existsSync(videoPath)) {
+      await writeVideoSourceMetadata({
+        videoPath,
+        videoId,
+        sourceUrl: url,
+        method: result.method || 'generic'
+      });
 
       return res.json({
         success: true,

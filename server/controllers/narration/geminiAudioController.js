@@ -17,17 +17,18 @@ const { OUTPUT_AUDIO_DIR, ensureSubtitleDirectory } = require('./directoryManage
  * @param {number} options.sampleRate - Sample rate of the audio
  * @param {string} options.mimeType - MIME type of the audio
  * @param {string} options.prefix - Prefix for the filename (e.g., 'gemini' or 'f5tts')
+ * @param {string} options.generationId - Generation scope used to isolate artifacts
  * @returns {Promise<Object>} - Result object with filename and success status
  */
 const saveAudioToFile = async (options) => {
-  const { audioData, subtitle_id, sampleRate = 24000, mimeType, prefix = '' } = options;
+  const { audioData, subtitle_id, sampleRate = 24000, mimeType, prefix = '', generationId = '' } = options;
 
   if (!audioData || !subtitle_id) {
     throw new Error('Missing required data (audioData or subtitle_id)');
   }
 
   // Ensure the subtitle directory exists
-  const subtitleDir = ensureSubtitleDirectory(subtitle_id);
+  const subtitleDir = ensureSubtitleDirectory(subtitle_id, generationId);
 
   // Always use 1.wav to override existing narrations for the same video/subtitle set
   // This ensures align-narration always finds the latest narration
@@ -37,7 +38,8 @@ const saveAudioToFile = async (options) => {
   const filename = prefix ? `${prefix}_${fileNumber}.wav` : `${fileNumber}.wav`;
 
   // Full path includes the subtitle directory - use forward slashes for URLs
-  const fullFilename = `subtitle_${subtitle_id}/${filename}`;
+  const scope = generationId ? `${String(generationId).replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^[-_.]+|[-_.]+$/g, '')}/` : '';
+  const fullFilename = `${scope}subtitle_${subtitle_id}/${filename}`;
   const filepath = path.join(subtitleDir, filename);
 
   // Log if we're overriding an existing file
@@ -158,7 +160,7 @@ const saveAudioToFile = async (options) => {
  */
 const saveGeminiAudio = async (req, res) => {
   try {
-    const { audioData, subtitle_id, sampleRate, mimeType } = req.body;
+    const { audioData, subtitle_id, sampleRate, mimeType, generation_id } = req.body;
 
     if (!audioData || !subtitle_id) {
       console.error('Missing required data');
@@ -171,6 +173,7 @@ const saveGeminiAudio = async (req, res) => {
         subtitle_id,
         sampleRate,
         mimeType,
+        generationId: generation_id,
         prefix: '' // Use empty prefix like F5-TTS and Chatterbox for consistent naming
       });
 
@@ -190,7 +193,7 @@ const saveGeminiAudio = async (req, res) => {
  */
 const saveF5TTSAudio = async (req, res) => {
   try {
-    const { audioData, subtitle_id, sampleRate, mimeType } = req.body;
+    const { audioData, subtitle_id, sampleRate, mimeType, generation_id } = req.body;
 
     if (!audioData || !subtitle_id) {
       console.error('Missing required data');
@@ -205,6 +208,7 @@ const saveF5TTSAudio = async (req, res) => {
         subtitle_id,
         sampleRate,
         mimeType,
+        generationId: generation_id,
         prefix: '' // Empty prefix for consistent naming with what's expected
       });
 
@@ -224,7 +228,7 @@ const saveF5TTSAudio = async (req, res) => {
  */
 const saveChatterboxAudio = async (req, res) => {
   try {
-    const { audioData, subtitle_id, sampleRate, mimeType } = req.body;
+    const { audioData, subtitle_id, sampleRate, mimeType, generation_id } = req.body;
 
     if (!audioData || !subtitle_id) {
       console.error('Missing required data');
@@ -237,6 +241,7 @@ const saveChatterboxAudio = async (req, res) => {
         subtitle_id,
         sampleRate,
         mimeType,
+        generationId: generation_id,
         prefix: '' // Use empty prefix like F5-TTS to generate "1.wav" and enable cache loading
       });
 
