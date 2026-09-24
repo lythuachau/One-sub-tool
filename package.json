@@ -4,6 +4,7 @@
   "description": "One-sub-tool: local video subtitle translation and narration with Gemini, Whisper, VieNeu-TTS, and OmniVoice",
   "homepage": "./",
   "scripts": {
+    "setup:capcut": "python scripts/setup-capcut.py",
     "start": "npm run setup:react-env && node scripts/start-frontend.js",
     "start-react": "cross-env PORT=3030 react-scripts start",
     "build": "react-scripts build",

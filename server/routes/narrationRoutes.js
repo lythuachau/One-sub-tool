@@ -4,6 +4,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.use('/capcut', require('./capcutRoutes'));
 const multer = require('multer');
 const path = require('path');
 const narrationController = require('../controllers/narrationController');

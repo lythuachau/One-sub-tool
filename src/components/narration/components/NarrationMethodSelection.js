@@ -75,6 +75,11 @@ const NarrationMethodSelection = ({
                 )}
               </label>
             </div>
+            <div className="radio-pill">
+              <input type="radio" id="method-capcut" name="narration-method" value="capcut"
+                checked={narrationMethod === 'capcut'} onChange={() => handleMethodChange('capcut')} disabled={isGenerating} />
+              <label htmlFor="method-capcut">CapCut TTS</label>
+            </div>
           </div>
         </div>
       </div>

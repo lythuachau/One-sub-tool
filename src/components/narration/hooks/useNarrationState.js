@@ -9,6 +9,7 @@ const useNarrationState = (initialReferenceAudio) => {
   // Narration Method state - load from localStorage or default to VieNeu-TTS
   const [narrationMethod, setNarrationMethod] = useState(() => {
     const savedMethod = localStorage.getItem('narration_method');
+    if (savedMethod === 'capcut') return 'capcut';
     if (savedMethod === 'chatterbox' || savedMethod === 'omnivoice') return 'chatterbox';
     return 'f5tts';
   });

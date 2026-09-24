@@ -32,6 +32,7 @@ const useAvailabilityCheck = ({
 }) => {
   // Check if narration services are available
   useEffect(() => {
+    if (narrationMethod === 'capcut') { setError(''); return; }
     const checkAvailability = async () => {
       try {
         // First, do immediate checks for services that can be determined quickly

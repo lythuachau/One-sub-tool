@@ -17,6 +17,7 @@ import useNarrationCache from './hooks/useNarrationCache';
 import useWindowStateManager from './hooks/useWindowStateManager';
 
 // Import modular components
+import CapCutNarration from './components/CapCutNarration';
 import ReferenceAudioSection from './components/ReferenceAudioSection';
 import AudioControls from './components/AudioControls';
 import VieNeuVoiceControls from './components/VieNeuVoiceControls';
@@ -472,39 +473,13 @@ const UnifiedNarrationSection = ({
     groupedSubtitles
   });
 
-  if (!isAvailable && !isChatterboxAvailable) {
-    return (
-      <div className="narration-section unavailable" ref={sectionRef}>
-        <div className="narration-header">
-          <h3>
-            {t('narration.title', 'Generate Narration')}
-            <span className="service-unavailable">
-              {t('narration.serviceUnavailableIndicator', '(Service Unavailable)')}
-            </span>
-          </h3>
-        </div>
-        <div className="narration-unavailable-message">
-          <div className="warning-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-              <line x1="12" y1="9" x2="12" y2="13"></line>
-              <line x1="12" y1="17" x2="12.01" y2="17"></line>
-            </svg>
-          </div>
-          <div className="message">
-            {t('narration.allServicesUnavailableMessage', 'VieNeu-TTS and OmniVoice are unavailable. Install both local engines and start the narration services with npm run dev:cuda.')}
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="narration-section" ref={sectionRef}>
       <div className="narration-header">
         <h3>{t('narration.title', 'Generate Narration')}</h3>
         <p className="narration-description">
-          {t('narration.description', 'Generate spoken audio from your subtitles using a VieNeu preset, a reference voice, or OmniVoice voice design.')}
+          {t('narration.descriptionWithCapcut', 'Tạo thuyết minh bằng VieNeu-TTS, OmniVoice hoặc CapCut TTS.')}
         </p>
       </div>
 
@@ -521,7 +496,42 @@ const UnifiedNarrationSection = ({
       {error && <StatusMessage message={error} type="error" />}
 
       <div className="narration-content-container" ref={contentRef}>
-      {narrationMethod === 'f5tts' ? (
+      {narrationMethod === 'capcut' ? (
+        <CapCutNarration
+          getSubtitles={() => useGroupedSubtitles && groupedSubtitles?.length ? groupedSubtitles : subtitleSource === 'translated' ? translatedSubtitles : originalSubtitles || subtitles}
+          subtitleSource={subtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
+          generationResults={generationResults} setGenerationResults={setGenerationResults}
+          downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
+          currentAudio={currentAudio} isPlaying={isPlaying} playAudio={playAudio}
+          useGroupedSubtitles={useGroupedSubtitles}>
+          <SubtitleSourceSelection
+            subtitleSource={subtitleSource}
+            setSubtitleSource={setSubtitleSource}
+            isGenerating={isGenerating}
+            translatedSubtitles={translatedSubtitles}
+            originalSubtitles={originalSubtitles || subtitles}
+            originalLanguage={originalLanguage}
+            translatedLanguage={translatedLanguage}
+            setOriginalLanguage={setOriginalLanguage}
+            setTranslatedLanguage={setTranslatedLanguage}
+            useGroupedSubtitles={useGroupedSubtitles}
+            setUseGroupedSubtitles={setUseGroupedSubtitles}
+            isGroupingSubtitles={isGroupingSubtitles}
+            groupedSubtitles={groupedSubtitles}
+            groupingIntensity={groupingIntensity}
+            setGroupingIntensity={setGroupingIntensity}
+            onGroupedSubtitlesGenerated={setGroupedSubtitles}
+            narrationMethod={narrationMethod}
+            onLanguageDetected={(source, language) => {
+              if (source === 'original') {
+                setOriginalLanguage(language);
+              } else if (source === 'translated') {
+                setTranslatedLanguage(language);
+              }
+            }}
+          />
+        </CapCutNarration>
+      ) : narrationMethod === 'f5tts' ? (
         // F5-TTS UI
         <div className="f5tts-content">
           <VieNeuVoiceControls
