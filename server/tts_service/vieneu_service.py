@@ -4,6 +4,7 @@ import json
 import logging
 import importlib.resources
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,6 @@ from runtime import (
     output_path,
     resolve_reference_audio,
     subtitle_id,
-    subtitle_text,
     write_wav,
 )
 
@@ -114,6 +114,40 @@ def _model_catalog() -> dict[str, Any]:
 
 def _event(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _tts_parts(subtitle: dict[str, Any]) -> list[str]:
+    raw_text = str(
+        subtitle.get("text")
+        or subtitle.get("translated_text")
+        or subtitle.get("translation")
+        or subtitle.get("original_text")
+        or ""
+    ).strip()
+    raw_parts = subtitle.get("tts_parts") or subtitle.get("ttsParts") or re.split(r"\r?\n", raw_text)
+    return [clean_text(part) for part in raw_parts if clean_text(part)]
+
+
+def _concatenate_wav_files(part_paths: list[Path], destination: Path) -> int:
+    import numpy as np
+    import soundfile as sf
+
+    if not part_paths:
+        raise ValueError("TTS returned no audio parts")
+    chunks = []
+    sample_rate = None
+    for part_path in part_paths:
+        audio, current_rate = sf.read(str(part_path), always_2d=True)
+        if sample_rate is None:
+            sample_rate = current_rate
+        if current_rate != sample_rate:
+            raise ValueError(f"TTS parts use different sample rates: {current_rate} != {sample_rate}")
+        chunks.append(audio)
+    combined = np.concatenate(chunks, axis=0)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    sf.write(str(temporary), combined, sample_rate, format="WAV", subtype="PCM_16")
+    temporary.replace(destination)
+    return int(sample_rate)
 
 
 def _infer(tts: Any, text: str, reference_audio: str | None, reference_text: str, settings: dict[str, Any]) -> Any:
@@ -237,17 +271,24 @@ def generate():
         with model_lock:
             for index, subtitle in enumerate(subtitles):
                 segment_id = subtitle_id(subtitle, index)
-                text = subtitle_text(subtitle)
-                if not text:
+                parts = _tts_parts(subtitle)
+                text = "\n".join(parts)
+                if not parts:
                     yield _event({"type": "error", "subtitle_id": segment_id, "error": "Subtitle text is empty"})
                     continue
+                part_paths: list[Path] = []
                 try:
-                    generated = _infer(tts, text, reference_audio, reference_text, settings)
                     destination = output_path(segment_id, generation_id)
-                    sample_rate = write_wav(generated, destination, 48000)
+                    for part_index, part in enumerate(parts, start=1):
+                        part_path = destination.with_name(f".{destination.stem}.part{part_index}.wav")
+                        generated = _infer(tts, part, reference_audio, reference_text, settings)
+                        write_wav(generated, part_path, 48000)
+                        part_paths.append(part_path)
+                    sample_rate = _concatenate_wav_files(part_paths, destination)
                     result = {
                         "subtitle_id": segment_id,
                         "text": text,
+                        "tts_parts": parts,
                         "filename": str(destination.relative_to(OUTPUT_DIR)).replace(os.sep, "/"),
                         "filepath": str(destination),
                         "sample_rate": sample_rate,
@@ -263,7 +304,11 @@ def generate():
                         "progress": index + 1,
                         "total": len(subtitles),
                     })
+                    for part_path in part_paths:
+                        part_path.unlink(missing_ok=True)
                 except Exception as exc:
+                    for part_path in part_paths:
+                        part_path.unlink(missing_ok=True)
                     logger.exception("VieNeu generation failed for %s", segment_id)
                     yield _event({
                         "type": "error",
