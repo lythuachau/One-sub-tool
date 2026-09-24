@@ -12,13 +12,22 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
   const [voice, setVoice] = useState(() => localStorage.getItem('capcut_voice') || 'BV421_vivn_streaming');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [preview, setPreview] = useState('');
   const [retrying, setRetrying] = useState(null);
   const controller = useRef(null);
+  const previewAudio = useRef(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; controller.current?.abort(); };
+    const audioElement = previewAudio.current;
+    return () => {
+      mounted.current = false;
+      controller.current?.abort();
+      if (audioElement) {
+        audioElement.pause();
+        audioElement.removeAttribute('src');
+        audioElement.load();
+      }
+    };
   }, []);
 
   const request = async (endpoint, body, signal) => {
@@ -31,7 +40,7 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
     let result;
     try {
       result = JSON.parse(raw);
-    } catch (error) {
+    } catch {
       const hint = response.status === 404
         ? ' Backend chưa nạp route CapCut; hãy khởi động lại bằng npm run dev:cuda.'
         : '';
@@ -66,8 +75,16 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
   const synthesize = (text, signal) => request('synthesize', { text, voice }, signal);
   const listen = () => run(async signal => {
     const result = await synthesize(language.startsWith('vi') ? 'Xin chào, đây là bản nghe thử giọng CapCut.' : 'Hello, this is a CapCut voice preview.', signal);
-    setPreview(getAudioUrl(result.filename));
-    setMessage('Giọng đã tạo audio thành công.');
+    const player = previewAudio.current;
+    if (!player) throw new Error('Không khởi tạo được trình phát nghe thử.');
+    player.src = getAudioUrl(result.filename);
+    player.load();
+    try {
+      await player.play();
+      setMessage('Đang phát bản nghe thử giọng CapCut.');
+    } catch {
+      setMessage('Audio đã tạo xong nhưng trình duyệt chặn tự phát. Hãy bấm Nghe thử giọng lại.');
+    }
   });
 
   const generate = (onlyIds) => run(async signal => {
@@ -103,14 +120,14 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
   return <div className="capcut-content">
     <div className="narration-row"><div className="row-label">Ngôn ngữ giọng:</div><div className="row-content">
       <select aria-label="Ngôn ngữ giọng CapCut" className="pill-button secondary" value={language} disabled={busy || isGenerating}
-        onChange={event => { const lang = event.target.value; setLanguage(lang); setVoice(voices.find(v => v.language === lang)?.id || ''); setPreview(''); }}>
+        onChange={event => { const lang = event.target.value; setLanguage(lang); setVoice(voices.find(v => v.language === lang)?.id || ''); }}>
         {!languages.includes(language) && <option value={language}>{language}</option>}
         {languages.map(lang => <option key={lang} value={lang}>{lang}</option>)}
       </select>
     </div></div>
     <div className="narration-row"><div className="row-label">Giọng CapCut:</div><div className="row-content">
       <select aria-label="Giọng CapCut" className="pill-button secondary" value={voice} disabled={busy || isGenerating}
-        onChange={event => { setVoice(event.target.value); localStorage.setItem('capcut_voice', event.target.value); setPreview(''); }}>
+        onChange={event => { setVoice(event.target.value); localStorage.setItem('capcut_voice', event.target.value); }}>
         {!voices.some(v => v.id === voice && v.language === language) && <option value={voice}>{voice || 'Chọn giọng'}</option>}
         {voices.filter(v => v.language === language).map(v => <option key={`${v.id}-${v.name}`} value={v.id}>{v.name}</option>)}
       </select>
@@ -118,7 +135,7 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
       <button className="pill-button primary" disabled={busy || isGenerating || !voice} onClick={listen}>Nghe thử giọng</button>
     </div></div>
     <p className="narration-description">Văn bản được gửi đến dịch vụ CapCut để tạo giọng. Không cần âm thanh tham chiếu.</p>
-    {preview && <audio controls src={preview} />}
+    <audio ref={previewAudio} preload="auto" aria-hidden="true" style={{ display: 'none' }} />
     {children}
     <GenerateButton handleGenerateNarration={() => generate()} isGenerating={isGenerating || busy}
       requiresReferenceAudio={false} isServiceAvailable={!!voice} subtitleSource={subtitleSource}
