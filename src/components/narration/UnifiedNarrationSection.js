@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getAudioUrl } from '../../services/narrationService';
 import useNarrationHandlers from './hooks/useNarrationHandlers';
@@ -35,6 +35,7 @@ import NarrationResults from './components/NarrationResults';
 import GeminiNarrationResults from './components/GeminiNarrationResults';
 import StatusMessage from './components/StatusMessage';
 import NarrationMethodSelection from './components/NarrationMethodSelection';
+import TtsSubtitleEditor from './components/TtsSubtitleEditor';
 
 // Import styles
 import '../../styles/narration/unifiedNarrationRedesign.css';
@@ -67,7 +68,6 @@ const UnifiedNarrationSection = ({
   const statusRef = useRef(null);
   const contentRef = useRef(null);
   const sectionRef = useRef(null);
-
   // Use custom hooks for state management
   const narrationState = useNarrationState(initialReferenceAudio);
 
@@ -135,6 +135,56 @@ const UnifiedNarrationSection = ({
     updateReferenceAudio
   } = narrationState;
 
+  const [ttsTextOverrides, setTtsTextOverrides] = useState({});
+
+  const getSubtitleKey = (subtitle, index) => String(subtitle?.id ?? subtitle?.subtitle_id ?? index + 1);
+  const getTtsText = (subtitle, source, index) => {
+    const key = `${source}:${getSubtitleKey(subtitle, index)}`;
+    return Object.prototype.hasOwnProperty.call(ttsTextOverrides, key)
+      ? ttsTextOverrides[key]
+      : String(subtitle?.text || '');
+  };
+  const withTtsText = (items, source) => (items || []).map((subtitle, index) => {
+    const text = getTtsText(subtitle, source, index);
+    return {
+      ...subtitle,
+      text,
+      ttsText: text,
+      ttsParts: text.split(/\r?\n/).map(part => part.trim()).filter(Boolean)
+    };
+  });
+
+  const editedOriginalSubtitles = withTtsText(originalSubtitles || subtitles, 'original');
+  const editedTranslatedSubtitles = withTtsText(translatedSubtitles, 'translated');
+  const editedGroupedSubtitles = withTtsText(groupedSubtitles, 'grouped');
+
+  const activeTtsSubtitles = subtitleSource === 'translated'
+    ? editedTranslatedSubtitles
+    : editedOriginalSubtitles;
+
+  const handleTtsTextChange = (source, subtitleId, text) => {
+    setTtsTextOverrides(previous => ({
+      ...previous,
+      [`${source}:${subtitleId}`]: text
+    }));
+  };
+
+  const resetTtsText = (source) => {
+    setTtsTextOverrides(previous => Object.fromEntries(
+      Object.entries(previous).filter(([key]) => !key.startsWith(`${source}:`))
+    ));
+  };
+
+  const renderTtsEditor = () => (
+    <TtsSubtitleEditor
+      source={subtitleSource}
+      subtitles={activeTtsSubtitles}
+      disabled={isGenerating}
+      onTextChange={(subtitleId, text) => handleTtsTextChange(subtitleSource, subtitleId, text)}
+      onReset={() => resetTtsText(subtitleSource)}
+    />
+  );
+
   // Use availability check hook
   useAvailabilityCheck({
     narrationMethod,
@@ -166,16 +216,16 @@ const UnifiedNarrationSection = ({
     setGenerationResults,
     generationResults,
     subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    originalSubtitles: editedOriginalSubtitles,
+    translatedSubtitles: editedTranslatedSubtitles,
+    subtitles: editedOriginalSubtitles,
     originalLanguage,
     translatedLanguage,
     selectedVoice,
     concurrentClients,
     useGroupedSubtitles,
     setUseGroupedSubtitles,
-    groupedSubtitles,
+    groupedSubtitles: editedGroupedSubtitles,
     setGroupedSubtitles,
     isGroupingSubtitles,
     setIsGroupingSubtitles,
@@ -197,9 +247,9 @@ const UnifiedNarrationSection = ({
     setGenerationResults,
     generationResults,
     subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    originalSubtitles: editedOriginalSubtitles,
+    translatedSubtitles: editedTranslatedSubtitles,
+    subtitles: editedOriginalSubtitles,
     originalLanguage,
     translatedLanguage,
     exaggeration,
@@ -210,7 +260,7 @@ const UnifiedNarrationSection = ({
     referenceText,
     useGroupedSubtitles,
     setUseGroupedSubtitles,
-    groupedSubtitles,
+    groupedSubtitles: editedGroupedSubtitles,
     setGroupedSubtitles,
     isGroupingSubtitles,
     setIsGroupingSubtitles,
@@ -232,9 +282,9 @@ const UnifiedNarrationSection = ({
     setGenerationResults,
     generationResults,
     subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    originalSubtitles: editedOriginalSubtitles,
+    translatedSubtitles: editedTranslatedSubtitles,
+    subtitles: editedOriginalSubtitles,
     originalLanguage,
     translatedLanguage,
     selectedVoice: edgeTTSVoice,
@@ -248,7 +298,7 @@ const UnifiedNarrationSection = ({
     t,
     setRetryingSubtitleId,
     useGroupedSubtitles,
-    groupedSubtitles,
+    groupedSubtitles: editedGroupedSubtitles,
     setUseGroupedSubtitles
   });
 
@@ -265,9 +315,9 @@ const UnifiedNarrationSection = ({
     setGenerationResults,
     generationResults,
     subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    originalSubtitles: editedOriginalSubtitles,
+    translatedSubtitles: editedTranslatedSubtitles,
+    subtitles: editedOriginalSubtitles,
     originalLanguage,
     translatedLanguage,
     selectedLanguage: gttsLanguage,
@@ -279,7 +329,7 @@ const UnifiedNarrationSection = ({
     t,
     setRetryingSubtitleId,
     useGroupedSubtitles,
-    groupedSubtitles,
+    groupedSubtitles: editedGroupedSubtitles,
     setUseGroupedSubtitles
   });
 
@@ -314,9 +364,9 @@ const UnifiedNarrationSection = ({
     setGenerationResults,
     setGenerationStatus,
     subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    originalSubtitles: editedOriginalSubtitles,
+    translatedSubtitles: editedTranslatedSubtitles,
+    subtitles: editedOriginalSubtitles,
     t,
     setReferenceAudio,
     setReferenceText
@@ -331,7 +381,7 @@ const UnifiedNarrationSection = ({
     translatedSubtitles,
     subtitles,
     useGroupedSubtitles,
-    groupedSubtitles,
+    groupedSubtitles: editedGroupedSubtitles,
     setGroupedSubtitles,
     setIsGroupingSubtitles,
     setUseGroupedSubtitles,
@@ -439,13 +489,13 @@ const UnifiedNarrationSection = ({
     onReferenceAudioChange,
     getSelectedSubtitles: () => {
       // Check if we should use grouped subtitles
-      if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
-        return groupedSubtitles;
+      if (useGroupedSubtitles && editedGroupedSubtitles && editedGroupedSubtitles.length > 0) {
+        return editedGroupedSubtitles;
       }
-      if (subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0) {
-        return translatedSubtitles;
+      if (subtitleSource === 'translated' && editedTranslatedSubtitles && editedTranslatedSubtitles.length > 0) {
+        return editedTranslatedSubtitles;
       }
-      return originalSubtitles || subtitles;
+      return editedOriginalSubtitles;
     },
     advancedSettings,
     setIsGenerating,
@@ -459,7 +509,7 @@ const UnifiedNarrationSection = ({
     statusRef,
     t,
     subtitleSource,
-    translatedSubtitles,
+    translatedSubtitles: editedTranslatedSubtitles,
     vieneuVoiceMode,
     vieneuVoice,
     isPlaying,
@@ -469,7 +519,7 @@ const UnifiedNarrationSection = ({
     setRetryingSubtitleId,
     useGroupedSubtitles,
     setUseGroupedSubtitles,
-    groupedSubtitles
+    groupedSubtitles: editedGroupedSubtitles
   });
 
   if (!isAvailable && !isChatterboxAvailable) {
@@ -615,6 +665,8 @@ const UnifiedNarrationSection = ({
             }}
           />
 
+          {renderTtsEditor()}
+
           {/* Advanced Settings Toggle */}
           <AdvancedSettingsToggle
             advancedSettings={advancedSettings}
@@ -724,6 +776,8 @@ const UnifiedNarrationSection = ({
               }
             }}
           />
+
+          {renderTtsEditor()}
 
           {/* Chatterbox Controls */}
           <ChatterboxControls

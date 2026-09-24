@@ -1,10 +1,10 @@
 # One-sub-tool
 
-**One-sub-tool v1.2.0** là công cụ cá nhân chạy local trên Windows để trích xuất, chỉnh sửa, dịch phụ đề và tạo thuyết minh cho video.
+**One-sub-tool v2.0.0** là công cụ cá nhân chạy local trên Windows để trích xuất, chỉnh sửa, dịch phụ đề và tạo thuyết minh cho video.
 
 Xem tài liệu tiếng Anh tại [README.md](README.md).
 
-## Điểm mới trong v1.2.0
+## Điểm mới trong v2.0.0
 
 - Tự phát hiện model Gemini và kiểm tra model có hoạt động hay không.
 - Có thể chọn Whisper local cho bước trích xuất phụ đề.
@@ -16,6 +16,7 @@ Xem tài liệu tiếng Anh tại [README.md](README.md).
 - Dán nguyên văn nội dung chia sẻ Douyin, hệ thống tự trích xuất URL.
 - Tải Douyin theo chuỗi dự phòng native → yt-dlp → Chromium tạm thời.
 - Lưu cache và audio local, không cần server công khai.
+- Trình chỉnh nội dung đọc TTS: nhấn Enter để tách câu đọc, giữ nguyên timestamp phụ đề; các phần được tạo rồi nối thành một audio duy nhất, tránh chồng tiếng.
 
 ## Kiến trúc local
 
