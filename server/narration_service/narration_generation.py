@@ -17,40 +17,6 @@ logger = logging.getLogger(__name__)
 # Create blueprint for generation routes
 generation_bp = Blueprint('narration_generation', __name__)
 
-
-def _tts_parts(subtitle):
-    raw_text = str(subtitle.get('text', '') or '').strip()
-    raw_parts = subtitle.get('tts_parts') or re.split(r'\r?\n', raw_text)
-    return [
-        re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', str(part or '')).strip()
-        for part in raw_parts
-        if str(part or '').strip()
-    ]
-
-
-def _concatenate_wav_files(input_paths, output_path):
-    """Concatenate generated WAV parts while preserving one canonical subtitle file."""
-    import numpy as np
-    import soundfile as sf
-
-    if not input_paths:
-        raise ValueError('No generated audio parts to concatenate')
-    if len(input_paths) == 1:
-        os.replace(input_paths[0], output_path)
-        return
-
-    chunks = []
-    sample_rate = None
-    for input_path in input_paths:
-        audio, current_rate = sf.read(input_path, always_2d=True)
-        if sample_rate is None:
-            sample_rate = current_rate
-        if current_rate != sample_rate:
-            raise ValueError(f'Incompatible sample rates in TTS parts: {current_rate} != {sample_rate}')
-        chunks.append(audio)
-
-    sf.write(output_path, np.concatenate(chunks, axis=0), sample_rate, format='WAV')
-
 @generation_bp.route('/generate', methods=['POST', 'HEAD'])
 def generate_narration():
     """Generate narration for subtitles using F5-TTS (Streaming Response)"""
@@ -130,8 +96,7 @@ def generate_narration():
             try:
                 for i, subtitle in enumerate(subtitles):
                     subtitle_id = subtitle.get('id', f"index_{i}") # Use index if ID missing
-                    parts = _tts_parts(subtitle)
-                    text = '\n'.join(parts)
+                    text = subtitle.get('text', '').strip()
                     processed_count += 1
 
                     # --- Send Progress Update ---
@@ -148,7 +113,7 @@ def generate_narration():
                     }
                     yield f"data: {json.dumps(progress_data)}\n\n"
 
-                    if not parts:
+                    if not text:
 
                         result = {'subtitle_id': subtitle_id, 'text': '', 'success': True, 'skipped': True}
                         results.append(result)
@@ -160,14 +125,39 @@ def generate_narration():
                     # Language mismatch check removed per user request
 
                     # --- Prepare for Generation ---
+                    # Ensure the subtitle directory exists
                     subtitle_dir = ensure_subtitle_directory(subtitle_id, generation_id)
+
+                    # Get the next file number for this subtitle
                     file_number = get_next_file_number(subtitle_dir)
+
+                    # Generate a filename with sequential numbering
                     filename = f"{file_number}.wav"
+
+                    # Full path includes the subtitle directory - use forward slashes for URLs
                     safe_generation_id = re.sub(r'[^A-Za-z0-9_-]+', '_', str(generation_id)).strip('._-')
                     full_filename = f"{safe_generation_id}/subtitle_{subtitle_id}/{filename}"
                     output_path = os.path.join(subtitle_dir, filename)
+
                     logger.debug(f"Generating narration audio for subtitle {subtitle_id}, output path: {output_path}")
+
+                    # Clean text: Remove control characters, ensure UTF-8
+                    cleaned_text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+                    # Ensure string type and UTF-8 encoding (though F5TTS might handle bytes too)
+                    # cleaned_text = cleaned_text.encode('utf-8').decode('utf-8')
+                    # Ensure reference text is also clean string
                     cleaned_ref_text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', reference_text or "")
+                    # cleaned_ref_text = cleaned_ref_text.encode('utf-8').decode('utf-8')
+
+                    # Log parameters clearly before calling infer
+                    log_params = {
+                        'ref_file': reference_audio, 'ref_text': cleaned_ref_text, 'gen_text': cleaned_text,
+                        'file_wave': output_path, 'remove_silence': remove_silence, 'speed': speed,
+                        'nfe_step': nfe_step, 'sway_sampling_coef': sway_coef, 'cfg_strength': cfg_strength, 'seed': seed
+                    }
+
+                    logger.debug(f"Infer params: { {k: v for k, v in log_params.items() if k not in ['ref_text', 'gen_text']} }") # Avoid logging long texts at debug
+
 
                     # --- Send Generating Update ---
                     generating_data = {
@@ -182,33 +172,19 @@ def generate_narration():
 
                     # --- Perform Inference ---
                     try:
+                        # Use the loaded model instance
+                        # Ensure device context if needed (though F5TTS internal handling might suffice)
                         from .narration_config import device
                         context_manager = torch.cuda.device(device) if device.startswith("cuda") and torch.cuda.is_available() else torch.device(device)
-                        part_paths = []
-                        cleaned_parts = []
-                        for part_index, part in enumerate(parts, start=1):
-                            cleaned_part = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', part)
-                            part_path = os.path.join(subtitle_dir, f"{file_number}_part_{part_index}.wav")
-                            log_params = {
-                                'ref_file': reference_audio, 'ref_text': cleaned_ref_text, 'gen_text': cleaned_part,
-                                'file_wave': part_path, 'remove_silence': remove_silence, 'speed': speed,
-                                'nfe_step': nfe_step, 'sway_sampling_coef': sway_coef, 'cfg_strength': cfg_strength, 'seed': seed
-                            }
-                            logger.debug(f"Infer params for subtitle {subtitle_id}, part {part_index}: { {k: v for k, v in log_params.items() if k not in ['ref_text', 'gen_text']} }")
-                            with context_manager:
-                                tts_model_instance.infer(**log_params)
-                            if not os.path.exists(part_path):
-                                raise FileNotFoundError(f'TTS did not create expected audio file: {part_path}')
-                            part_paths.append(part_path)
-                            cleaned_parts.append(cleaned_part)
+                        with context_manager:
+                             tts_model_instance.infer(**log_params)
 
-                        _concatenate_wav_files(part_paths, output_path)
+
                         result = {
                             'subtitle_id': subtitle_id,
-                            'text': '\n'.join(cleaned_parts),
-                            'tts_parts': cleaned_parts,
+                            'text': cleaned_text, # Return the cleaned text used for generation
                             'audio_path': output_path,
-                            'filename': full_filename,
+                            'filename': full_filename, # Return the path relative to OUTPUT_AUDIO_DIR
                             'success': True
                         }
                         results.append(result)
@@ -219,12 +195,11 @@ def generate_narration():
 
                     except Exception as infer_error:
                         # Log the specific error and the text that caused it
-                        logger.error(f"Error generating narration for subtitle ID {subtitle_id} with text '{text[:100]}...': {infer_error}", exc_info=True) # Log stack trace
+                        logger.error(f"Error generating narration for subtitle ID {subtitle_id} with text '{cleaned_text[:100]}...': {infer_error}", exc_info=True) # Log stack trace
                         error_message = f"{type(infer_error).__name__}: {str(infer_error)}"
                         result = {
                             'subtitle_id': subtitle_id,
-                            'text': text,
-                            'tts_parts': parts,
+                            'text': cleaned_text,
                             'error': error_message,
                             'success': False
                         }

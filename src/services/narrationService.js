@@ -670,30 +670,6 @@ export const getAudioUrl = (filename) => {
 };
 
 /**
- * Concatenate multiple TTS parts into one audio artifact for a subtitle.
- * Subtitle timing remains unchanged; only the narration waveform is joined.
- */
-export const concatenateNarrationAudio = async (filenames, subtitleId, generationId) => {
-  const response = await fetch(`${API_BASE_URL}/narration/concat-audio`, {
-    method: 'POST',
-    mode: 'cors',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      filenames,
-      subtitle_id: subtitleId,
-      generation_id: generationId
-    })
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.success || !data.filename) {
-    throw new Error(data.error || `Failed to concatenate narration audio (${response.status})`);
-  }
-  return data.filename;
-};
-
-/**
  * Get list of example audio files
  * @returns {Promise<Object>} - List of example audio files
  */

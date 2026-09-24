@@ -111,9 +111,6 @@ router.post('/save-f5tts-audio', express.json({ limit: '10mb' }), narrationContr
 // Save Chatterbox audio data to disk
 router.post('/save-chatterbox-audio', express.json({ limit: '10mb' }), narrationController.saveChatterboxAudio);
 
-// Concatenate multiple TTS parts for one subtitle into one canonical audio file
-router.post('/concat-audio', express.json(), narrationController.concatenateNarrationAudio);
-
 // Modify audio speed
 router.post('/modify-audio-speed', express.json(), narrationController.modifyAudioSpeed);
 
@@ -134,7 +131,7 @@ router.use('/', async (req, res, next) => {
   // Skip endpoints we handle directly
   if (req.url === '/status' || req.url === '/download-all' || req.url === '/download-aligned' ||
       req.url === '/generate' || req.url === '/record-reference' || req.url === '/upload-reference' ||
-      req.url === '/preview' || req.url === '/concat-audio' ||
+      req.url === '/preview' ||
       req.url === '/clear-output' || req.url === '/save-gemini-audio' ||
       req.url === '/save-f5tts-audio' || req.url === '/save-chatterbox-audio' || req.url === '/modify-audio-speed' ||
       req.url === '/batch-modify-audio-speed' || req.url.startsWith('/audio/') ||

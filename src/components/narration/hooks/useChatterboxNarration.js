@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 import { generateChatterboxSpeech, checkChatterboxAvailability, isChatterboxServiceInitialized } from '../../../services/chatterboxService';
-import { concatenateNarrationAudio } from '../../../services/narrationService';
 import { SERVER_URL } from '../../../config';
 
 // Import cleanup function
@@ -203,37 +202,24 @@ const useChatterboxNarration = ({
         total
       }));
 
-      const ttsParts = Array.isArray(subtitle.ttsParts) && subtitle.ttsParts.length > 0
-        ? subtitle.ttsParts
-        : String(subtitle.text || '').split(/\r?\n/).map(part => part.trim()).filter(Boolean);
-      if (ttsParts.length === 0) {
-        throw new Error('Subtitle has no text for TTS generation');
-      }
+      const audioBlob = await generateChatterboxSpeech(
+        subtitle.text,
+        exaggeration,
+        cfgWeight,
+        voiceFile,
+        voiceFilePath,
+        referenceAudio?.text || referenceText || '',
+        omnivoiceMode,
+        omnivoiceInstruct,
+        subtitleSource === 'translated' ? translatedLanguage : originalLanguage
+      );
 
-      const partFilenames = [];
-      for (const part of ttsParts) {
-        const audioBlob = await generateChatterboxSpeech(
-          part,
-          exaggeration,
-          cfgWeight,
-          voiceFile,
-          voiceFilePath,
-          referenceAudio?.text || referenceText || '',
-          omnivoiceMode,
-          omnivoiceInstruct,
-          subtitleSource === 'translated' ? translatedLanguage : originalLanguage
-        );
-        partFilenames.push(await saveAudioBlobToServer(audioBlob, subtitle.id || index, generationId));
-      }
-
-      const filename = partFilenames.length > 1
-        ? await concatenateNarrationAudio(partFilenames, subtitle.id || index, generationId)
-        : partFilenames[0];
+      // Save audio blob to server and get filename
+      const filename = await saveAudioBlobToServer(audioBlob, subtitle.id || index, generationId);
 
       return {
         subtitle_id: subtitle.id || index,
-        text: ttsParts.join('\n'),
-        tts_parts: ttsParts,
+        text: subtitle.text,
         start_time: subtitle.start,
         end_time: subtitle.end,
         filename: filename,

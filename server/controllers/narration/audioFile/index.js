@@ -10,7 +10,6 @@ const batchProcessor = require('./batchProcessor');
 const zipAudio = require('./zipAudio');
 const enhancer = require('./enhancer');
 const speedModifier = require('./speedModifier');
-const concatAudio = require('./concatAudio');
 
 // Export all functions
 module.exports = {
@@ -31,9 +30,6 @@ module.exports = {
   // Audio speed modification
   modifyAudioSpeed: speedModifier.modifyAudioSpeed,
   batchModifyAudioSpeed: speedModifier.batchModifyAudioSpeed,
-
-  // Concatenate TTS parts while preserving one subtitle artifact
-  concatenateNarrationAudio: concatAudio.concatenateNarrationAudio,
 
   // Utility functions
   enhanceF5TTSNarrations: enhancer.enhanceF5TTSNarrations

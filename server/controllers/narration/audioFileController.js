@@ -28,10 +28,6 @@ const {
   batchModifyAudioSpeed
 } = require('./audioFile/speedModifier');
 
-const {
-  concatenateNarrationAudio
-} = require('./audioFile/concatAudio');
-
 // Export all functions
 module.exports = {
   serveAudioFile,
@@ -39,6 +35,5 @@ module.exports = {
   downloadAllAudio,
   enhanceF5TTSNarrations,
   modifyAudioSpeed,
-  batchModifyAudioSpeed,
-  concatenateNarrationAudio
+  batchModifyAudioSpeed
 };
