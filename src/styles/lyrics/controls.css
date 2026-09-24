@@ -24,6 +24,54 @@
   color: var(--md-on-primary-container);
 }
 
+.subtitle-search-replace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--md-outline-variant);
+  flex-wrap: wrap;
+}
+
+.subtitle-search-replace input[type='search'],
+.subtitle-search-replace input[type='text'] {
+  min-width: 150px;
+  flex: 1 1 180px;
+  padding: 7px 10px;
+  border: 1px solid var(--md-outline);
+  border-radius: var(--md-shape-small);
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+}
+
+.subtitle-search-replace label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--md-on-surface-variant);
+  font-size: var(--md-label-small-size);
+  white-space: nowrap;
+}
+
+.subtitle-search-replace button {
+  border: 1px solid var(--md-primary);
+  border-radius: var(--md-shape-pill);
+  padding: 7px 12px;
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  cursor: pointer;
+}
+
+.subtitle-search-replace button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.subtitle-replace-result {
+  color: var(--md-on-surface-variant);
+  font-size: var(--md-label-small-size);
+}
+
 /* Material Design 3 editing controls */
 .editing-controls {
   display: flex;

@@ -310,6 +310,11 @@ const OutputContainer = ({
             subtitles={editedLyrics || subtitlesData}
             videoTitle={selectedVideo?.title || uploadedFile?.name?.replace(/\.[^/.]+$/, '') || 'subtitles'}
             onTranslationComplete={setTranslatedSubtitles}
+            currentTime={currentTabIndex}
+            duration={videoDuration}
+            onLyricClick={handleLyricClick}
+            onTranslatedSubtitlesUpdate={handleUpdateTranslatedLyrics}
+            onSaveTranslatedSubtitles={handleSaveSubtitles}
           />
 
           {/* Unified Narration Section - Now separate from Translation */}

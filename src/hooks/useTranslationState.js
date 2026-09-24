@@ -638,6 +638,7 @@ export const useTranslationState = (subtitles, onTranslationComplete) => {
   return {
     isTranslating,
     translatedSubtitles,
+    setTranslatedSubtitles,
     error,
     translationStatus,
     selectedModel,

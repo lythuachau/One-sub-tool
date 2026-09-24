@@ -36,10 +36,8 @@ const VirtualizedLyricRow = ({ index, style, data }) => {
     onLyricClick,
     onMouseDown,
     getLastDragEnd,
-    onDelete,
     onTextEdit,
     onSplitLyric,
-    onInsert,
     onMerge,
     timeFormat
   } = data;
@@ -60,10 +58,8 @@ const VirtualizedLyricRow = ({ index, style, data }) => {
         onLyricClick={onLyricClick}
         onMouseDown={onMouseDown}
         getLastDragEnd={getLastDragEnd}
-        onDelete={onDelete}
         onTextEdit={onTextEdit}
         onSplitLyric={onSplitLyric}
-        onInsert={onInsert}
         onMerge={onMerge}
         hasNextLyric={hasNextLyric}
         timeFormat={timeFormat}
@@ -83,6 +79,7 @@ const LyricsDisplay = ({
   timeFormat = 'seconds',
   onSaveSubtitles = null, // New callback for when subtitles are saved
   onUpdateTranslatedLyrics = null,
+  persistToCache = true,
   videoSource = null, // Video source URL for audio analysis
   translatedSubtitles = null, // Translated subtitles
   videoTitle = 'subtitles' // Video title for download filenames
@@ -110,6 +107,10 @@ const LyricsDisplay = ({
   const rowHeights = useRef({});
   const [txtContent, setTxtContent] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [replacementText, setReplacementText] = useState('');
+  const [caseSensitiveSearch, setCaseSensitiveSearch] = useState(false);
+  const [replaceResult, setReplaceResult] = useState('');
   const [splitDuration, setSplitDuration] = useState(() => {
     // Get the split duration from localStorage or use default (0 = no split)
     return parseInt(localStorage.getItem('consolidation_split_duration') || '0');
@@ -288,9 +289,8 @@ const LyricsDisplay = ({
     endDrag,
     isDragging,
     getLastDragEnd,
-    handleDeleteLyric,
     handleTextEdit,
-    handleInsertLyric,
+    handleReplaceAll,
     handleMergeLyrics,
     updateSavedLyrics,
     handleSplitSubtitles,
@@ -320,6 +320,11 @@ const LyricsDisplay = ({
   const handleSourceChange = (source) => {
     if (source === 'translated' && !hasTranslatedSubtitles) return;
     setEditingSource(source);
+  };
+
+  const handleReplaceClick = () => {
+    const count = handleReplaceAll(searchText, replacementText, caseSensitiveSearch);
+    setReplaceResult(count > 0 ? `${count} ${t('lyrics.replacements', 'thay thế')}` : t('lyrics.noMatches', 'Không tìm thấy'));
   };
 
   // Reference to the virtualized list
@@ -598,7 +603,7 @@ const LyricsDisplay = ({
   // Function to save current subtitles to cache
   const handleSave = async () => {
     try {
-      if (editingSource === 'translated') {
+      if (editingSource === 'translated' || !persistToCache) {
         updateSavedLyrics();
         onSaveSubtitles?.(lyrics, editingSource);
         return;
@@ -761,6 +766,45 @@ const LyricsDisplay = ({
           </button>
         </div>
       )}
+      {allowEditing && (
+        <div className="subtitle-search-replace" role="search">
+          <input
+            type="search"
+            value={searchText}
+            onChange={event => {
+              setSearchText(event.target.value);
+              setReplaceResult('');
+            }}
+            placeholder={t('lyrics.findText', 'Tìm text')}
+            aria-label={t('lyrics.findText', 'Tìm text')}
+          />
+          <input
+            type="text"
+            value={replacementText}
+            onChange={event => {
+              setReplacementText(event.target.value);
+              setReplaceResult('');
+            }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') handleReplaceClick();
+            }}
+            placeholder={t('lyrics.replaceWith', 'Thay thế bằng')}
+            aria-label={t('lyrics.replaceWith', 'Thay thế bằng')}
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={caseSensitiveSearch}
+              onChange={event => setCaseSensitiveSearch(event.target.checked)}
+            />
+            {t('lyrics.caseSensitive', 'Phân biệt hoa thường')}
+          </label>
+          <button type="button" onClick={handleReplaceClick} disabled={!searchText}>
+            {t('lyrics.replaceAll', 'Thay tất cả')}
+          </button>
+          {replaceResult && <span className="subtitle-replace-result">{replaceResult}</span>}
+        </div>
+      )}
       <div className="controls-timeline-container">
         <LyricsHeader
           allowEditing={allowEditing}
@@ -824,10 +868,8 @@ const LyricsDisplay = ({
               },
               onMouseDown: handleMouseDown,
               getLastDragEnd,
-              onDelete: handleDeleteLyric,
               onTextEdit: handleTextEdit,
               onSplitLyric: handleSplitLyric,
-              onInsert: handleInsertLyric,
               onMerge: handleMergeLyrics,
               timeFormat
             }}
@@ -841,7 +883,7 @@ const LyricsDisplay = ({
         {allowEditing && (
           <div className="help-text">
             <p dangerouslySetInnerHTML={{
-              __html: t('lyrics.timingInstructions', 'Hiện có ??? dòng phụ đề. Bấm trực tiếp vào nội dung để sửa; đặt con trỏ rồi nhấn Enter để tách thành dòng mới. Kéo dấu thời gian để điều chỉnh thời gian cho mỗi phụ đề. Chế độ "Dính" sẽ điều chỉnh tất cả phụ đề theo sau. Chế độ "Cuộn" sẽ giúp tự dời tầm nhìn lên dòng sub đang chạy. 5 nút còn lại: Chia nhỏ sub, Lưu, Đặt lại, Hoàn tác, Làm lại')
+              __html: t('lyrics.timingInstructions', 'Hiện có ??? dòng phụ đề. Bấm trực tiếp vào nội dung để sửa; đặt con trỏ rồi nhấn Enter để tách thành dòng mới, nhấn Backspace ở đầu câu để gộp với câu trước. Dùng thanh tìm kiếm để thay thế text thủ công. Kéo dấu thời gian để điều chỉnh thời gian cho mỗi phụ đề. Chế độ "Dính" sẽ điều chỉnh tất cả phụ đề theo sau. Chế độ "Cuộn" sẽ giúp tự dời tầm nhìn lên dòng sub đang chạy. 5 nút còn lại: Chia nhỏ sub, Lưu, Đặt lại, Hoàn tác, Làm lại')
                 .replace('??? dòng', `<strong>${lyrics.length} dòng</strong>`)
                 .replace('??? subtitle lines', `<strong>${lyrics.length} subtitle lines</strong>`)
                 .replace('???개의 자막 라인', `<strong>${lyrics.length}개의 자막 라인</strong>`)

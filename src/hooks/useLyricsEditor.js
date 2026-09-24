@@ -361,6 +361,34 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics, sourceKey = 'defa
     showTranslationWarning('You have edited the text of original subtitles. Translations may be outdated. Please translate again.');
   };
 
+  const handleReplaceAll = (searchText, replacementText, caseSensitive = false) => {
+    const query = String(searchText ?? '');
+    if (!query) return 0;
+
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const matcher = new RegExp(escapedQuery, caseSensitive ? 'g' : 'gi');
+    let replacementCount = 0;
+    const updatedLyrics = lyrics.map(lyric => {
+      const text = String(lyric.text ?? '');
+      const matches = text.match(matcher);
+      if (!matches) return lyric;
+
+      replacementCount += matches.length;
+      return { ...lyric, text: text.replace(matcher, replacementText) };
+    });
+
+    if (replacementCount === 0) return 0;
+
+    setHistory(prevHistory => [...prevHistory, JSON.parse(JSON.stringify(lyrics))]);
+    setRedoStack([]);
+    setLyrics(updatedLyrics);
+    if (onUpdateLyrics) {
+      onUpdateLyrics(updatedLyrics);
+    }
+    showTranslationWarning('You have replaced text in the subtitles. Review the narration before generating it.');
+    return replacementCount;
+  };
+
   const handleSplitLyric = (index, cursorPosition, textOverride) => {
     const updatedLyrics = splitSubtitleAtCursor(lyrics, index, cursorPosition, textOverride);
     if (updatedLyrics === lyrics) return false;
@@ -512,10 +540,14 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics, sourceKey = 'defa
 
     // Create a new merged lyric
     const mergedLyric = {
+      ...currentLyric,
       text: `${currentLyric.text} ${nextLyric.text}`.trim(),
       start: currentLyric.start,
-      end: nextLyric.end
+      end: nextLyric.end,
+      merged_from: [currentLyric.id ?? index, nextLyric.id ?? index + 1]
     };
+    if (currentLyric.startTime !== undefined) mergedLyric.startTime = currentLyric.startTime;
+    if (nextLyric.endTime !== undefined) mergedLyric.endTime = nextLyric.endTime;
 
     // Create updated lyrics array with the merged lyric
     const updatedLyrics = [
@@ -590,6 +622,7 @@ export const useLyricsEditor = (initialLyrics, onUpdateLyrics, sourceKey = 'defa
     getLastDragEnd,
     handleDeleteLyric,
     handleTextEdit,
+    handleReplaceAll,
     handleSplitLyric,
     handleInsertLyric,
     handleMergeLyrics,

@@ -29,7 +29,16 @@ import '../../styles/translation/languageChain.css';
  * @param {Function} props.onTranslationComplete - Callback when translation is complete
  * @returns {JSX.Element} - Rendered component
  */
-const TranslationSection = ({ subtitles, videoTitle, onTranslationComplete }) => {
+const TranslationSection = ({
+  subtitles,
+  videoTitle,
+  onTranslationComplete,
+  currentTime = 0,
+  duration = 0,
+  onLyricClick,
+  onTranslatedSubtitlesUpdate,
+  onSaveTranslatedSubtitles
+}) => {
   const { t } = useTranslation();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [txtContent, setTxtContent] = useState(null);
@@ -64,6 +73,7 @@ const TranslationSection = ({ subtitles, videoTitle, onTranslationComplete }) =>
   const {
     isTranslating,
     translatedSubtitles,
+    setTranslatedSubtitles,
     error,
     translationStatus,
     selectedModel,
@@ -92,6 +102,11 @@ const TranslationSection = ({ subtitles, videoTitle, onTranslationComplete }) =>
     handleBulkFileRemoval,
     handleBulkFilesRemovalAll
   } = useTranslationState(subtitles, onTranslationComplete);
+
+  const handleTranslatedSubtitlesUpdate = (updatedSubtitles) => {
+    setTranslatedSubtitles(updatedSubtitles);
+    onTranslatedSubtitlesUpdate?.(updatedSubtitles);
+  };
 
   // Initialize container height on component mount
   useEffect(() => {
@@ -601,6 +616,12 @@ const TranslationSection = ({ subtitles, videoTitle, onTranslationComplete }) =>
             translatedSubtitles={translatedSubtitles}
             targetLanguages={targetLanguages}
             loadedFromCache={loadedFromCache}
+            currentTime={currentTime}
+            duration={duration}
+            onLyricClick={onLyricClick}
+            onUpdateLyrics={handleTranslatedSubtitlesUpdate}
+            onSaveSubtitles={onSaveTranslatedSubtitles || handleTranslatedSubtitlesUpdate}
+            videoTitle={videoTitle}
           />
         )}
 
