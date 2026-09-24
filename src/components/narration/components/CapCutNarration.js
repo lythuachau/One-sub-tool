@@ -26,7 +26,17 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
       method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}), signal
     });
-    const result = await response.json();
+    const contentType = response.headers.get('content-type') || '';
+    const raw = await response.text();
+    let result;
+    try {
+      result = JSON.parse(raw);
+    } catch (error) {
+      const hint = response.status === 404
+        ? ' Backend chưa nạp route CapCut; hãy khởi động lại bằng npm run dev:cuda.'
+        : '';
+      throw new Error(`CapCut API trả về dữ liệu không phải JSON (HTTP ${response.status}, ${contentType}).${hint}`);
+    }
     if (!response.ok || result.error) throw new Error(result.error || `CapCut HTTP ${response.status}`);
     return result;
   };
