@@ -6,7 +6,7 @@ import NarrationResults from './NarrationResults';
 
 export default function CapCutNarration({ children, getSubtitles, subtitleSource, isGenerating,
   setIsGenerating, generationResults, setGenerationResults, downloadAllAudio, downloadAlignedAudio,
-  currentAudio, isPlaying, playAudio, useGroupedSubtitles }) {
+  currentAudio, isPlaying, playAudio, useGroupedSubtitles, audioRef, handleAudioEnded }) {
   const [voices, setVoices] = useState([]);
   const [language, setLanguage] = useState('vi-VN');
   const [voice, setVoice] = useState(() => localStorage.getItem('capcut_voice') || 'BV421_vivn_streaming');
@@ -147,5 +147,6 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
       onRetryFailed={() => generate(generationResults.filter(r => !r.success).map(r => r.subtitle_id))}
       hasGenerationError={generationResults.some(r => !r.success)} currentAudio={currentAudio}
       isPlaying={isPlaying} playAudio={playAudio} getAudioUrl={getAudioUrl} subtitleSource={subtitleSource} />
+    <audio ref={audioRef} src={currentAudio?.url} onEnded={handleAudioEnded} style={{ display: 'none' }} />
   </div>;
 }

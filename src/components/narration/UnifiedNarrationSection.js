@@ -503,7 +503,7 @@ const UnifiedNarrationSection = ({
           generationResults={generationResults} setGenerationResults={setGenerationResults}
           downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
           currentAudio={currentAudio} isPlaying={isPlaying} playAudio={playAudio}
-          useGroupedSubtitles={useGroupedSubtitles}>
+          useGroupedSubtitles={useGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}>
           <SubtitleSourceSelection
             subtitleSource={subtitleSource}
             setSubtitleSource={setSubtitleSource}
