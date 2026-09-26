@@ -1,6 +1,6 @@
 {
   "name": "one-sub-tool",
-  "version": "2.2.2",
+  "version": "3.0.0-alpha.1",
   "description": "One-sub-tool: local video subtitle translation and narration with Gemini, Whisper, VieNeu-TTS, and OmniVoice",
   "homepage": "./",
   "scripts": {
