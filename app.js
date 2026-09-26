@@ -30,7 +30,6 @@ const downloadOnlyRoutes = require('./server/routes/downloadOnlyRoutes');
 const diagnosticsRoutes = require('./server/routes/diagnostics');
 const subtitleEngineRoutes = require('./server/routes/subtitleEngineRoutes');
 const videoRendererRoutes = require('./server/routes/videoRendererRoutes');
-const { scanModels } = require('./server/utils/scan-models');
 
 // Initialize Express app
 const app = express();
@@ -356,30 +355,5 @@ app.use('/api/test', testAudioRoute);
 app.use('/api/diagnostics', diagnosticsRoutes);
 app.use('/api', subtitleEngineRoutes);
 app.use('/api/video-renderer', videoRendererRoutes);
-
-// Simple model scanning endpoint - no Python bullshit!
-app.post('/api/scan-models', async (req, res) => {
-  try {
-    const success = scanModels();
-
-    if (success) {
-      res.json({
-        success: true,
-        message: 'Models scanned successfully'
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: 'Failed to scan models'
-      });
-    }
-  } catch (error) {
-    console.error('Error scanning models:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 module.exports = app;

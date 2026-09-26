@@ -51,11 +51,10 @@ function validateCorsConfiguration() {
   
   const configFiles = [
     'server/config/corsConfig.js',
-    'server/config/cors_config.py',
     'app.js',
     'video-renderer/server/src/index.ts',
-    'chatterbox-fastapi/api.py',
-    'server/narrationApp.py'
+    'server/tts_service/vieneu_service.py',
+    'server/tts_service/omnivoice_service.py'
   ];
   
   let allValid = true;
@@ -94,12 +93,12 @@ function displayCorsConfigSummary() {
   console.log('\n🔧 Services with CORS configuration:');
   console.log('   • Express Server (Backend) - Port', PORTS.BACKEND);
   console.log('   • Video Renderer - Port', PORTS.VIDEO_RENDERER);
-  console.log('   • Narration Service (Flask) - Port', PORTS.NARRATION);
-  console.log('   • Chatterbox Service (FastAPI) - Port', PORTS.CHATTERBOX);
+  console.log('   • VieNeu-TTS Service (Flask) - Port', PORTS.NARRATION);
+  console.log('   • OmniVoice Service (Flask) - Port', PORTS.CHATTERBOX);
   
   console.log('\n📝 Configuration Files:');
   console.log('   • server/config/corsConfig.js (Node.js services)');
-  console.log('   • server/config/cors_config.py (Python services)');
+  console.log('   • server/tts_service/*.py (local narration services)');
   
   console.log('\n🚀 To test CORS configuration:');
   console.log('   1. Start all services: npm run dev:cuda');

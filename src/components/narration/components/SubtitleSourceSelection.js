@@ -1,18 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import MaterialSwitch from '../../common/MaterialSwitch';
-import CloseButton from '../../common/CloseButton';
 import '../../../styles/common/material-switch.css';
 import { detectSubtitleLanguage } from '../../../services/gemini/languageDetectionService';
-import {
-  getAvailableModels,
-  MODEL_LIST_CHANGED_EVENT
-} from '../../../services/modelAvailabilityService';
-import { FiChevronDown, FiRefreshCw } from 'react-icons/fi';
-import '../../../styles/narration/modelDropdown.css';
+import { FiRefreshCw } from 'react-icons/fi';
 import '../../../styles/narration/languageBadges.css';
-import '../../../styles/narration/narrationModelDropdown.css';
-import '../../../styles/ModelDropdown.css';
 import '../../../styles/narration/subtitleSourceSelectionMaterial.css';
 import SubtitleGroupingModal from './SubtitleGroupingModal';
 
@@ -53,8 +45,7 @@ const SubtitleSourceSelection = ({
   isGroupingSubtitles = false,
   groupedSubtitles = null,
   groupingIntensity = 'moderate',
-  setGroupingIntensity = () => {},
-  narrationMethod = 'f5tts'
+  setGroupingIntensity = () => {}
 }) => {
   const { t } = useTranslation();
   const hasTranslatedSubtitles = translatedSubtitles && translatedSubtitles.length > 0;
@@ -162,46 +153,6 @@ const SubtitleSourceSelection = ({
   // State for language detection
   const [isDetectingOriginal, setIsDetectingOriginal] = useState(false);
   const [isDetectingTranslated, setIsDetectingTranslated] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(null);
-  const [modelError, setModelError] = useState(null);
-  const [isCheckingModel, setIsCheckingModel] = useState(false);
-  const [availableModels, setAvailableModels] = useState([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [isModelModalOpen, setIsModelModalOpen] = useState(false);
-  const [userHasManuallySelectedModel, setUserHasManuallySelectedModel] = useState(false);
-
-  // Load available models
-  useEffect(() => {
-    const loadModels = async () => {
-      setIsLoadingModels(true);
-      try {
-        const { models } = await getAvailableModels();
-        setAvailableModels(models || []);
-      } catch (error) {
-        console.error('Error loading models:', error);
-        setAvailableModels([]);
-      } finally {
-        setIsLoadingModels(false);
-      }
-    };
-
-    // Load models initially
-    loadModels();
-
-    // Listen for model list changes
-    const handleModelListChanged = () => {
-
-      loadModels();
-    };
-
-    // Add event listener
-    window.addEventListener(MODEL_LIST_CHANGED_EVENT, handleModelListChanged);
-
-    // Clean up event listener
-    return () => {
-      window.removeEventListener(MODEL_LIST_CHANGED_EVENT, handleModelListChanged);
-    };
-  }, []);
 
   // Detect changes in translated subtitles
   useEffect(() => {
@@ -215,10 +166,6 @@ const SubtitleSourceSelection = ({
       detectSubtitleLanguage(translatedSubtitles, 'translated');
     }
   }, [translatedSubtitles, subtitleSource, setTranslatedLanguage]);
-
-  // Handle model modal
-  const openModelModal = () => setIsModelModalOpen(true);
-  const closeModelModal = () => setIsModelModalOpen(false);
 
   // Listen for language detection events
   useEffect(() => {
@@ -303,28 +250,6 @@ const SubtitleSourceSelection = ({
 
   // We're using an inline function for the button click handler
 
-  // Handle model selection
-  const handleModelSelect = (modelId) => {
-    // Close the modal immediately
-    setIsModelModalOpen(false);
-
-    // Set the selected model
-    setSelectedModel(modelId);
-
-    // Mark that user has manually selected a model
-    setUserHasManuallySelectedModel(true);
-
-    // Call the callback with the updated model
-    if (onLanguageDetected) {
-      const currentLanguage = subtitleSource === 'original' ? originalLanguage : translatedLanguage;
-      if (currentLanguage) {
-        onLanguageDetected(subtitleSource, currentLanguage, modelId);
-      }
-    }
-  };
-
-  // We no longer need the handleModelChange function as we're using the new dropdown
-
   // Handle subtitle source change
   const handleSourceChange = async (source) => {
     // Only proceed if the source is different or we don't have language info yet
@@ -333,11 +258,6 @@ const SubtitleSourceSelection = ({
         (source === 'translated' && !translatedLanguage)) {
 
       setSubtitleSource(source);
-      setModelError(null); // Clear any previous errors
-
-      // Reset the manual selection flag when switching subtitle sources
-      // This allows automatic model selection for the new source
-      setUserHasManuallySelectedModel(false);
 
       // Detect language for the selected source
       if (source === 'original' && originalSubtitles && originalSubtitles.length > 0) {
@@ -415,20 +335,6 @@ const SubtitleSourceSelection = ({
     );
   };
 
-  // Helper to render model languages in dropdown
-  const renderModelLanguages = (model) => {
-    // If model has multiple languages
-    if (Array.isArray(model.languages) && model.languages.length > 0) {
-      return `(${model.languages.map(lang => lang.toUpperCase()).join(', ')})`;
-    }
-    // If model has a single language
-    else if (model.language) {
-      return `(${model.language.toUpperCase()})`;
-    }
-    // If no language information is available
-    return '';
-  };
-
   return (
     <>
       <div className="narration-row subtitle-source-row animated-row">
@@ -495,49 +401,6 @@ const SubtitleSourceSelection = ({
               </div>
             </div>
 
-            {/* Model information and error messages */}
-            {isCheckingModel && (
-              <div className="model-checking">
-                <span className="spinner-circle"></span>
-                <span>{t('narration.checkingModelAvailability', 'Checking model availability...')}</span>
-              </div>
-            )}
-
-            {/* VieNeu-TTS and OmniVoice expose fixed local engines; no legacy model picker is needed. */}
-            {narrationMethod !== 'f5tts' && narrationMethod !== 'chatterbox' && narrationMethod !== 'vibi' && narrationMethod !== 'edge-tts' && narrationMethod !== 'gtts' && (
-              <div className="model-dropdown-container narration-model-dropdown-container">
-                <button
-                  className="model-dropdown-btn narration-model-dropdown-btn"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    openModelModal();
-                  }}
-                  title={t('narration.selectNarrationModel', 'Select narration model')}
-                  disabled={isGenerating}
-                >
-                  <span className="model-dropdown-label">{t('narration.narrationModel', 'Model')}:</span>
-                  <span className="model-dropdown-selected">
-                    <span className="model-name">{selectedModel}</span>
-                  </span>
-                  <FiChevronDown size={14} className="dropdown-icon" />
-                </button>
-
-                {modelError && (
-                  <div className="model-error">
-                    <span className="error-icon">⚠️</span>
-                    <span>{modelError}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {modelError && !selectedModel && !isCheckingModel && (
-              <div className="model-error-standalone">
-                <span className="error-icon">⚠️</span>
-                <span>{modelError}</span>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -619,115 +482,6 @@ const SubtitleSourceSelection = ({
           </div>
         </div>
       </div>
-
-      {/* Model Selection Modal */}
-      {isModelModalOpen && (
-        <div className="modal-overlay" onClick={closeModelModal}>
-          <div className="modal-content model-selection-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('narration.selectNarrationModel', 'Select narration model')}</h3>
-              <CloseButton onClick={closeModelModal} variant="modal" size="medium" />
-            </div>
-            <div className="modal-body">
-              {isLoadingModels ? (
-                <div className="loading-animation modal-loading">
-                  <span className="spinner-circle"></span>
-                  <span>{t('narration.loadingModels', 'Loading models...')}</span>
-                </div>
-              ) : availableModels.length > 0 ? (
-                <>
-                  {/* Group 1: Models matching the detected language */}
-                  <div className="model-group">
-                    <div className="model-group-label">
-                      {t('narration.matchingLanguageModels', 'Matching Language')}
-                    </div>
-                    <div className="model-options-grid">
-                      {availableModels
-                        .filter(model => {
-                          const currentLanguageObj = subtitleSource === 'original'
-                            ? originalLanguage
-                            : translatedLanguage;
-
-                          if (!currentLanguageObj) return false;
-
-                          // Get all language codes to check (primary + secondary)
-                          const languagesToCheck = currentLanguageObj.isMultiLanguage &&
-                            Array.isArray(currentLanguageObj.secondaryLanguages) &&
-                            currentLanguageObj.secondaryLanguages.length > 0
-                              ? currentLanguageObj.secondaryLanguages // Use all languages if multi-language
-                              : [currentLanguageObj.languageCode]; // Just use primary language
-
-                          // Check if model supports any of the detected languages
-                          return languagesToCheck.some(langCode =>
-                            model.language === langCode ||
-                            (Array.isArray(model.languages) && model.languages.includes(langCode))
-                          );
-                        })
-                        .map(model => (
-                          <button
-                            key={model.id}
-                            className={`model-option-card ${model.id === selectedModel ? 'selected' : ''}`}
-                            onClick={() => handleModelSelect(model.id)}
-                          >
-                            <div className="model-option-name">{model.id}</div>
-                            <div className="model-option-description">{renderModelLanguages(model)}</div>
-                          </button>
-                        ))
-                      }
-                    </div>
-                  </div>
-
-                  {/* Group 2: All other models */}
-                  <div className="model-group">
-                    <div className="model-group-label">
-                      {t('narration.otherModels', 'Other Models')}
-                    </div>
-                    <div className="model-options-grid">
-                      {availableModels
-                        .filter(model => {
-                          const currentLanguageObj = subtitleSource === 'original'
-                            ? originalLanguage
-                            : translatedLanguage;
-
-                          if (!currentLanguageObj) return true;
-
-                          // Get all language codes to check (primary + secondary)
-                          const languagesToCheck = currentLanguageObj.isMultiLanguage &&
-                            Array.isArray(currentLanguageObj.secondaryLanguages) &&
-                            currentLanguageObj.secondaryLanguages.length > 0
-                              ? currentLanguageObj.secondaryLanguages // Use all languages if multi-language
-                              : [currentLanguageObj.languageCode]; // Just use primary language
-
-                          // Check if model does NOT support any of the detected languages
-                          return !languagesToCheck.some(langCode =>
-                            model.language === langCode ||
-                            (Array.isArray(model.languages) && model.languages.includes(langCode))
-                          );
-                        })
-                        .map(model => (
-                          <button
-                            key={model.id}
-                            className={`model-option-card ${model.id === selectedModel ? 'selected' : ''}`}
-                            onClick={() => handleModelSelect(model.id)}
-                          >
-                            <div className="model-option-name">{model.id}</div>
-                            <div className="model-option-description">{renderModelLanguages(model)}</div>
-                          </button>
-                        ))
-                      }
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="no-models-message">
-                  <div className="model-option-name">{selectedModel}</div>
-                  <div className="model-option-description">{t('narration.noModelsAvailable', 'No other models available')}</div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Subtitle Grouping Comparison Modal */}
       <SubtitleGroupingModal

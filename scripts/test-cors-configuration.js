@@ -131,8 +131,8 @@ async function testAllServices() {
   const services = [
     { name: 'Backend Server', port: PORTS.BACKEND, endpoint: '/api/health' },
     { name: 'Video Renderer', port: PORTS.VIDEO_RENDERER, endpoint: '/health' },
-    { name: 'Narration Service', port: PORTS.NARRATION, endpoint: '/health' },
-    { name: 'Chatterbox Service', port: PORTS.CHATTERBOX, endpoint: '/health' }
+    { name: 'VieNeu-TTS Service', port: PORTS.NARRATION, endpoint: '/health' },
+    { name: 'OmniVoice Service', port: PORTS.CHATTERBOX, endpoint: '/health' }
   ];
   
   const results = [];
