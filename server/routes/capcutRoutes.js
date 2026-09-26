@@ -11,8 +11,13 @@ function execute(req, res, action) {
   if (!fs.existsSync(python)) return res.status(503).json({ error: 'Run npm run setup:capcut first' });
   if (busy) return res.status(429).json({ error: 'CapCut đang xử lý một yêu cầu khác. Hãy chờ rồi thử lại.' });
   const { text, voice } = req.body || {};
-  if (action !== 'voices' && (typeof text !== 'string' || !text.trim() || text.length > 5000 || typeof voice !== 'string')) {
+  const verifyRequest = action === 'verify';
+  const invalidText = typeof text !== 'string' || !text.trim() || text.length > (verifyRequest ? 500 : 5000);
+  if (action === 'synthesize' && (invalidText || typeof voice !== 'string')) {
     return res.status(400).json({ error: 'Văn bản hoặc giọng CapCut không hợp lệ' });
+  }
+  if (verifyRequest && (typeof voice !== 'string' || (typeof text === 'string' && text.length > 500))) {
+    return res.status(400).json({ error: 'Giọng hoặc nội dung kiểm tra CapCut không hợp lệ' });
   }
   busy = true;
   const child = spawn(python, [path.join(root, 'server/tts_service/capcut_worker.py')], {
@@ -20,6 +25,7 @@ function execute(req, res, action) {
     stdio: ['pipe', 'pipe', 'pipe']
   });
   let output = '';
+  let stderr = '';
   let finished = false;
   const cleanup = () => { clearTimeout(timer); busy = false; finished = true; };
   const timer = setTimeout(() => {
@@ -28,7 +34,10 @@ function execute(req, res, action) {
   }, 240000);
   res.on('close', () => { if (!finished) child.kill(); });
   child.stdout.on('data', chunk => { output += chunk.toString(); if (output.length > 2000000) child.kill(); });
-  child.stderr.on('data', () => {});
+  child.stderr.on('data', chunk => {
+    stderr += chunk.toString();
+    if (stderr.length > 12000) stderr = stderr.slice(-12000);
+  });
   child.stdin.on('error', () => {});
   child.on('error', () => {
     cleanup();
@@ -37,16 +46,24 @@ function execute(req, res, action) {
   child.on('close', code => {
     cleanup();
     if (res.destroyed || res.headersSent) return;
+    if (stderr.trim()) console.warn(`[capcut] worker stderr:\n${stderr.trim()}`);
     try {
       const result = JSON.parse(output.trim());
-      res.status(code === 0 ? 200 : 502).json(result);
+      const status = code === 0 ? 200 : result.code === '40402004' ? 422 : 502;
+      res.status(status).json(result);
     } catch {
       res.status(502).json({ error: 'CapCut worker returned an invalid result' });
     }
   });
-  child.stdin.end(JSON.stringify({ action, text, voice }));
+  child.stdin.end(JSON.stringify({
+    action,
+    text,
+    voice,
+    include_unverified: String(req.query?.includeUnverified || '') === 'true',
+  }));
 }
 
 router.get('/voices', (req, res) => execute(req, res, 'voices'));
 router.post('/synthesize', express.json({ limit: '32kb' }), (req, res) => execute(req, res, 'synthesize'));
+router.post('/verify', express.json({ limit: '8kb' }), (req, res) => execute(req, res, 'verify'));
 module.exports = router;

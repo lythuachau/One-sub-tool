@@ -17,6 +17,7 @@ const { startNarrationService } = require('./server/startNarrationService');
 // Import WebSocket progress tracking
 const { initializeProgressWebSocket } = require('./server/services/shared/progressWebSocket');
 const { stopRenderer } = require('./server/services/videoRendererManager');
+const { markStartupPhase } = require('./server/utils/startupMetrics');
 
 // Import port management
 const { killProcessesOnPorts, trackProcess, cleanupTrackingFile } = require('./server/utils/portManager');
@@ -67,6 +68,7 @@ if (isDevCuda) {
       console.log('✅ Narration services startup completed');
       console.log(`📍 VieNeu-TTS service: http://localhost:${NARRATION_PORT}`);
       console.log(`📍 OmniVoice service: http://localhost:${CHATTERBOX_PORT}`);
+      markStartupPhase('tts_processes_spawned');
     } else {
       throw new Error('Failed to start narration services');
     }
@@ -100,9 +102,11 @@ if (isDevCuda) {
 // Start the server with initialization
 async function startServer() {
   await initializeServer();
+  markStartupPhase('backend_initialization_complete');
 
   const server = app.listen(PORT, () => {
     console.log(`🌐 Server running on port ${PORT}`);
+    markStartupPhase('backend_ready', { port: PORT });
 
     // Track the main server process
     trackProcess(PORT, process.pid, 'Express Server');
