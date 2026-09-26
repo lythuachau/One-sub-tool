@@ -18,8 +18,20 @@ const NarrationMethodSelection = ({
   isGenerating,
   isF5Available = true,
   isChatterboxAvailable = true,
+  vieneuStatus = 'unknown',
+  omnivoiceStatus = 'unknown',
+  isVibiAvailable = true,
 }) => {
   const { t } = useTranslation();
+
+  const getStatusDescription = (status, engine) => {
+    if (status === 'loading' || status === 'starting') return '(Đang nạp model...)';
+    if (status === 'error') return '(Lỗi khởi tạo model)';
+    if (status === 'unknown') return '(Đang kiểm tra...)';
+    return engine === 'vieneu'
+      ? '(Không khả dụng - khởi động dịch vụ thuyết minh)'
+      : '(Không khả dụng - khởi động dịch vụ thuyết minh)';
+  };
 
   const handleMethodChange = (method) => {
     if (!isGenerating) {
@@ -51,8 +63,11 @@ const NarrationMethodSelection = ({
                 {t('narration.f5ttsMethod', 'VieNeu-TTS')}
                 {!isF5Available && (
                   <span className="method-description">
-                    {t('narration.f5ttsUnavailable', '(Unavailable - install VieNeu-TTS)')}
+                    {getStatusDescription(vieneuStatus, 'vieneu')}
                   </span>
+                )}
+                {isF5Available && vieneuStatus !== 'ready' && (
+                  <span className="method-description">{getStatusDescription(vieneuStatus, 'vieneu')}</span>
                 )}
               </label>
             </div>
@@ -70,8 +85,11 @@ const NarrationMethodSelection = ({
                 {t('narration.chatterboxMethod', 'OmniVoice')}
                 {!isChatterboxAvailable && (
                   <span className="method-description">
-                    {t('narration.chatterboxUnavailable', '(Unavailable - install OmniVoice)')}
+                    {getStatusDescription(omnivoiceStatus, 'omnivoice')}
                   </span>
+                )}
+                {isChatterboxAvailable && omnivoiceStatus !== 'ready' && (
+                  <span className="method-description">{getStatusDescription(omnivoiceStatus, 'omnivoice')}</span>
                 )}
               </label>
             </div>
@@ -79,6 +97,14 @@ const NarrationMethodSelection = ({
               <input type="radio" id="method-capcut" name="narration-method" value="capcut"
                 checked={narrationMethod === 'capcut'} onChange={() => handleMethodChange('capcut')} disabled={isGenerating} />
               <label htmlFor="method-capcut">CapCut TTS</label>
+            </div>
+            <div className="radio-pill">
+              <input type="radio" id="method-vibi" name="narration-method" value="vibi"
+                checked={narrationMethod === 'vibi'} onChange={() => handleMethodChange('vibi')} disabled={isGenerating || !isVibiAvailable} />
+              <label htmlFor="method-vibi" className={!isVibiAvailable ? 'unavailable' : ''}>
+                Vibi ElevenLabs
+                {!isVibiAvailable && <span className="method-description">(Thêm Vibi API key trong Cài đặt)</span>}
+              </label>
             </div>
           </div>
         </div>

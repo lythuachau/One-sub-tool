@@ -10,11 +10,14 @@ const useNarrationState = (initialReferenceAudio) => {
   const [narrationMethod, setNarrationMethod] = useState(() => {
     const savedMethod = localStorage.getItem('narration_method');
     if (savedMethod === 'capcut') return 'capcut';
+    if (savedMethod === 'vibi') return 'vibi';
     if (savedMethod === 'chatterbox' || savedMethod === 'omnivoice') return 'chatterbox';
     return 'f5tts';
   });
   const [isGeminiAvailable, setIsGeminiAvailable] = useState(true); // Assume Gemini is available by default
   const [isChatterboxAvailable, setIsChatterboxAvailable] = useState(false); // Start as unavailable, will be updated by availability check
+  const [vieneuStatus, setVieneuStatus] = useState('unknown');
+  const [omnivoiceStatus, setOmnivoiceStatus] = useState('unknown');
   const [isCheckingAvailability, setIsCheckingAvailability] = useState(false); // Not using loading state
 
   // Gemini-specific settings
@@ -257,6 +260,10 @@ const useNarrationState = (initialReferenceAudio) => {
     setIsGeminiAvailable,
     isChatterboxAvailable,
     setIsChatterboxAvailable,
+    vieneuStatus,
+    setVieneuStatus,
+    omnivoiceStatus,
+    setOmnivoiceStatus,
     isCheckingAvailability,
     setIsCheckingAvailability,
 

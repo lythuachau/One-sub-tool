@@ -119,9 +119,11 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [youtubeApiKey, setYoutubeApiKey] = useState('');
   const [geniusApiKey, setGeniusApiKey] = useState('');
+  const [vibiApiKey, setVibiApiKey] = useState('');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showYoutubeKey, setShowYoutubeKey] = useState(false);
   const [showGeniusKey, setShowGeniusKey] = useState(false);
+  const [showVibiKey, setShowVibiKey] = useState(false);
   const [useOAuth, setUseOAuth] = useState(false);
   const [youtubeClientId, setYoutubeClientId] = useState('');
   const [youtubeClientSecret, setYoutubeClientSecret] = useState('');
@@ -191,6 +193,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
     geminiApiKey: '',
     youtubeApiKey: '',
     geniusApiKey: '',
+    vibiApiKey: '',
     segmentDuration: 5,
     subtitleEngine: 'gemini',
     geminiModel: 'gemini-flash-latest',
@@ -249,6 +252,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       const savedGeminiKey = getCurrentKey() || '';
       const savedYoutubeKey = localStorage.getItem('youtube_api_key') || '';
       const savedGeniusKey = localStorage.getItem('genius_token') || '';
+      const savedVibiKey = localStorage.getItem('vibi_api_key') || '';
       const savedSegmentDuration = parseInt(localStorage.getItem('segment_duration') || '5');
       const savedSubtitleEngine = localStorage.getItem('subtitle_engine') === 'whisper' ? 'whisper' : 'gemini';
       const savedGeminiModel = localStorage.getItem('gemini_model') || 'gemini-flash-latest';
@@ -292,6 +296,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       setGeminiApiKey(savedGeminiKey);
       setYoutubeApiKey(savedYoutubeKey);
       setGeniusApiKey(savedGeniusKey);
+      setVibiApiKey(savedVibiKey);
       setSegmentDuration(savedSegmentDuration);
       setSubtitleEngine(savedSubtitleEngine);
       setGeminiModel(savedGeminiModel);
@@ -319,6 +324,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
         geminiApiKey: savedGeminiKey,
         youtubeApiKey: savedYoutubeKey,
         geniusApiKey: savedGeniusKey,
+        vibiApiKey: savedVibiKey,
         segmentDuration: savedSegmentDuration,
         subtitleEngine: savedSubtitleEngine,
         geminiModel: savedGeminiModel,
@@ -447,6 +453,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       geminiApiKey !== originalSettings.geminiApiKey ||
       youtubeApiKey !== originalSettings.youtubeApiKey ||
       geniusApiKey !== originalSettings.geniusApiKey ||
+      vibiApiKey !== originalSettings.vibiApiKey ||
       segmentDuration !== originalSettings.segmentDuration ||
       subtitleEngine !== originalSettings.subtitleEngine ||
       geminiModel !== originalSettings.geminiModel ||
@@ -471,12 +478,14 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
   }, [isSettingsLoaded, geminiApiKey, youtubeApiKey, geniusApiKey, segmentDuration, geminiModel, timeFormat, showWaveform,
       segmentOffsetCorrection, subtitleEngine, transcriptionPrompt, useOAuth, youtubeClientId,
       youtubeClientSecret, useVideoAnalysis, videoAnalysisModel, videoAnalysisTimeout, autoSelectDefaultPreset,
-      optimizeVideos, optimizedResolution, useOptimizedPreview, useCookiesForDownload, thinkingBudgets, originalSettings]);
+      optimizeVideos, optimizedResolution, useOptimizedPreview, useCookiesForDownload, thinkingBudgets, originalSettings, vibiApiKey]);
 
   // Handle save button click
   const handleSave = async () => {
     // Save settings to localStorage
     localStorage.setItem('segment_duration', segmentDuration.toString());
+    if (vibiApiKey.trim()) localStorage.setItem('vibi_api_key', vibiApiKey.trim());
+    else localStorage.removeItem('vibi_api_key');
     localStorage.setItem('subtitle_engine', subtitleEngine);
     localStorage.setItem('gemini_model', geminiModel);
     localStorage.setItem('genius_token', geniusApiKey);
@@ -512,6 +521,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
         const key = localStorage.key(i);
         localStorageData[key] = localStorage.getItem(key);
       }
+      delete localStorageData.vibi_api_key;
 
       // Add specific keys for the server
       localStorageData.gemini_token = geminiApiKey;
@@ -536,13 +546,14 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
     }
 
     // Notify parent component about API keys, segment duration, model, time format, and cookie setting
-    onSave(geminiApiKey, youtubeApiKey, geniusApiKey, segmentDuration, geminiModel, timeFormat, showWaveform, optimizedResolution, useOptimizedPreview, useCookiesForDownload);
+    onSave(geminiApiKey, youtubeApiKey, geniusApiKey, segmentDuration, geminiModel, timeFormat, showWaveform, optimizedResolution, useOptimizedPreview, useCookiesForDownload, vibiApiKey);
 
     // Update original settings to match current settings
     setOriginalSettings({
       geminiApiKey,
       youtubeApiKey,
       geniusApiKey,
+      vibiApiKey,
       segmentDuration,
       subtitleEngine,
       geminiModel,
@@ -688,12 +699,16 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
               setYoutubeApiKey={setYoutubeApiKey}
               geniusApiKey={geniusApiKey}
               setGeniusApiKey={setGeniusApiKey}
+              vibiApiKey={vibiApiKey}
+              setVibiApiKey={setVibiApiKey}
               showGeminiKey={showGeminiKey}
               setShowGeminiKey={setShowGeminiKey}
               showYoutubeKey={showYoutubeKey}
               setShowYoutubeKey={setShowYoutubeKey}
               showGeniusKey={showGeniusKey}
               setShowGeniusKey={setShowGeniusKey}
+              showVibiKey={showVibiKey}
+              setShowVibiKey={setShowVibiKey}
               useOAuth={useOAuth}
               setUseOAuth={setUseOAuth}
               youtubeClientId={youtubeClientId}

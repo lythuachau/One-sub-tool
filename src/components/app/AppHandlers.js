@@ -632,7 +632,7 @@ export const useAppHandlers = (appState) => {
   /**
    * Handle saving API keys and settings
    */
-  const saveApiKeys = (geminiKey, youtubeKey, geniusKey, segmentDuration = 5, geminiModel, timeFormat, showWaveformSetting, optimizedResolutionSetting, useOptimizedPreviewSetting, useCookiesForDownloadSetting) => {
+  const saveApiKeys = (geminiKey, youtubeKey, geniusKey, segmentDuration = 5, geminiModel, timeFormat, showWaveformSetting, optimizedResolutionSetting, useOptimizedPreviewSetting, useCookiesForDownloadSetting, vibiKey) => {
     // Save to localStorage
     if (geminiKey) {
       localStorage.setItem('gemini_api_key', geminiKey);
@@ -679,6 +679,12 @@ export const useAppHandlers = (appState) => {
       appState.setOptimizedResolution(optimizedResolutionSetting);
     }
 
+    if (vibiKey) {
+      localStorage.setItem('vibi_api_key', vibiKey);
+    } else if (vibiKey === '') {
+      localStorage.removeItem('vibi_api_key');
+    }
+
     if (useOptimizedPreviewSetting !== undefined) {
       localStorage.setItem('use_optimized_preview', 'false');
       appState.setUseOptimizedPreview(false);
@@ -703,7 +709,8 @@ export const useAppHandlers = (appState) => {
     appState.setApiKeysSet({
       gemini: !!geminiKey,
       youtube: useOAuth ? hasOAuthTokens : !!youtubeKey,
-      genius: !!geniusKey
+      genius: !!geniusKey,
+      vibi: !!vibiKey
     });
 
     // Show success notification

@@ -127,6 +127,77 @@ textarea.reference-text::-webkit-resizer {
 }
 
 /* Switch component */
+.vibi-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 0.75rem 1.25rem;
+  margin: 0.75rem 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 16px;
+  background: var(--md-surface-1);
+}
+
+.vibi-settings-grid label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--md-on-surface);
+  font-size: 0.9rem;
+}
+
+.vibi-settings-grid input[type="range"] {
+  flex: 1;
+  min-width: 100px;
+}
+
+.vibi-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 0.75rem 1.25rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.vibi-option-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 64px;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 16px;
+  background: var(--md-surface-1);
+}
+
+.vibi-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.vibi-option-copy strong {
+  color: var(--md-on-surface);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.vibi-option-copy span {
+  color: var(--md-on-surface-variant);
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.vibi-option-card md-switch {
+  flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+  .vibi-settings-grid,
+  .vibi-options-grid { grid-template-columns: 1fr; }
+}
+
 .switch-container {
   display: flex;
   align-items: center;

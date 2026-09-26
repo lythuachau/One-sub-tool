@@ -18,6 +18,7 @@ import useWindowStateManager from './hooks/useWindowStateManager';
 
 // Import modular components
 import CapCutNarration from './components/CapCutNarration';
+import VibiNarration from './components/VibiNarration';
 import ReferenceAudioSection from './components/ReferenceAudioSection';
 import AudioControls from './components/AudioControls';
 import VieNeuVoiceControls from './components/VieNeuVoiceControls';
@@ -78,6 +79,8 @@ const UnifiedNarrationSection = ({
     narrationMethod, setNarrationMethod,
     isGeminiAvailable, setIsGeminiAvailable,
     isChatterboxAvailable, setIsChatterboxAvailable,
+    vieneuStatus, setVieneuStatus,
+    omnivoiceStatus, setOmnivoiceStatus,
 
     // Gemini-specific settings
     selectedVoice, setSelectedVoice,
@@ -142,6 +145,8 @@ const UnifiedNarrationSection = ({
     setIsAvailable,
     setIsGeminiAvailable,
     setIsChatterboxAvailable,
+    setVieneuStatus,
+    setOmnivoiceStatus,
     setError,
     t
   });
@@ -479,7 +484,7 @@ const UnifiedNarrationSection = ({
       <div className="narration-header">
         <h3>{t('narration.title', 'Generate Narration')}</h3>
         <p className="narration-description">
-          {t('narration.descriptionWithCapcut', 'Tạo thuyết minh bằng VieNeu-TTS, OmniVoice hoặc CapCut TTS.')}
+          {t('narration.descriptionWithCapcut', 'Tạo thuyết minh bằng VieNeu-TTS, OmniVoice, Vibi ElevenLabs hoặc CapCut TTS.')}
         </p>
       </div>
 
@@ -490,13 +495,44 @@ const UnifiedNarrationSection = ({
         isGenerating={isGenerating}
         isF5Available={isAvailable}
         isChatterboxAvailable={isChatterboxAvailable}
+        vieneuStatus={vieneuStatus}
+        omnivoiceStatus={omnivoiceStatus}
+        isVibiAvailable
       />
 
       {/* Error Message - only show when there's an actual error message */}
       {error && <StatusMessage message={error} type="error" />}
 
       <div className="narration-content-container" ref={contentRef}>
-      {narrationMethod === 'capcut' ? (
+      {narrationMethod === 'vibi' ? (
+        <VibiNarration
+          getSubtitles={() => useGroupedSubtitles && groupedSubtitles?.length ? groupedSubtitles : subtitleSource === 'translated' ? translatedSubtitles : originalSubtitles || subtitles}
+          subtitleSource={subtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
+          generationResults={generationResults} setGenerationResults={setGenerationResults}
+          downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
+          currentAudio={currentAudio} isPlaying={isPlaying} playAudio={playAudio}
+          useGroupedSubtitles={useGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}>
+          <SubtitleSourceSelection
+            subtitleSource={subtitleSource}
+            setSubtitleSource={setSubtitleSource}
+            isGenerating={isGenerating}
+            translatedSubtitles={translatedSubtitles}
+            originalSubtitles={originalSubtitles || subtitles}
+            originalLanguage={originalLanguage}
+            translatedLanguage={translatedLanguage}
+            setOriginalLanguage={setOriginalLanguage}
+            setTranslatedLanguage={setTranslatedLanguage}
+            useGroupedSubtitles={useGroupedSubtitles}
+            setUseGroupedSubtitles={setUseGroupedSubtitles}
+            isGroupingSubtitles={isGroupingSubtitles}
+            groupedSubtitles={groupedSubtitles}
+            groupingIntensity={groupingIntensity}
+            setGroupingIntensity={setGroupingIntensity}
+            onGroupedSubtitlesGenerated={setGroupedSubtitles}
+            narrationMethod={narrationMethod}
+          />
+        </VibiNarration>
+      ) : narrationMethod === 'capcut' ? (
         <CapCutNarration
           getSubtitles={() => useGroupedSubtitles && groupedSubtitles?.length ? groupedSubtitles : subtitleSource === 'translated' ? translatedSubtitles : originalSubtitles || subtitles}
           subtitleSource={subtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
