@@ -31,6 +31,7 @@ CORS(app)
 model_lock = threading.Lock()
 model: Any = None
 model_error: str | None = None
+model_loading = False
 
 
 def _preset_voice_metadata() -> dict[str, Any]:
@@ -56,12 +57,14 @@ def _preset_voice_metadata() -> dict[str, Any]:
 
 
 def _load_model() -> Any:
-    global model, model_error
+    global model, model_error, model_loading
     if model is not None:
         return model
     with model_lock:
         if model is not None:
             return model
+        model_loading = True
+        logger.info("Loading VieNeu-TTS model")
         try:
             from vieneu import Vieneu
 
@@ -75,13 +78,19 @@ def _load_model() -> Any:
         except Exception as exc:
             model_error = str(exc)
             raise
+        finally:
+            model_loading = False
+            logger.info("VieNeu-TTS model state: %s", "ready" if model is not None else "error")
 
 
 def _status() -> dict[str, Any]:
     available, import_error = package_available("vieneu")
+    state = "ready" if model is not None else ("loading" if model_loading else ("error" if model_error else "not_loaded"))
     return {
         "available": available,
         "ready": model is not None,
+        "loading": model_loading,
+        "state": state,
         "engine": "vieneu",
         "device": device_info(),
         "models": {"tts": model is not None},
@@ -101,6 +110,8 @@ def _model_catalog() -> dict[str, Any]:
         "languages": ["vi"],
         "available": available,
         "ready": model is not None,
+        "loading": model_loading,
+        "state": "ready" if model is not None else ("loading" if model_loading else ("error" if model_error else "not_loaded")),
         "installed": available,
         "model_path": None,
         "initialization_error": model_error or import_error,
@@ -186,6 +197,15 @@ def voices():
 @app.get("/health")
 def health():
     return jsonify(_status())
+
+
+@app.post("/api/narration/wake-up")
+def wake_up():
+    try:
+        _load_model()
+        return jsonify({"status": "ok", "message": "VieNeu-TTS is ready", **_status()})
+    except Exception as exc:
+        return jsonify({"status": "error", "error": f"VieNeu-TTS initialization failed: {exc}", **_status()}), 503
 
 
 @app.post("/api/narration/preview")

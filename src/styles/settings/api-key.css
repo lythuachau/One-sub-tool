@@ -22,13 +22,28 @@
 /* Make Gemini section occupy the left column */
 .api-key-input.gemini-column {
   grid-column: 1;
-  grid-row: span 2;
+  grid-row: span 3;
 }
 
 /* Make YouTube section span full width of the right column */
 .api-key-input.full-width {
   grid-column: 2;
   grid-row: 2;
+}
+
+.api-key-input.vibi-key-card {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.api-key-input.genius-key-card {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.api-key-input.youtube-key-card {
+  grid-column: 2;
+  grid-row: 3;
 }
 
 .api-key-input label {

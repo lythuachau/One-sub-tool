@@ -18,6 +18,7 @@ CORS(app)
 model_lock = threading.Lock()
 model: Any = None
 model_error: str | None = None
+model_loading = False
 
 _VOICE_DESIGN_FALLBACK = {
     "gender": ["male", "female"],
@@ -55,12 +56,14 @@ def _voice_design_options() -> dict[str, list[str]]:
 
 
 def _load_model() -> Any:
-    global model, model_error
+    global model, model_error, model_loading
     if model is not None:
         return model
     with model_lock:
         if model is not None:
             return model
+        model_loading = True
+        logger.info("Loading OmniVoice model")
         try:
             import torch
             from omnivoice import OmniVoice
@@ -77,17 +80,22 @@ def _load_model() -> Any:
         except Exception as exc:
             model_error = str(exc)
             raise
+        finally:
+            model_loading = False
+            logger.info("OmniVoice model state: %s", "ready" if model is not None else "error")
 
 
 def _status() -> dict[str, Any]:
     available, import_error = package_available("omnivoice")
+    state = "ready" if model is not None else ("loading" if model_loading else ("error" if model_error else "not_loaded"))
     return {
         "status": "ok" if available else "unavailable",
         "available": available,
         "ready": model is not None,
+        "loading": model_loading,
         "engine": "omnivoice",
         "model_name": os.getenv("OMNIVOICE_MODEL", "k2-fsa/OmniVoice"),
-        "model_state": "ready" if model is not None else ("error" if model_error else "not_loaded"),
+        "model_state": state,
         "device": device_info(),
         "models_loaded": {"tts": model is not None},
         "initialization_error": model_error or import_error,
@@ -97,6 +105,7 @@ def _status() -> dict[str, Any]:
 def _model_catalog() -> dict[str, Any]:
     available, import_error = package_available("omnivoice")
     model_id = os.getenv("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
+    state = "ready" if model is not None else ("loading" if model_loading else ("error" if model_error else "not_loaded"))
     model_info = {
         "id": model_id,
         "name": "OmniVoice",
@@ -106,6 +115,8 @@ def _model_catalog() -> dict[str, Any]:
         "languages": ["vi", "en", "zh"],
         "available": available,
         "ready": model is not None,
+        "loading": model_loading,
+        "state": state,
         "installed": available,
         "model_path": None,
         "initialization_error": model_error or import_error,

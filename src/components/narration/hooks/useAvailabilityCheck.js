@@ -13,6 +13,14 @@ const checkChatterboxAvailability = async () => {
     : { ...status, message: status.message || 'OmniVoice chưa sẵn sàng. Hãy cài dependency TTS và khởi động lại worker.' };
 };
 
+const getServiceState = (status, engineState) => {
+  if (!status?.available) return 'unavailable';
+  if (status.ready) return 'ready';
+  if (status.loading || engineState === 'loading') return 'loading';
+  if (status.initialization_error || engineState === 'error') return 'error';
+  return 'starting';
+};
+
 /**
  * Custom hook for checking narration service availability
  * @param {Object} params - Parameters
@@ -27,38 +35,55 @@ const useAvailabilityCheck = ({
   narrationMethod,
   setIsAvailable,
   setIsChatterboxAvailable,
+  setVieneuStatus,
+  setOmnivoiceStatus,
   setError,
   t
 }) => {
   // Check if narration services are available
   useEffect(() => {
-    if (narrationMethod === 'capcut') { setError(''); return; }
+    let cancelled = false;
+    let checking = false;
+    let initialCheck = true;
+
     const checkAvailability = async () => {
+      if (checking) return;
+      checking = true;
       try {
-        // First, do immediate checks for services that can be determined quickly
-
         const f5Status = await checkNarrationStatusWithRetry();
-
-        // Set F5-TTS availability based on the actual status
-        setIsAvailable(f5Status.available);
-
-        // Check OmniVoice availability through its health endpoint.
         const chatterboxStatus = await checkChatterboxAvailability();
-        setIsChatterboxAvailable(chatterboxStatus.available);
+
+        if (cancelled) return;
+
+        const vieneuState = getServiceState(f5Status, f5Status.state);
+        const omnivoiceState = getServiceState(chatterboxStatus, chatterboxStatus.state || chatterboxStatus.model_state);
+        const vieneuUsable = Boolean(f5Status.available && vieneuState !== 'error');
+        const omnivoiceUsable = Boolean(chatterboxStatus.available && omnivoiceState !== 'error');
+
+        setVieneuStatus(vieneuState);
+        setOmnivoiceStatus(omnivoiceState);
+        setIsAvailable(vieneuUsable);
+        setIsChatterboxAvailable(omnivoiceUsable);
 
         // Set error message based on current method
-        if (!f5Status.available && narrationMethod === 'f5tts' && f5Status.message) {
+        if (!vieneuUsable && narrationMethod === 'f5tts' && f5Status.message) {
           setError(f5Status.message);
         }
-        else if (!chatterboxStatus.available && narrationMethod === 'chatterbox' && chatterboxStatus.message) {
+        else if (!omnivoiceUsable && narrationMethod === 'chatterbox' && chatterboxStatus.message) {
           setError(chatterboxStatus.message);
         }
-        else {
+        else if (initialCheck) {
           // Clear any previous errors
           setError('');
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('Error checking service availability:', error);
+
+        setVieneuStatus('unavailable');
+        setOmnivoiceStatus('unavailable');
+        setIsAvailable(false);
+        setIsChatterboxAvailable(false);
 
         // Set error based on current method
         if (narrationMethod === 'f5tts') {
@@ -75,12 +100,21 @@ const useAvailabilityCheck = ({
           setIsChatterboxAvailable(false);
           setError(t('narration.serviceUnavailableMessage', 'Cài VieNeu-TTS và OmniVoice rồi khởi động lại dịch vụ thuyết minh.'));
         }
+      } finally {
+        checking = false;
+        initialCheck = false;
       }
     };
 
-    // Check availability once when component mounts or narration method changes
+    // Check both local engines regardless of the currently selected narration method.
     checkAvailability();
-  }, [t, narrationMethod, setIsAvailable, setIsChatterboxAvailable, setError]);
+    const pollingId = setInterval(checkAvailability, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollingId);
+    };
+  }, [t, narrationMethod, setIsAvailable, setIsChatterboxAvailable, setVieneuStatus, setOmnivoiceStatus, setError]);
 };
 
 export default useAvailabilityCheck;

@@ -13,6 +13,55 @@ const CHATTERBOX_PORT = PORTS.CHATTERBOX;
 const UV_EXECUTABLE = process.env.UV_EXECUTABLE || 'uv';
 const ROOT_DIR = path.join(__dirname, '..');
 const TTS_DIR = path.join(__dirname, 'tts_service');
+const WARMUP_ENABLED = process.env.NARRATION_WARMUP !== 'false';
+
+const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+const waitForService = async ({ port, label, attempts = 120 }) => {
+  const healthUrl = `http://127.0.0.1:${port}/health`;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(healthUrl);
+      if (response.ok) return;
+    } catch (error) {
+      if (attempt === attempts) throw error;
+    }
+    await sleep(1000);
+  }
+  throw new Error(`${label} service did not become reachable`);
+};
+
+const warmUpService = async ({ port, label, wakePath }) => {
+  await waitForService({ port, label });
+  console.log(`⏳ Warming up ${label} model...`);
+  const response = await fetch(`http://127.0.0.1:${port}${wakePath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `${label} warm-up returned HTTP ${response.status}`);
+  }
+  console.log(`✅ ${label} model is ready`);
+  return payload;
+};
+
+const warmUpNarrationServices = async () => {
+  if (!WARMUP_ENABLED || typeof fetch !== 'function') return;
+
+  const services = [
+    { port: NARRATION_PORT, label: 'VieNeu-TTS', wakePath: '/api/narration/wake-up' },
+    { port: CHATTERBOX_PORT, label: 'OmniVoice', wakePath: '/wake-up' }
+  ];
+
+  for (const service of services) {
+    try {
+      await warmUpService(service);
+    } catch (error) {
+      console.error(`⚠️ ${service.label} warm-up failed: ${error.message}`);
+    }
+  }
+};
 
 const resolvePythonCommand = () => {
   const configuredPython = process.env.TTS_PYTHON || process.env.NARRATION_PYTHON;
@@ -71,6 +120,9 @@ function startNarrationService() {
       }
     });
     const chatterboxProcess = startChatterboxService();
+    if (WARMUP_ENABLED) {
+      setTimeout(() => { void warmUpNarrationServices(); }, 250);
+    }
     return { narrationProcess, chatterboxProcess };
   } catch (error) {
     console.error(`❌ Error starting VieNeu-TTS services: ${error.message}`);
@@ -81,6 +133,7 @@ function startNarrationService() {
 module.exports = {
   startNarrationService,
   startChatterboxService,
+  warmUpNarrationServices,
   NARRATION_PORT,
   CHATTERBOX_PORT
 };

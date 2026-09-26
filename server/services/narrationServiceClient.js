@@ -34,6 +34,8 @@ const checkService = async () => {
       return {
         available: Boolean(statusData.available),
         ready: Boolean(statusData.ready),
+        loading: Boolean(statusData.loading),
+        state: statusData.state || statusData.model_state || (statusData.ready ? 'ready' : 'starting'),
         device: statusData.device || 'cpu',
         gpu_info: statusData.gpu_info || statusData.device || {},
         engine: statusData.engine || 'vieneu',

@@ -504,7 +504,7 @@ const SubtitleSourceSelection = ({
             )}
 
             {/* VieNeu-TTS and OmniVoice expose fixed local engines; no legacy model picker is needed. */}
-            {narrationMethod !== 'f5tts' && narrationMethod !== 'chatterbox' && narrationMethod !== 'edge-tts' && narrationMethod !== 'gtts' && (
+            {narrationMethod !== 'f5tts' && narrationMethod !== 'chatterbox' && narrationMethod !== 'vibi' && narrationMethod !== 'edge-tts' && narrationMethod !== 'gtts' && (
               <div className="model-dropdown-container narration-model-dropdown-container">
                 <button
                   className="model-dropdown-btn narration-model-dropdown-btn"

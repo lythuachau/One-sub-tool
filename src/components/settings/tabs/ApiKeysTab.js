@@ -43,12 +43,16 @@ const ApiKeysTab = ({
   setYoutubeApiKey,
   geniusApiKey,
   setGeniusApiKey,
+  vibiApiKey,
+  setVibiApiKey,
   showGeminiKey,
   setShowGeminiKey,
   showYoutubeKey,
   setShowYoutubeKey,
   showGeniusKey,
   setShowGeniusKey,
+  showVibiKey,
+  setShowVibiKey,
   useOAuth,
   setUseOAuth,
   youtubeClientId,
@@ -170,6 +174,7 @@ const ApiKeysTab = ({
   const youtubeKeyRef = useRef(null);
   const clientIdRef = useRef(null);
   const clientSecretRef = useRef(null);
+  const vibiKeyRef = useRef(null);
 
   // Focus effects for editable fields
   useEffect(() => {
@@ -207,6 +212,10 @@ const ApiKeysTab = ({
       clientSecretRef.current.focus();
     }
   }, [showClientSecret]);
+
+  useEffect(() => {
+    if (showVibiKey && vibiKeyRef.current) vibiKeyRef.current.focus();
+  }, [showVibiKey]);
 
   // Handle YouTube OAuth authentication
   const handleOAuthAuthentication = () => {
@@ -470,8 +479,53 @@ const ApiKeysTab = ({
           </div>
         </div>
 
+        {/* Vibi API Key */}
+        <div className="api-key-input vibi-key-card">
+          <label htmlFor="vibi-api-key">
+            Vibi API Key
+            <span className={`api-key-status ${vibiApiKey ? 'set' : 'not-set'}`}>
+              {vibiApiKey ? 'Đã đặt' : 'Chưa đặt'}
+            </span>
+          </label>
+          <div className="custom-api-key-input">
+            <div className="custom-input-field">
+              <input
+                type="text"
+                id="vibi-api-key"
+                className={`api-key-input-field ${!showVibiKey ? 'masked-input' : ''}`}
+                value={vibiApiKey}
+                onChange={(event) => setVibiApiKey(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}
+                placeholder="sk_..."
+                ref={vibiKeyRef}
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-form-type="other"
+                spellCheck="false"
+              />
+            </div>
+            <button
+              type="button"
+              className="toggle-visibility"
+              onClick={() => animateToggle('vibi-api-key', showVibiKey, setShowVibiKey)}
+              aria-label={showVibiKey ? 'Ẩn key Vibi' : 'Hiện key Vibi'}
+            >
+              {showVibiKey ? 'Ẩn' : 'Hiện'}
+            </button>
+          </div>
+          <p className="api-key-help">Dùng cho Vibi ElevenLabs: chọn model, giọng Việt và voice settings trong mục Tạo thuyết minh.</p>
+          <div className="api-key-instructions">
+            <h4>Thêm Vibi API key</h4>
+            <ol>
+              <li>Mở <a href="https://vibi.pro/docs" target="_blank" rel="noopener noreferrer">Vibi API Docs</a>.</li>
+              <li>Sao chép key có dạng <code>sk_...</code> rồi dán vào ô trên.</li>
+              <li>Bấm Lưu trong cửa sổ Cài đặt trước khi dùng Vibi.</li>
+            </ol>
+          </div>
+        </div>
+
         {/* Genius API Key - Right column, first row */}
-        <div className="api-key-input">
+        <div className="api-key-input genius-key-card">
           <label htmlFor="genius-api-key">
             {t('settings.geniusApiKey', 'Genius API Key')}
             <span className={`api-key-status ${apiKeysSet.genius ? 'set' : 'not-set'}`}>
@@ -536,7 +590,7 @@ const ApiKeysTab = ({
         </div>
 
         {/* YouTube API Key - Right column, second row */}
-        <div className="api-key-input full-width">
+        <div className="api-key-input full-width youtube-key-card">
           <div className="auth-method-toggle">
             <label className="auth-method-label">{t('settings.youtubeAuthMethod', 'YouTube Authentication Method')}</label>
             <div className="auth-toggle-buttons">

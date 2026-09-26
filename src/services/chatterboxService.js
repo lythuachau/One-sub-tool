@@ -100,6 +100,10 @@ export const checkChatterboxAvailabilitySingle = async () => {
     if (!healthData.available && !healthData.models_loaded?.tts) {
       return {
         available: false,
+        ready: false,
+        loading: Boolean(healthData.loading),
+        state: healthData.state || healthData.model_state || 'unavailable',
+        initialization_error: healthData.initialization_error || null,
         message: healthData.initialization_error || 'OmniVoice package is not installed'
       };
     }
@@ -110,9 +114,12 @@ export const checkChatterboxAvailabilitySingle = async () => {
     return {
       available: Boolean(healthData.available),
       ready: Boolean(ready),
+      loading: Boolean(healthData.loading),
+      state: healthData.state || healthData.model_state || (ready ? 'ready' : 'starting'),
       needsWakeUp: Boolean(healthData.available && !ready),
       device: healthData.device,
       models: healthData.models_loaded,
+      initialization_error: healthData.initialization_error || null,
       message: ready ? undefined : 'OmniVoice service is running; model is not loaded yet.'
     };
   } catch (error) {

@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 router.use('/capcut', require('./capcutRoutes'));
+router.use('/vibi', require('./vibiRoutes'));
 const multer = require('multer');
 const path = require('path');
 const narrationController = require('../controllers/narrationController');
@@ -136,7 +137,7 @@ router.use('/', async (req, res, next) => {
       req.url === '/clear-output' || req.url === '/save-gemini-audio' ||
       req.url === '/save-f5tts-audio' || req.url === '/save-chatterbox-audio' || req.url === '/modify-audio-speed' ||
       req.url === '/batch-modify-audio-speed' || req.url.startsWith('/audio/') ||
-      req.url.startsWith('/edge-tts/') || req.url.startsWith('/gtts/')) {
+      req.url.startsWith('/edge-tts/') || req.url.startsWith('/gtts/') || req.url.startsWith('/capcut/') || req.url.startsWith('/vibi/')) {
     return next();
   }
 

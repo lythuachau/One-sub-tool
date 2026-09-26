@@ -87,6 +87,8 @@ const getNarrationStatus = async (req, res) => {
   res.json({
     available: serviceStatus.available,
     ready: serviceStatus.ready,
+    loading: serviceStatus.loading,
+    state: serviceStatus.state,
     engine: serviceStatus.engine || 'vieneu',
     initialization_error: serviceStatus.initialization_error || null,
     message: serviceStatus.message || null,
