@@ -9,7 +9,8 @@ const { PORTS } = require('./config');
 const { trackProcess } = require('./utils/portManager');
 
 const NARRATION_PORT = PORTS.NARRATION;
-const CHATTERBOX_PORT = PORTS.CHATTERBOX;
+const OMNIVOICE_PORT = PORTS.OMNIVOICE || PORTS.CHATTERBOX;
+const CHATTERBOX_PORT = OMNIVOICE_PORT;
 const UV_EXECUTABLE = process.env.UV_EXECUTABLE || 'uv';
 const ROOT_DIR = path.join(__dirname, '..');
 const TTS_DIR = path.join(__dirname, 'tts_service');
@@ -94,19 +95,24 @@ const spawnTtsService = ({ script, port, label, env }) => {
   return child;
 };
 
-function startChatterboxService() {
+function startOmniVoiceService() {
   try {
     return spawnTtsService({
       script: 'omnivoice_service.py',
-      port: CHATTERBOX_PORT,
+      port: OMNIVOICE_PORT,
       label: 'OmniVoice TTS',
-      env: { CHATTERBOX_PORT: String(CHATTERBOX_PORT) }
+      env: {
+        OMNIVOICE_PORT: String(OMNIVOICE_PORT),
+        CHATTERBOX_PORT: String(OMNIVOICE_PORT)
+      }
     });
   } catch (error) {
     console.error(`❌ Error starting OmniVoice service: ${error.message}`);
     return null;
   }
 }
+
+const startChatterboxService = startOmniVoiceService;
 
 function startNarrationService() {
   try {
@@ -119,11 +125,15 @@ function startNarrationService() {
         VIENEU_BACKEND: process.env.VIENEU_BACKEND || 'onnx'
       }
     });
-    const chatterboxProcess = startChatterboxService();
+    const omnivoiceProcess = startOmniVoiceService();
     if (WARMUP_ENABLED) {
       setTimeout(() => { void warmUpNarrationServices(); }, 250);
     }
-    return { narrationProcess, chatterboxProcess };
+    return {
+      narrationProcess,
+      omnivoiceProcess,
+      chatterboxProcess: omnivoiceProcess
+    };
   } catch (error) {
     console.error(`❌ Error starting VieNeu-TTS services: ${error.message}`);
     return null;
@@ -132,8 +142,10 @@ function startNarrationService() {
 
 module.exports = {
   startNarrationService,
+  startOmniVoiceService,
   startChatterboxService,
   warmUpNarrationServices,
   NARRATION_PORT,
+  OMNIVOICE_PORT,
   CHATTERBOX_PORT
 };

@@ -374,7 +374,7 @@ const NarrationResults = ({
 
     try {
       // Send the audio data to the server
-      const response = await fetch(`${SERVER_URL}/api/narration/save-f5tts-audio`, {
+      const response = await fetch(`${SERVER_URL}/api/narration/save-vieneu-audio`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

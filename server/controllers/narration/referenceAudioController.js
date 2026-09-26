@@ -10,6 +10,7 @@ const fs = require('fs');
 
 // Import directory paths
 const { REFERENCE_AUDIO_DIR } = require('./directoryManager');
+const EXAMPLE_AUDIO_DIR = path.join(__dirname, '../../tts_service/examples');
 
 /**
  * Add 1 second of silence to the end of an audio file using ffmpeg
@@ -186,20 +187,18 @@ const uploadReference = async (req, res) => {
  */
 const getExampleAudioList = async (_req, res) => {
   try {
-    const exampleAudioFiles = [
-      {
-        filename: 'basic_ref_en.wav',
-        displayName: 'basic_ref_en.wav',
-        language: 'English',
-        description: 'English reference audio'
-      },
-      {
-        filename: 'basic_ref_zh.wav',
-        displayName: 'basic_ref_zh.wav',
-        language: 'Chinese',
-        description: 'Chinese reference audio'
-      }
-    ];
+    const filenames = fs.existsSync(EXAMPLE_AUDIO_DIR)
+      ? fs.readdirSync(EXAMPLE_AUDIO_DIR).filter(filename => filename.toLowerCase().endsWith('.wav'))
+      : [];
+    const exampleAudioFiles = filenames.map(filename => {
+      const language = filename.includes('_en.') ? 'English' : filename.includes('_zh.') ? 'Chinese' : 'Audio';
+      return {
+        filename,
+        displayName: filename,
+        language,
+        description: `${language} reference audio`
+      };
+    });
 
     res.json({
       success: true,
@@ -212,7 +211,7 @@ const getExampleAudioList = async (_req, res) => {
 };
 
 /**
- * Serve example audio files from F5-TTS examples directory
+ * Serve optional local example audio files
  */
 const serveExampleAudio = async (req, res) => {
   try {
@@ -223,9 +222,7 @@ const serveExampleAudio = async (req, res) => {
       return res.status(400).json({ error: 'Invalid filename' });
     }
 
-    // Define the path to F5-TTS examples directory
-    const f5ttsExamplesPath = path.join(__dirname, '../../../F5-TTS/src/f5_tts/infer/examples/basic');
-    const filePath = path.join(f5ttsExamplesPath, filename);
+    const filePath = path.join(EXAMPLE_AUDIO_DIR, filename);
 
     // Check if file exists
     if (!fs.existsSync(filePath)) {
@@ -257,9 +254,7 @@ const uploadExampleAudio = async (req, res) => {
       return res.status(400).json({ error: 'Invalid filename' });
     }
 
-    // Define the path to F5-TTS examples directory
-    const f5ttsExamplesPath = path.join(__dirname, '../../../F5-TTS/src/f5_tts/infer/examples/basic');
-    const sourcePath = path.join(f5ttsExamplesPath, filename);
+    const sourcePath = path.join(EXAMPLE_AUDIO_DIR, filename);
 
     // Check if source file exists
     if (!fs.existsSync(sourcePath)) {

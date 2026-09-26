@@ -1,7 +1,0 @@
-[submodule "F5-TTS"]
-	path = F5-TTS
-	url = https://github.com/SWivid/F5-TTS.git
-
-[submodule "better-chatterbox"]
-	path = better-chatterbox
-	url = https://github.com/resemble-ai/chatterbox.git

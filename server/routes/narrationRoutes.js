@@ -109,9 +109,13 @@ router.post('/save-gemini-audio', express.json({ limit: '10mb' }), narrationCont
 
 // Save F5-TTS audio data to disk
 router.post('/save-f5tts-audio', express.json({ limit: '10mb' }), narrationController.saveF5TTSAudio);
+// Canonical VieNeu route; the legacy route above remains for existing cached clients.
+router.post('/save-vieneu-audio', express.json({ limit: '10mb' }), narrationController.saveVieNeuAudio);
 
 // Save Chatterbox audio data to disk
 router.post('/save-chatterbox-audio', express.json({ limit: '10mb' }), narrationController.saveChatterboxAudio);
+// Canonical OmniVoice route; the legacy route above remains for existing cached clients.
+router.post('/save-omnivoice-audio', express.json({ limit: '10mb' }), narrationController.saveOmniVoiceAudio);
 
 // Modify audio speed
 router.post('/modify-audio-speed', express.json(), narrationController.modifyAudioSpeed);
@@ -135,7 +139,8 @@ router.use('/', async (req, res, next) => {
       req.url === '/generate' || req.url === '/record-reference' || req.url === '/upload-reference' ||
       req.url === '/preview' ||
       req.url === '/clear-output' || req.url === '/save-gemini-audio' ||
-      req.url === '/save-f5tts-audio' || req.url === '/save-chatterbox-audio' || req.url === '/modify-audio-speed' ||
+      req.url === '/save-f5tts-audio' || req.url === '/save-vieneu-audio' ||
+      req.url === '/save-chatterbox-audio' || req.url === '/save-omnivoice-audio' || req.url === '/modify-audio-speed' ||
       req.url === '/batch-modify-audio-speed' || req.url.startsWith('/audio/') ||
       req.url.startsWith('/edge-tts/') || req.url.startsWith('/gtts/') || req.url.startsWith('/capcut/') || req.url.startsWith('/vibi/')) {
     return next();

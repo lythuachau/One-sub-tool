@@ -244,4 +244,8 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("CHATTERBOX_PORT", "3036")), threaded=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("OMNIVOICE_PORT", os.getenv("CHATTERBOX_PORT", "3036"))),
+        threaded=True,
+    )

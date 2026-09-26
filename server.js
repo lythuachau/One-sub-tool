@@ -6,7 +6,7 @@
 
 // Import configuration
 const { PORTS, PORT } = require('./server/config');
-const { NARRATION_PORT, CHATTERBOX_PORT } = require('./server/startNarrationService');
+const { NARRATION_PORT, OMNIVOICE_PORT, CHATTERBOX_PORT } = require('./server/startNarrationService');
 
 // Import Express app
 const app = require('./app');
@@ -56,8 +56,13 @@ if (isDevCuda) {
       // Set the narration services as running in the app
       app.set('narrationServiceRunning', true);
       app.set('narrationActualPort', NARRATION_PORT);
-      app.set('chatterboxServiceRunning', narrationProcesses.chatterboxProcess !== null);
-      app.set('chatterboxActualPort', CHATTERBOX_PORT);
+      const omnivoiceRunning = (narrationProcesses.omnivoiceProcess || narrationProcesses.chatterboxProcess) !== null;
+      app.set('vieneuServiceRunning', true);
+      app.set('vieneuActualPort', NARRATION_PORT);
+      app.set('omnivoiceServiceRunning', omnivoiceRunning);
+      app.set('omnivoiceActualPort', OMNIVOICE_PORT);
+      app.set('chatterboxServiceRunning', omnivoiceRunning);
+      app.set('chatterboxActualPort', OMNIVOICE_PORT);
 
       console.log('✅ Narration services startup completed');
       console.log(`📍 VieNeu-TTS service: http://localhost:${NARRATION_PORT}`);
@@ -71,6 +76,10 @@ if (isDevCuda) {
     // Set the narration services as not running in the app
     app.set('narrationServiceRunning', false);
     app.set('narrationActualPort', null);
+    app.set('vieneuServiceRunning', false);
+    app.set('vieneuActualPort', null);
+    app.set('omnivoiceServiceRunning', false);
+    app.set('omnivoiceActualPort', null);
     app.set('chatterboxServiceRunning', false);
     app.set('chatterboxActualPort', null);
   }
@@ -80,6 +89,10 @@ if (isDevCuda) {
   // Set the narration services as not running in the app
   app.set('narrationServiceRunning', false);
   app.set('narrationActualPort', null);
+  app.set('vieneuServiceRunning', false);
+  app.set('vieneuActualPort', null);
+  app.set('omnivoiceServiceRunning', false);
+  app.set('omnivoiceActualPort', null);
   app.set('chatterboxServiceRunning', false);
   app.set('chatterboxActualPort', null);
 }
@@ -123,9 +136,10 @@ process.on('SIGINT', async () => {
           narrationProcesses.narrationProcess.kill();
         }
 
-        if (narrationProcesses.chatterboxProcess) {
+        const omnivoiceProcess = narrationProcesses.omnivoiceProcess || narrationProcesses.chatterboxProcess;
+        if (omnivoiceProcess) {
           console.log('🔄 Stopping OmniVoice service...');
-          narrationProcesses.chatterboxProcess.kill();
+          omnivoiceProcess.kill();
         }
       }
 

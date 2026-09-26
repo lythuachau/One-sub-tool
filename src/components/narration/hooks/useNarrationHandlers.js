@@ -7,6 +7,7 @@ import {
   generateNarration,
   cancelNarrationGeneration
 } from '../../../services/narrationService';
+import { NARRATION_METHODS } from '../narrationMethods';
 
 /**
  * Custom hook for narration handlers
@@ -719,7 +720,7 @@ const useNarrationHandlers = ({
                 filename: result.filename,
                 success: result.success,
                 text: result.text,
-                method: 'f5tts'
+                method: NARRATION_METHODS.VIENEU
               })),
               referenceAudio: {
                 filename: referenceAudio.filename,

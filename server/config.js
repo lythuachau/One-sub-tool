@@ -13,7 +13,8 @@ const PORTS = {
   VIDEO_RENDERER: parseInt(process.env.VIDEO_RENDERER_PORT) || 3033,
   VIDEO_RENDERER_FRONTEND: parseInt(process.env.VIDEO_RENDERER_FRONTEND_PORT) || 3034,
   NARRATION: parseInt(process.env.NARRATION_PORT) || 3035,
-  CHATTERBOX: parseInt(process.env.CHATTERBOX_PORT) || 3036
+  OMNIVOICE: parseInt(process.env.OMNIVOICE_PORT || process.env.CHATTERBOX_PORT) || 3036,
+  CHATTERBOX: parseInt(process.env.OMNIVOICE_PORT || process.env.CHATTERBOX_PORT) || 3036
 };
 
 // Server configuration using unified ports

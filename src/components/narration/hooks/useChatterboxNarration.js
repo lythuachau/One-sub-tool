@@ -154,7 +154,7 @@ const useChatterboxNarration = ({
           const base64String = dataUrl.split(',')[1]; // Remove "data:audio/wav;base64," prefix
 
           // Send to server
-          const response = await fetch(`${SERVER_URL}/api/narration/save-chatterbox-audio`, {
+          const response = await fetch(`${SERVER_URL}/api/narration/save-omnivoice-audio`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

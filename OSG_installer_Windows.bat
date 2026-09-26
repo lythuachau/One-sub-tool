@@ -32,9 +32,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ('     ' + [c
 ECHO.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '======================================================' -ForegroundColor Cyan; Write-Host '%TITLE_TEXT%' -ForegroundColor White -BackgroundColor DarkBlue; Write-Host 'Vi tri (Location): %SCRIPT_DIR%' -ForegroundColor Gray; Write-Host 'Thu muc Du an (Project Folder): %PROJECT_FOLDER_NAME%' -ForegroundColor Gray; Write-Host '======================================================' -ForegroundColor Cyan; Write-Host 'Vui long chon mot tuy chon:' -ForegroundColor Yellow"
 ECHO.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host 'CAI DAT / THIET LAP:' -ForegroundColor Green -BackgroundColor Black; Write-Host '  1. Cai dat (Thuyet minh thong thuong + Long tieng nhan ban giong noi)' -ForegroundColor White; Write-Host '     (Install with Gemini + F5-TTS + Chatterbox Narration)' -ForegroundColor Cyan; Write-Host '     (Luu y: Se ton nhieu dung luong luu tru hon, tren Windows chi ho tro GPU cua NVIDIA va Intel)' -ForegroundColor Yellow; Write-Host '  2. Cai dat (Thuyet minh thong thuong) (Install with Gemini Narration)' -ForegroundColor White"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host 'CAI DAT / THIET LAP:' -ForegroundColor Green -BackgroundColor Black; Write-Host '  1. Cai dat (Thuyet minh thong thuong + Long tieng nhan ban giong noi)' -ForegroundColor White; Write-Host '     (Install with Gemini + VieNeu-TTS + OmniVoice Narration)' -ForegroundColor Cyan; Write-Host '     (Luu y: Se ton nhieu dung luong luu tru hon, tren Windows chi ho tro GPU cua NVIDIA va Intel)' -ForegroundColor Yellow; Write-Host '  2. Cai dat (Thuyet minh thong thuong) (Install with Gemini Narration)' -ForegroundColor White"
 ECHO.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host 'BAO TRI / SU DUNG:' -ForegroundColor Blue -BackgroundColor Black; Write-Host '  3. Cap nhat Ung dung (Update)' -ForegroundColor White; Write-Host '  4. Chay Ung dung (Run App)' -ForegroundColor White; Write-Host '  5. Chay Ung dung voi Nhan ban giong noi (Run App with F5-TTS + Chatterbox Narration)' -ForegroundColor White"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host 'BAO TRI / SU DUNG:' -ForegroundColor Blue -BackgroundColor Black; Write-Host '  3. Cap nhat Ung dung (Update)' -ForegroundColor White; Write-Host '  4. Chay Ung dung (Run App)' -ForegroundColor White; Write-Host '  5. Chay Ung dung voi Nhan ban giong noi (Run App with VieNeu-TTS + OmniVoice Narration)' -ForegroundColor White"
 ECHO.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host 'GO CAI DAT:' -ForegroundColor Red -BackgroundColor Black; Write-Host '  6. Go cai dat Ung dung (Uninstall)' -ForegroundColor White"
 ECHO.
@@ -246,7 +246,7 @@ GOTO %MENU_LABEL%
 
 REM ==============================================================================
 :RunAppCUDA
-ECHO *** Tuy chon 5: Chay Ung dung voi Nhan ban giong noi (Option 5: Run App with F5-TTS + Chatterbox Narration) ***
+ECHO *** Tuy chon 5: Chay Ung dung voi Nhan ban giong noi (Option 5: Run App with VieNeu-TTS + OmniVoice Narration) ***
 IF NOT EXIST "%PROJECT_PATH%\package.json" (
     ECHO LOI: Thu muc du an "%PROJECT_PATH%" hoac package.json khong tim thay.
     ECHO Vui long su dung mot trong cac tuy chon Cai dat truoc.

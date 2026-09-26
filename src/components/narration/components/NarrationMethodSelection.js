@@ -1,6 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import '../../../styles/narration/narrationMethodSelectionMaterial.css';
+import { NARRATION_METHODS } from '../narrationMethods';
 
 /**
  * Component for selecting the narration engine (VieNeu-TTS or OmniVoice)
@@ -52,14 +53,14 @@ const NarrationMethodSelection = ({
             <div className="radio-pill">
               <input
                 type="radio"
-                id="method-f5tts"
+                id="method-vieneu"
                 name="narration-method"
-                value="f5tts"
-                checked={narrationMethod === 'f5tts'}
-                onChange={() => handleMethodChange('f5tts')}
+                value={NARRATION_METHODS.VIENEU}
+                checked={narrationMethod === NARRATION_METHODS.VIENEU}
+                onChange={() => handleMethodChange(NARRATION_METHODS.VIENEU)}
                 disabled={isGenerating || !isF5Available}
               />
-              <label htmlFor="method-f5tts" className={!isF5Available ? 'unavailable' : ''}>
+              <label htmlFor="method-vieneu" className={!isF5Available ? 'unavailable' : ''}>
                 {t('narration.f5ttsMethod', 'VieNeu-TTS')}
                 {!isF5Available && (
                   <span className="method-description">
@@ -74,14 +75,14 @@ const NarrationMethodSelection = ({
             <div className="radio-pill">
               <input
                 type="radio"
-                id="method-chatterbox"
+                id="method-omnivoice"
                 name="narration-method"
-                value="chatterbox"
-                checked={narrationMethod === 'chatterbox'}
-                onChange={() => handleMethodChange('chatterbox')}
+                value={NARRATION_METHODS.OMNIVOICE}
+                checked={narrationMethod === NARRATION_METHODS.OMNIVOICE}
+                onChange={() => handleMethodChange(NARRATION_METHODS.OMNIVOICE)}
                 disabled={isGenerating || !isChatterboxAvailable}
               />
-              <label htmlFor="method-chatterbox" className={!isChatterboxAvailable ? 'unavailable' : ''}>
+              <label htmlFor="method-omnivoice" className={!isChatterboxAvailable ? 'unavailable' : ''}>
                 {t('narration.chatterboxMethod', 'OmniVoice')}
                 {!isChatterboxAvailable && (
                   <span className="method-description">

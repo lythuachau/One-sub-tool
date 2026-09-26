@@ -294,6 +294,15 @@ app.get('/api/health', (req, res) => {
     message: 'Server is healthy',
     timestamp: new Date().toISOString(),
     services: {
+      vieneu: {
+        running: app.get('vieneuServiceRunning') ?? app.get('narrationServiceRunning') ?? false,
+        port: app.get('vieneuActualPort') ?? app.get('narrationActualPort') ?? null
+      },
+      omnivoice: {
+        running: app.get('omnivoiceServiceRunning') ?? app.get('chatterboxServiceRunning') ?? false,
+        port: app.get('omnivoiceActualPort') ?? app.get('chatterboxActualPort') ?? null
+      },
+      // Legacy keys stay available for clients released before v3.
       f5tts: {
         running: app.get('narrationServiceRunning') || false,
         port: app.get('narrationActualPort') || null

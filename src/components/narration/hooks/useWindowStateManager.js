@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { enhanceF5TTSNarrations } from '../../../utils/narrationEnhancer';
+import { NARRATION_METHODS } from '../narrationMethods';
 
 // Constants for localStorage keys
 const GROUPED_SUBTITLES_CACHE_KEY = 'grouped_subtitles_cache';
@@ -80,7 +81,7 @@ const useWindowStateManager = ({
     if (generationResults && generationResults.length > 0) {
       if (subtitleSource === 'original') {
         // If this is F5-TTS narration (not Gemini), enhance with timing information
-        if (narrationMethod === 'f5tts') {
+        if (narrationMethod === NARRATION_METHODS.VIENEU) {
           // Get subtitles for enhancing narrations with timing information
           const subtitlesForEnhancement = originalSubtitles || subtitles || [];
 
@@ -93,7 +94,7 @@ const useWindowStateManager = ({
         }
       } else if (subtitleSource === 'translated') {
         // For translated narrations, similar enhancement if needed
-        if (narrationMethod === 'f5tts') {
+        if (narrationMethod === NARRATION_METHODS.VIENEU) {
           // Get subtitles for enhancing narrations with timing information
           const subtitlesForEnhancement = translatedSubtitles || [];
 

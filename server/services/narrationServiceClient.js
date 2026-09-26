@@ -122,7 +122,7 @@ const generateNarration = async (reference_audio, reference_text, subtitles, set
     if (isStreamingSupported) {
       // Removed streaming support log
 
-      // Forward the request to the F5-TTS service with streaming response
+      // Forward the request to the VieNeu-TTS service with streaming response
       const streamResponse = await fetch(narrationUrl, {
         method: 'POST',
         mode: 'cors',
@@ -176,7 +176,7 @@ const generateNarration = async (reference_audio, reference_text, subtitles, set
                 // Clean up old subtitle directories if using grouped subtitles
                 const hasGroupedSubtitles = subtitles.some(subtitle => subtitle.original_ids && subtitle.original_ids.length > 0);
                 if (hasGroupedSubtitles) {
-                  console.log('F5-TTS: Detected grouped subtitles, cleaning up old directories');
+                  console.log('VieNeu-TTS: Detected grouped subtitles, cleaning up old directories');
                   cleanupOldSubtitleDirectories(subtitles);
                 }
 
@@ -292,7 +292,7 @@ const generateNarration = async (reference_audio, reference_text, subtitles, set
     // If streaming is not supported, fall back to regular JSON response
     // Removed fallback logging
 
-    // Forward the request to the F5-TTS service
+    // Forward the request to the VieNeu-TTS service
     const response = await fetch(narrationUrl, {
       method: 'POST',
       mode: 'cors',
@@ -322,7 +322,7 @@ const generateNarration = async (reference_audio, reference_text, subtitles, set
     const result = await response.json();
     // Removed results count logging
 
-    // Enhance F5-TTS narration results with timing information from subtitles
+    // Enhance VieNeu-TTS narration results with timing information from subtitles
     if (result.results && result.results.length > 0) {
       // Removed enhancement logging
       result.results = enhanceF5TTSNarrations(result.results, subtitles);

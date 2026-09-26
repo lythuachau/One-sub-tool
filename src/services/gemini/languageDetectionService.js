@@ -178,7 +178,7 @@ Respond with structured data only.
  */
 export const getNarrationModelForLanguage = (languageCode) => {
     // Default to base model
-    let modelId = 'f5tts-v1-base';
+    let modelId = 'vieneu';
 
     // If we have an array of language codes, use the first one that has a specific model
     if (Array.isArray(languageCode) && languageCode.length > 0) {
@@ -200,23 +200,23 @@ export const getNarrationModelForLanguage = (languageCode) => {
     // This is a simplified mapping that doesn't check actual availability
     switch (languageCode) {
         case 'zh':
-            modelId = 'f5tts-v1-base'; // Chinese is well-supported by base model
+            modelId = 'vieneu';
             break;
         case 'en':
-            modelId = 'f5tts-v1-base'; // English is well-supported by base model
+            modelId = 'vieneu';
             break;
         case 'vi':
-            modelId = 'erax-smile-unixsex-f5'; // Vietnamese model
+            modelId = 'vieneu';
             break;
         case 'ko':
-            modelId = 'f5tts-v1-base'; // Korean - fallback to base model
+            modelId = 'vieneu';
             break;
         case 'ja':
-            modelId = 'f5tts-v1-base'; // Japanese - fallback to base model
+            modelId = 'vieneu';
             break;
         default:
             // For other languages, use the base model
-            modelId = 'f5tts-v1-base';
+            modelId = 'vieneu';
     }
 
     return modelId;

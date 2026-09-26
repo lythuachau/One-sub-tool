@@ -5,7 +5,8 @@
 // Import centralized React configuration
 import { API_URLS } from '../config/appConfig';
 
-const CHATTERBOX_API_BASE_URL = API_URLS.CHATTERBOX;
+const OMNIVOICE_API_BASE_URL = API_URLS.OMNIVOICE || API_URLS.CHATTERBOX;
+const CHATTERBOX_API_BASE_URL = OMNIVOICE_API_BASE_URL;
 const SERVER_API_BASE_URL = API_URLS.BACKEND;
 
 // Track if the OmniVoice service has been successfully initialized
@@ -521,3 +522,12 @@ export const resetChatterboxServiceInitialization = () => {
 export const checkChatterboxShouldBeAvailable = async () => {
   return await checkServerChatterboxStatus();
 };
+
+export const checkOmniVoiceAvailabilitySingle = checkChatterboxAvailabilitySingle;
+export const checkOmniVoiceAvailability = checkChatterboxAvailability;
+export const wakeUpOmniVoiceService = wakeUpChatterboxService;
+export const generateOmniVoiceSpeech = generateChatterboxSpeech;
+export const convertOmniVoiceVoice = convertChatterboxVoice;
+export const getOmniVoiceHealth = getChatterboxHealth;
+export const isOmniVoiceServiceInitialized = isChatterboxServiceInitialized;
+export const resetOmniVoiceServiceInitialization = resetChatterboxServiceInitialization;

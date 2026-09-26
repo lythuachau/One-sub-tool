@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { checkNarrationStatusWithRetry } from '../../../services/narrationService';
-import { checkChatterboxAvailability as checkOmniVoiceAvailability } from '../../../services/chatterboxService';
+import { checkOmniVoiceAvailability } from '../../../services/chatterboxService';
+import { NARRATION_METHODS } from '../narrationMethods';
 
 /**
  * Check OmniVoice availability through its local health endpoint.
@@ -66,10 +67,10 @@ const useAvailabilityCheck = ({
         setIsChatterboxAvailable(omnivoiceUsable);
 
         // Set error message based on current method
-        if (!vieneuUsable && narrationMethod === 'f5tts' && f5Status.message) {
+        if (!vieneuUsable && narrationMethod === NARRATION_METHODS.VIENEU && f5Status.message) {
           setError(f5Status.message);
         }
-        else if (!omnivoiceUsable && narrationMethod === 'chatterbox' && chatterboxStatus.message) {
+        else if (!omnivoiceUsable && narrationMethod === NARRATION_METHODS.OMNIVOICE && chatterboxStatus.message) {
           setError(chatterboxStatus.message);
         }
         else if (initialCheck) {
@@ -86,11 +87,11 @@ const useAvailabilityCheck = ({
         setIsChatterboxAvailable(false);
 
         // Set error based on current method
-        if (narrationMethod === 'f5tts') {
+        if (narrationMethod === NARRATION_METHODS.VIENEU) {
           setIsAvailable(false);
           setError(t('narration.serviceUnavailableMessage', "Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được."));
         }
-        else if (narrationMethod === 'chatterbox') {
+        else if (narrationMethod === NARRATION_METHODS.OMNIVOICE) {
           // Set Chatterbox as unavailable when not running with dev:cuda
           setIsChatterboxAvailable(false);
           setError(t('narration.serviceUnavailableMessage', "Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được."));

@@ -256,18 +256,6 @@ clean_install() {
         rm -rf .venv
     fi
 
-    # Clean F5-TTS directory
-    if [ -d "F5-TTS" ]; then
-        echo "Removing F5-TTS directory..."
-        rm -rf F5-TTS
-    fi
-
-    # Clean Chatterbox directory
-    if [ -d "chatterbox/chatterbox" ]; then
-        echo "Removing Chatterbox directory..."
-        rm -rf chatterbox/chatterbox
-    fi
-
     # Clean package-lock.json
     if [ -f "package-lock.json" ]; then
         echo "Removing package-lock.json..."
@@ -324,14 +312,14 @@ show_menu() {
     echo
     echo -e "\033[92m\033[40mCAI DAT / THIET LAP:\033[0m"
     echo -e "\033[97m  1. Cai dat (Thuyet minh thong thuong + Long tieng nhan ban giong noi)\033[0m"
-    echo -e "\033[96m     (Install with Gemini + F5-TTS + Chatterbox Narration)\033[0m"
+    echo -e "\033[96m     (Install with Gemini + VieNeu-TTS + OmniVoice Narration)\033[0m"
     echo -e "\033[93m     (Luu y: Se ton nhieu dung luong luu tru hon, tren Windows chi ho tro GPU cua NVIDIA va Intel)\033[0m"
     echo -e "\033[97m  2. Cai dat (Thuyet minh thong thuong) (Install with Gemini Narration)\033[0m"
     echo
     echo -e "\033[94m\033[40mBAO TRI / SU DUNG:\033[0m"
     echo -e "\033[97m  3. Cap nhat Ung dung (Update)\033[0m"
     echo -e "\033[97m  4. Chay Ung dung (Run App)\033[0m"
-    echo -e "\033[97m  5. Chay Ung dung voi Nhan ban giong noi (Run App with F5-TTS + Chatterbox Narration)\033[0m"
+    echo -e "\033[97m  5. Chay Ung dung voi Nhan ban giong noi (Run App with VieNeu-TTS + OmniVoice Narration)\033[0m"
     echo
     echo -e "\033[91m\033[40mGO CAI DAT:\033[0m"
     echo -e "\033[97m  6. Go cai dat Ung dung (Uninstall)\033[0m"
@@ -576,7 +564,7 @@ run_app() {
 }
 
 run_app_cuda() {
-    echo "*** Option 5: Run Application with Voice Cloning (F5-TTS + Chatterbox) ***"
+    echo "*** Option 5: Run Application with Voice Cloning (VieNeu-TTS + OmniVoice) ***"
 
     # Check if we're in the right directory
     check_repo_structure
@@ -593,16 +581,11 @@ run_app_cuda() {
         return
     fi
 
-    if [ ! -d ".venv" ] || [ ! -d "F5-TTS" ]; then
+    if [ ! -d ".venv" ]; then
         echo "ERROR: Voice Cloning features not installed. Please use option 1 to install with narration features."
         read -p "Press Enter to continue..."
         show_menu
         return
-    fi
-
-    if [ ! -d "chatterbox/chatterbox" ]; then
-        echo "WARNING: Chatterbox not found. Some voice cloning features may not be available."
-        echo "Consider reinstalling with option 1 for full functionality."
     fi
 
     # Detect GPU type
@@ -653,7 +636,7 @@ uninstall_app() {
     echo
     echo "This includes:"
     echo "  - All source code"
-    echo "  - All dependencies (node_modules, .venv, F5-TTS, Chatterbox)"
+    echo "  - All dependencies (node_modules, .venv, VieNeu-TTS, OmniVoice)"
     echo "  - All generated files and outputs"
     echo "  - All configuration and settings"
     echo

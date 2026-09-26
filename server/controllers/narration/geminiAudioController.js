@@ -256,6 +256,9 @@ const saveChatterboxAudio = async (req, res) => {
   }
 };
 
+const saveVieNeuAudio = saveF5TTSAudio;
+const saveOmniVoiceAudio = saveChatterboxAudio;
+
 /**
  * Create a WAV header for PCM audio data
  * @param {number} dataLength - Length of the PCM data in bytes
@@ -299,7 +302,9 @@ const createWavHeader = (dataLength, sampleRate = 24000) => {
 module.exports = {
   saveGeminiAudio,
   saveF5TTSAudio,
+  saveVieNeuAudio,
   saveChatterboxAudio,
+  saveOmniVoiceAudio,
   createWavHeader,
   saveAudioToFile
 };

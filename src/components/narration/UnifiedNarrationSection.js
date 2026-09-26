@@ -37,6 +37,7 @@ import NarrationResults from './components/NarrationResults';
 import GeminiNarrationResults from './components/GeminiNarrationResults';
 import StatusMessage from './components/StatusMessage';
 import NarrationMethodSelection from './components/NarrationMethodSelection';
+import { NARRATION_METHODS } from './narrationMethods';
 
 // Import styles
 import '../../styles/narration/unifiedNarrationRedesign.css';
@@ -154,8 +155,8 @@ const UnifiedNarrationSection = ({
   useEffect(() => {
     const legacyMethod = ['gemini', 'edge-tts', 'gtts'].includes(narrationMethod);
     if (legacyMethod) {
-      setNarrationMethod('f5tts');
-      localStorage.setItem('narration_method', 'f5tts');
+      setNarrationMethod(NARRATION_METHODS.VIENEU);
+      localStorage.setItem('narration_method', NARRATION_METHODS.VIENEU);
     }
   }, [narrationMethod, setNarrationMethod]);
 
@@ -567,7 +568,7 @@ const UnifiedNarrationSection = ({
             }}
           />
         </CapCutNarration>
-      ) : narrationMethod === 'f5tts' ? (
+      ) : narrationMethod === NARRATION_METHODS.VIENEU ? (
         // F5-TTS UI
         <div className="f5tts-content">
           <VieNeuVoiceControls
@@ -712,7 +713,7 @@ const UnifiedNarrationSection = ({
             style={{ display: 'none' }}
           />
         </div>
-      ) : narrationMethod === 'chatterbox' ? (
+      ) : narrationMethod === NARRATION_METHODS.OMNIVOICE ? (
         // Chatterbox UI
         <div className="chatterbox-content">
           <OmniVoiceModeControls

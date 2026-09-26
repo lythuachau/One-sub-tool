@@ -1,5 +1,5 @@
 /**
- * Narration service for F5-TTS integration
+ * Narration service for VieNeu-TTS integration
  */
 
 import { API_BASE_URL, SERVER_URL } from '../config';
@@ -581,7 +581,9 @@ export const generateNarration = async (
                     } else if (data.error) {
                       onError(data.error);
                       // If this is a model initialization error, stop processing
-                      if (data.error.includes('F5-TTS model initialization failed') ||
+                      if (data.error.includes('VieNeu-TTS model initialization failed') ||
+                          data.error.includes('Error initializing VieNeu-TTS') ||
+                          data.error.includes('F5-TTS model initialization failed') ||
                           data.error.includes('Error initializing F5-TTS') ||
                           data.error.includes('Model is not available')) {
                         return { success: false, error: data.error };
