@@ -1,7 +1,7 @@
 /**
  * Module for batch processing of audio segments
  * Handles large numbers of audio segments by splitting them into batches
- * Uses the version 1 narration timing rules for fitting and overlap resolution
+ * Uses the version 1 narration timing rules while preserving speech content
  */
 
 const path = require('path');
@@ -155,7 +155,7 @@ const calculateDistributedGroupShift = (segmentsToShift, blankSpaces, requiredSh
  * Version 1 timing rules:
  * 1. Fit each clip to its subtitle slot between 0.75x and 1.55x.
  * 2. Reserve a 50ms gap before the next subtitle.
- * 3. Resolve remaining overlap up to 1.85x, then trim with a short fade.
+ * 3. Resolve remaining overlap up to 1.85x; preserve any remaining overflow.
  *
  * @param {Array} audioSegments - Array of audio segments to analyze
  * @returns {Promise<Array>} - Array of adjusted audio segments
@@ -191,7 +191,7 @@ const trimAndFadeFile = async (source, destination, duration) => {
   return destination;
 };
 
-const analyzeAndAdjustSegments = async (audioSegments) => {
+const analyzeAndAdjustSegments = async (audioSegments, preserveSpeech = true) => {
   if (!audioSegments || audioSegments.length === 0) {
     return audioSegments || [];
   }
@@ -201,6 +201,7 @@ const analyzeAndAdjustSegments = async (audioSegments) => {
   let initialSpeedups = 0;
   let overlapSpeedups = 0;
   let faded = 0;
+  let preservedOverflows = 0;
 
   for (let index = 0; index < sorted.length; index++) {
     const segment = { ...sorted[index] };
@@ -238,6 +239,13 @@ const analyzeAndAdjustSegments = async (audioSegments) => {
       overlapSpeedups++;
     }
 
+    if (audioDurationMs > slotMs && preserveSpeech) {
+      current.overflowMs = Math.round(audioDurationMs - slotMs);
+      current.overflowTargetMs = slotMs;
+      preservedOverflows++;
+      continue;
+    }
+
     if (audioDurationMs > slotMs) {
       const destination = path.join(TEMP_AUDIO_DIR, `legacy_fade_${Date.now()}_${index}.wav`);
       await trimAndFadeFile(current.path, destination, slotMs / 1000);
@@ -248,19 +256,19 @@ const analyzeAndAdjustSegments = async (audioSegments) => {
     }
   }
 
-  console.log(`Legacy TTS alignment: initial speedups=${initialSpeedups}, overlap speedups=${overlapSpeedups}, fades=${faded}`);
+  console.log(`TTS alignment: initial speedups=${initialSpeedups}, overlap speedups=${overlapSpeedups}, fades=${faded}, preserved overflows=${preservedOverflows}`);
   return fitted;
 };
-const processBatch = async (audioSegments, outputPath, batchIndex, totalDuration, smartOverlapResolution = true) => {
+const processBatch = async (audioSegments, outputPath, batchIndex, totalDuration, smartOverlapResolution = true, preserveSpeech = true) => {
 
   // Apply version 1 fitting and overlap resolution if enabled
   let segmentsToProcess = audioSegments;
   if (smartOverlapResolution && audioSegments.length > 1) {
     try {
       // Fit clips before building the delayed audio mix
-      segmentsToProcess = await analyzeAndAdjustSegments(audioSegments);
+      segmentsToProcess = await analyzeAndAdjustSegments(audioSegments, preserveSpeech);
     } catch (error) {
-      console.error(`Error during legacy TTS alignment: ${error.message}`);
+      console.error(`Error during TTS alignment: ${error.message}`);
       throw error;
     }
   }

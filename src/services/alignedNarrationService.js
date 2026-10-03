@@ -2,6 +2,7 @@
  * Service for managing aligned narration audio
  */
 import { SERVER_URL } from '../config';
+import { getNarrationOptimizationConfig } from '../utils/narrationOptimization';
 
 // Cache for the aligned narration audio
 let alignedNarrationCache = {
@@ -43,6 +44,7 @@ export const generateAlignedNarration = async (generationResults, onProgress = n
         // Create a narration data object with common properties
         const narration = {
           subtitle_id: result.subtitle_id,
+          method: result.method,
           start: start,
           end: end,
           text: result.text || ''
@@ -145,7 +147,10 @@ export const generateAlignedNarration = async (generationResults, onProgress = n
           'Content-Type': 'application/json',
           'Accept': 'audio/wav'
         },
-        body: JSON.stringify({ narrations: narrationData })
+        body: JSON.stringify({
+          narrations: narrationData,
+          optimization: getNarrationOptimizationConfig()
+        })
       });
 
       // Check for audio alignment notification after successful response

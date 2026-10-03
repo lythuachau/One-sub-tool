@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import LiquidGlass from '../common/LiquidGlass';
 import { extractAndDownloadAudio } from '../../utils/fileUtils';
+import { getNarrationOptimizationConfig } from '../../utils/narrationOptimization';
 
 const VideoTopsideButtons = ({
   showCustomControls,
@@ -215,6 +216,7 @@ const VideoTopsideButtons = ({
                     return {
                       filename: result.filename,
                       subtitle_id: result.subtitle_id,
+                      method: result.method,
                       start: subtitle.start,
                       end: subtitle.end,
                       text: subtitle.text || result.text || '',
@@ -227,6 +229,7 @@ const VideoTopsideButtons = ({
                   return {
                     filename: result.filename,
                     subtitle_id: result.subtitle_id,
+                    method: result.method,
                     start: result.start || 0,
                     end: result.end || (result.start ? result.start + 5 : 5),
                     text: result.text || '',
@@ -247,7 +250,10 @@ const VideoTopsideButtons = ({
                   'Content-Type': 'application/json',
                   'Accept': 'audio/wav'
                 },
-                body: JSON.stringify({ narrations: narrationData }),
+                body: JSON.stringify({
+                  narrations: narrationData,
+                  optimization: getNarrationOptimizationConfig()
+                }),
                 signal: session.controller.signal
               });
 

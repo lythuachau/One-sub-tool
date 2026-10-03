@@ -5,6 +5,7 @@ import SubtitleCustomizationPanel, { defaultCustomization } from './SubtitleCust
 import RemotionVideoPreview from './RemotionVideoPreview';
 import QueueManagerPanel from './QueueManagerPanel';
 import { SERVER_URL } from '../config';
+import { getNarrationOptimizationConfig } from '../utils/narrationOptimization';
 import '../styles/VideoRenderingSection.css';
 
 const VIDEO_RENDERER_URL = 'http://127.0.0.1:3033';
@@ -543,9 +544,11 @@ const VideoRenderingSection = ({
         // Use the same logic as the refresh narration button
         const narrationData = narrationResults.map(result => ({
           filename: result.filename,
-          start_time: result.start_time,
-          end_time: result.end_time,
-          subtitle_id: result.subtitle_id
+          start: result.start ?? result.start_time ?? 0,
+          end: result.end ?? result.end_time ?? 5,
+          subtitle_id: result.subtitle_id,
+          method: result.method,
+          text: result.text || ''
         }));
 
         // Call the same endpoint as refresh narration button
@@ -557,7 +560,10 @@ const VideoRenderingSection = ({
             'Content-Type': 'application/json',
             'Accept': 'audio/wav'
           },
-          body: JSON.stringify({ narrations: narrationData })
+          body: JSON.stringify({
+            narrations: narrationData,
+            optimization: getNarrationOptimizationConfig()
+          })
         });
 
         if (response.ok) {
@@ -681,6 +687,7 @@ const VideoRenderingSection = ({
             return {
               filename: result.filename,
               subtitle_id: result.subtitle_id,
+              method: result.method,
               start: subtitle.start,
               end: subtitle.end,
               text: subtitle.text || result.text || ''
@@ -689,6 +696,7 @@ const VideoRenderingSection = ({
           return {
             filename: result.filename,
             subtitle_id: result.subtitle_id,
+            method: result.method,
             start: 0,
             end: 5,
             text: result.text || ''
@@ -711,7 +719,10 @@ const VideoRenderingSection = ({
           'Content-Type': 'application/json',
           'Accept': 'audio/wav'
         },
-        body: JSON.stringify({ narrations: narrationData })
+        body: JSON.stringify({
+          narrations: narrationData,
+          optimization: getNarrationOptimizationConfig()
+        })
       });
 
       // Check for audio alignment notification after successful response

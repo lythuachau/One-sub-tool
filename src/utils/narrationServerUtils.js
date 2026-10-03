@@ -4,6 +4,7 @@
 
 import { SERVER_URL } from '../config';
 import { base64ToArrayBuffer } from './audioConversionUtils';
+import { getNarrationOptimizationConfig } from './narrationOptimization';
 
 /**
  * Save audio data to server
@@ -195,6 +196,7 @@ export const downloadAlignedAudio = async (generationResults, t) => {
           return {
             filename: result.filename || `gemini_narration_${result.subtitle_id}.wav`,
             subtitle_id: result.subtitle_id,
+            method: result.method,
             start: subtitle.start,
             end: subtitle.end,
             text: result.text || ''
@@ -205,6 +207,7 @@ export const downloadAlignedAudio = async (generationResults, t) => {
         return {
           filename: result.filename || `gemini_narration_${result.subtitle_id}.wav`,
           subtitle_id: result.subtitle_id,
+          method: result.method,
           start: result.start || 0,
           end: result.end || (result.start ? result.start + 5 : 5),
           text: result.text || ''
@@ -235,7 +238,10 @@ export const downloadAlignedAudio = async (generationResults, t) => {
           'Content-Type': 'application/json',
           'Accept': 'audio/wav'
         },
-        body: JSON.stringify({ narrations: narrationData })
+        body: JSON.stringify({
+          narrations: narrationData,
+          optimization: getNarrationOptimizationConfig()
+        })
       });
 
       // Check for audio alignment notification after successful response

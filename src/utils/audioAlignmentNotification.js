@@ -189,8 +189,11 @@ export const checkAudioAlignmentFromResponse = (response) => {
     const durationDifference = parseFloat(response.headers.get('X-Duration-Difference'));
     const expectedDuration = parseFloat(response.headers.get('X-Expected-Duration'));
     const actualDuration = parseFloat(response.headers.get('X-Actual-Duration'));
+    const optimizedCount = parseInt(response.headers.get('X-TTS-Optimized-Count') || '0', 10);
+    const optimizationAttempts = parseInt(response.headers.get('X-TTS-Optimization-Attempts') || '0', 10);
 
     console.log(`📊 Audio alignment check: Expected ${expectedDuration}s, Actual ${actualDuration}s, Difference ${durationDifference}s`);
+    console.log(`🧠 TTS optimization: optimized ${optimizedCount} segment(s) in ${optimizationAttempts} attempt(s)`);
     console.log(`🔢 Header values - Duration Diff: "${response.headers.get('X-Duration-Difference')}", Expected: "${response.headers.get('X-Expected-Duration')}", Actual: "${response.headers.get('X-Actual-Duration')}"`);
 
     if (!isNaN(durationDifference) && durationDifference > 3) {

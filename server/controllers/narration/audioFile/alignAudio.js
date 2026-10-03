@@ -15,9 +15,107 @@ const { processBatch, concatenateAudioFiles } = require('./batchProcessor');
 
 // Import duration utility
 const { getMediaDuration } = require('../../../services/videoProcessing/durationUtils');
+const narrationServiceClient = require('../../../services/narrationServiceClient');
+const { compactNarrationText, getTargetDurationMs } = require('./ttsTimingOptimizer');
 
 // Maximum number of segments to process in a single batch
 const MAX_SEGMENTS_PER_BATCH = 200;
+const AUTO_OPTIMIZATION_TOLERANCE_MS = 120;
+
+const safeSegmentId = (value) => String(value || 'segment').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+
+const autoOptimizeAudioSegments = async (segments, optimization = {}) => {
+  const stats = {
+    optimized: 0,
+    inspected: 0,
+    attempts: 0,
+    details: []
+  };
+
+  if (!optimization.enabled || optimization.engine !== 'vieneu' || !optimization.tts?.settings) {
+    return stats;
+  }
+
+  const gapMs = Number.isFinite(optimization.gapMs) ? optimization.gapMs : 50;
+  const maxCandidates = Number.isFinite(optimization.maxCandidates) ? optimization.maxCandidates : 2;
+  const tts = optimization.tts;
+
+  for (let index = 0; index < segments.length - 1; index++) {
+    const current = segments[index];
+    const next = segments[index + 1];
+    if (current.method !== 'vieneu' || !current.text) continue;
+
+    const targetDurationMs = getTargetDurationMs(current, next, gapMs);
+    if (!targetDurationMs) continue;
+
+    const originalDuration = await getMediaDuration(current.path);
+    if (originalDuration * 1000 <= targetDurationMs + AUTO_OPTIMIZATION_TOLERANCE_MS) continue;
+
+    stats.inspected++;
+    const candidates = compactNarrationText(current.text, maxCandidates);
+    if (candidates.length === 0) continue;
+
+    const candidatePaths = [];
+    let bestCandidate = null;
+
+    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+      const candidateText = candidates[candidateIndex];
+      const candidatePath = path.join(
+        TEMP_AUDIO_DIR,
+        `auto_optimize_${Date.now()}_${safeSegmentId(current.subtitle_id)}_${candidateIndex}.wav`
+      );
+      candidatePaths.push(candidatePath);
+      stats.attempts++;
+
+      try {
+        const audioBuffer = await narrationServiceClient.previewNarration({
+          text: candidateText,
+          reference_audio: tts.reference_audio || null,
+          reference_text: tts.reference_text || '',
+          settings: tts.settings
+        });
+        fs.writeFileSync(candidatePath, audioBuffer);
+        const duration = await getMediaDuration(candidatePath);
+        if (!bestCandidate || duration < bestCandidate.duration) {
+          bestCandidate = { path: candidatePath, text: candidateText, duration };
+        }
+        if (duration * 1000 <= targetDurationMs + AUTO_OPTIMIZATION_TOLERANCE_MS) break;
+      } catch (error) {
+        console.warn(`Auto TTS optimization failed for ${current.subtitle_id}: ${error.message}`);
+        if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
+      }
+    }
+
+    if (!bestCandidate || bestCandidate.duration >= originalDuration - 0.05) {
+      for (const candidatePath of candidatePaths) {
+        if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
+      }
+      continue;
+    }
+
+    for (const candidatePath of candidatePaths) {
+      if (candidatePath !== bestCandidate.path && fs.existsSync(candidatePath)) {
+        fs.unlinkSync(candidatePath);
+      }
+    }
+
+    current.path = bestCandidate.path;
+    current.text = bestCandidate.text;
+    current.actualDuration = bestCandidate.duration;
+    current.naturalEnd = current.start + bestCandidate.duration;
+    current.autoOptimized = true;
+    current.autoOptimizationTargetMs = targetDurationMs;
+    stats.optimized++;
+    stats.details.push({
+      subtitle_id: current.subtitle_id,
+      original_duration: Number(originalDuration.toFixed(3)),
+      optimized_duration: Number(bestCandidate.duration.toFixed(3)),
+      target_duration: Number((targetDurationMs / 1000).toFixed(3))
+    });
+  }
+
+  return stats;
+};
 
 const resolveNarrationPath = (filename) => {
   const root = path.resolve(OUTPUT_AUDIO_DIR);
@@ -34,9 +132,9 @@ const resolveNarrationPath = (filename) => {
  * This function handles both F5-TTS and Gemini narrations in the same way,
  * ensuring consistent alignment and playback in the video player.
  *
- * Audio processing fits each clip to its subtitle slot, reserves a 50ms gap,
- * applies the version 1 overlap speed and fade limits, then mixes without a
- * per-segment volume boost.
+ * Audio processing detects overflow, optionally regenerates compact VieNeu text,
+ * applies safe speed adjustments, preserves speech content, then mixes without
+ * a per-segment volume boost.
  *
  * For large numbers of segments, the function splits them into batches to avoid
  * ENAMETOOLONG errors when the FFmpeg command becomes too long.
@@ -50,10 +148,11 @@ const downloadAlignedAudio = async (req, res) => {
   let tempDir;
   let timestamp;
   let batchFiles = [];
+  let optimizationStats = { optimized: 0, inspected: 0, attempts: 0, details: [] };
 
   try {
     // Get the narration data from the request body
-    const { narrations } = req.body;
+    const { narrations, optimization } = req.body;
 
 
     if (!narrations || narrations.length === 0) {
@@ -152,9 +251,11 @@ const downloadAlignedAudio = async (req, res) => {
                 start: start,
                 end: end,
                 subtitle_id: narration.subtitle_id,
-                original_ids: narration.original_ids,
-                type: 'file',
-                isGrouped: isGrouped
+              original_ids: narration.original_ids,
+              type: 'file',
+              method: narration.method,
+              text: narration.text || '',
+              isGrouped: isGrouped
               });
 
               // Skip the error and continue processing
@@ -215,6 +316,8 @@ const downloadAlignedAudio = async (req, res) => {
           subtitle_id: narration.subtitle_id,
           original_ids: narration.original_ids, // Include original_ids for grouped subtitles
           type: 'file',
+          method: narration.method,
+          text: narration.text || '',
           isGrouped: isGrouped
         });
       }
@@ -248,6 +351,8 @@ const downloadAlignedAudio = async (req, res) => {
             subtitle_id: narration.subtitle_id,
             original_ids: narration.original_ids, // Include original_ids for grouped subtitles
             type: 'temp',
+            method: narration.method,
+            text: narration.text || '',
             isGrouped: isGrouped,
             tempFile: tempFilePath // Track for cleanup later
           });
@@ -276,6 +381,11 @@ const downloadAlignedAudio = async (req, res) => {
     // Sort segments by start time (redundant if narrations already sorted, but safe)
     audioSegments.sort((a, b) => a.start - b.start);
 
+    optimizationStats = await autoOptimizeAudioSegments(audioSegments, optimization);
+    if (optimizationStats.inspected > 0) {
+      console.log(`[SERVER] Auto TTS optimization: inspected=${optimizationStats.inspected}, optimized=${optimizationStats.optimized}, attempts=${optimizationStats.attempts}`);
+    }
+
     // Find the total duration needed (end time of the last adjusted segment)
     // Use the adjusted segments to get the actual final duration
     const totalDuration = audioSegments.length > 0
@@ -302,7 +412,7 @@ const downloadAlignedAudio = async (req, res) => {
         const batchOutputPath = path.join(tempDir, `batch_${i}_${timestamp}.wav`);
 
         // Process the batch
-        await processBatch(batches[i], batchOutputPath, i, totalDuration);
+        await processBatch(batches[i], batchOutputPath, i, totalDuration, true, true);
 
         // Add the batch output file to the list of files to concatenate
         batchFiles.push(batchOutputPath);
@@ -325,7 +435,7 @@ const downloadAlignedAudio = async (req, res) => {
     } else {
       // For smaller numbers of segments, process them all at once
 
-      await processBatch(audioSegments, outputPath, 0, totalDuration);
+      await processBatch(audioSegments, outputPath, 0, totalDuration, true, true);
     }
 
     // Check if the output file was created
@@ -384,9 +494,11 @@ const downloadAlignedAudio = async (req, res) => {
     res.setHeader('X-Duration-Difference', durationDifference.toFixed(2));
     res.setHeader('X-Expected-Duration', expectedDuration.toFixed(2));
     res.setHeader('X-Actual-Duration', actualDuration.toFixed(2));
+    res.setHeader('X-TTS-Optimized-Count', String(optimizationStats.optimized));
+    res.setHeader('X-TTS-Optimization-Attempts', String(optimizationStats.attempts));
 
     // Expose custom headers to frontend
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Duration-Difference, X-Expected-Duration, X-Actual-Duration');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Duration-Difference, X-Expected-Duration, X-Actual-Duration, X-TTS-Optimized-Count, X-TTS-Optimization-Attempts');
 
     // Send the file
     res.sendFile(outputPath, (err) => {

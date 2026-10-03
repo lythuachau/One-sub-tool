@@ -87,6 +87,25 @@ const fetchAudioFile = async (filename) => {
   };
 };
 
+const previewNarration = async ({ text, reference_audio = null, reference_text = '', settings = {} }) => {
+  const narrationUrl = `http://127.0.0.1:${NARRATION_PORT}/api/narration/preview`;
+  const response = await fetch(narrationUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'audio/wav'
+    },
+    body: JSON.stringify({ text, reference_audio, reference_text, settings })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Narration preview failed with ${response.status}: ${errorText}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+};
+
 /**
  * Generate narration using the narration service
  * @param {string} reference_audio - Reference audio filename
@@ -384,6 +403,7 @@ const getNarrationPort = () => {
 module.exports = {
   checkService,
   fetchAudioFile,
+  previewNarration,
   generateNarration,
   proxyRequest,
   getNarrationPort
