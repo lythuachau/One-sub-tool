@@ -175,7 +175,8 @@ export const downloadAndPrepareYouTubeVideo = async (
   setUploadedFile,
   setIsSrtOnlyMode,
   prepareVideoForSegments,
-  t = (key, defaultValue) => defaultValue
+  t = (key, defaultValue) => defaultValue,
+  setSelectedVideo
 ) => {
   if (!selectedVideo) {
     console.error('No video selected');
@@ -500,7 +501,12 @@ export const downloadAndPrepareYouTubeVideo = async (
         // Mark the file as already being on the server to prevent duplicate uploads
         // This is crucial to avoid creating duplicate videos during splitting
         file.isCopiedToServer = true;
-        file.serverPath = `/videos/${videoId}.mp4`;
+        file.serverPath = new URL(videoUrl, window.location.origin).pathname;
+        if (selectedVideo.source === 'douyin' || selectedVideo.source === 'douyin-playwright') {
+          const serverFilename = decodeURIComponent(file.serverPath.split('/').pop());
+          const canonicalId = serverFilename.match(/^(\d+)(?:_|\.mp4$)/);
+          if (canonicalId) videoId = canonicalId[1];
+        }
         console.log('[DOWNLOAD-AND-PREPARE] Marked file as already on server:', file.serverPath);
 
         // Log the file details
@@ -516,6 +522,11 @@ export const downloadAndPrepareYouTubeVideo = async (
       const sourceMethod = selectedVideo.source === 'douyin-playwright'
         ? 'douyin-playwright'
         : selectedVideo.source;
+      if (setSelectedVideo && String(selectedVideo.id) !== String(videoId)) {
+        setSelectedVideo(current => current?.url === selectedVideo.url
+          ? { ...current, id: String(videoId) }
+          : current);
+      }
       file.sourceVideoId = videoId;
       file.sourceUrl = selectedVideo.url;
       file.sourceMethod = sourceMethod;

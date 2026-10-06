@@ -1,8 +1,8 @@
 {
   "title": "Chia nhỏ subtitles",
-  "sliderTitle": "Số chữ maximum của mỗi sub",
-  "description": "Chia nhỏ sub thông minh (các sub đã nhỏ hơn giới hạn sẽ không bị ảnh hưởng)",
-  "limitLabel": "Giới hạn: {{count}} {{unit}}",
+  "sliderTitle": "Số từ mục tiêu mỗi đoạn (giới hạn mềm)",
+  "description": "Ngắt theo dấu câu và ranh giới ý; không ép chia đều số từ.",
+  "limitLabel": "Mục tiêu: {{count}} {{unit}}",
   "wordUnit": "từ",
   "wordsUnit": "từ",
   "apply": "Áp dụng",

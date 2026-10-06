@@ -11,7 +11,7 @@ const fs = require('fs');
 const { OUTPUT_AUDIO_DIR, TEMP_AUDIO_DIR } = require('../directoryManager');
 
 // Import batch processing functions
-const { processBatch, concatenateAudioFiles } = require('./batchProcessor');
+const { processBatch, concatenateAudioFiles, analyzeAndAdjustSegments } = require('./batchProcessor');
 
 // Import duration utility
 const { getMediaDuration } = require('../../../services/videoProcessing/durationUtils');
@@ -32,7 +32,7 @@ const autoOptimizeAudioSegments = async (segments, optimization = {}) => {
     details: []
   };
 
-  if (!optimization.enabled || optimization.engine !== 'vieneu' || !optimization.tts?.settings) {
+  if (!optimization?.enabled || optimization.engine !== 'vieneu' || !optimization.tts?.settings) {
     return stats;
   }
 
@@ -254,6 +254,7 @@ const downloadAlignedAudio = async (req, res) => {
               original_ids: narration.original_ids,
               type: 'file',
               method: narration.method,
+          speaker: narration.speaker,
               text: narration.text || '',
               isGrouped: isGrouped
               });
@@ -317,6 +318,7 @@ const downloadAlignedAudio = async (req, res) => {
           original_ids: narration.original_ids, // Include original_ids for grouped subtitles
           type: 'file',
           method: narration.method,
+          speaker: narration.speaker,
           text: narration.text || '',
           isGrouped: isGrouped
         });
@@ -352,6 +354,7 @@ const downloadAlignedAudio = async (req, res) => {
             original_ids: narration.original_ids, // Include original_ids for grouped subtitles
             type: 'temp',
             method: narration.method,
+          speaker: narration.speaker,
             text: narration.text || '',
             isGrouped: isGrouped,
             tempFile: tempFilePath // Track for cleanup later
@@ -381,10 +384,12 @@ const downloadAlignedAudio = async (req, res) => {
     // Sort segments by start time (redundant if narrations already sorted, but safe)
     audioSegments.sort((a, b) => a.start - b.start);
 
-    optimizationStats = await autoOptimizeAudioSegments(audioSegments, optimization);
+    optimizationStats = { optimized: 0, inspected: 0, attempts: 0, details: [] };
     if (optimizationStats.inspected > 0) {
       console.log(`[SERVER] Auto TTS optimization: inspected=${optimizationStats.inspected}, optimized=${optimizationStats.optimized}, attempts=${optimizationStats.attempts}`);
     }
+
+    // Keep original audio timing; natural-speed optimization is disabled.
 
     // Find the total duration needed (end time of the last adjusted segment)
     // Use the adjusted segments to get the actual final duration
@@ -412,7 +417,7 @@ const downloadAlignedAudio = async (req, res) => {
         const batchOutputPath = path.join(tempDir, `batch_${i}_${timestamp}.wav`);
 
         // Process the batch
-        await processBatch(batches[i], batchOutputPath, i, totalDuration, true, true);
+        await processBatch(batches[i], batchOutputPath, i, totalDuration, false, true);
 
         // Add the batch output file to the list of files to concatenate
         batchFiles.push(batchOutputPath);
@@ -435,7 +440,7 @@ const downloadAlignedAudio = async (req, res) => {
     } else {
       // For smaller numbers of segments, process them all at once
 
-      await processBatch(audioSegments, outputPath, 0, totalDuration, true, true);
+      await processBatch(audioSegments, outputPath, 0, totalDuration, false, true);
     }
 
     // Check if the output file was created
@@ -567,7 +572,7 @@ const downloadAlignedAudio = async (req, res) => {
 
     // Ensure response is sent even if error happens before sending file
     if (!res.headersSent) {
-      res.status(500).json({ error: `Failed to create aligned audio file: ${error.message}` });
+      res.status(error.status || 500).json({ error: error.message, code: error.code, segments: error.segments });
     }
   }
 };

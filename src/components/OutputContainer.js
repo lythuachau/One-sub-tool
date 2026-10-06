@@ -111,7 +111,10 @@ const OutputContainer = ({
     const uploadedFileUrl = localStorage.getItem('current_file_url');
     const currentVideoId = selectedVideo?.id || localStorage.getItem('current_video_id');
     const currentFileVideoId = localStorage.getItem('current_file_video_id');
-    if (uploadedFile && currentVideoId && currentFileVideoId && currentVideoId !== currentFileVideoId) {
+    const fileSourceUrl = uploadedFile?.sourceUrl || localStorage.getItem('current_file_source_url');
+    const isSameSource = Boolean(selectedVideo?.url && fileSourceUrl === selectedVideo.url);
+    if (uploadedFile && currentVideoId && currentFileVideoId
+      && String(currentVideoId) !== String(currentFileVideoId) && !isSameSource) {
       localStorage.removeItem('current_file_url');
       localStorage.removeItem('current_file_video_id');
       localStorage.removeItem('current_file_source_url');

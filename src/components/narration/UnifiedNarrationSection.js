@@ -535,6 +535,7 @@ const UnifiedNarrationSection = ({
         </VibiNarration>
       ) : narrationMethod === 'capcut' ? (
         <CapCutNarration
+          getOriginalSubtitles={() => originalSubtitles || subtitles || []}
           getSubtitles={() => useGroupedSubtitles && groupedSubtitles?.length ? groupedSubtitles : subtitleSource === 'translated' ? translatedSubtitles : originalSubtitles || subtitles}
           subtitleSource={subtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
           generationResults={generationResults} setGenerationResults={setGenerationResults}

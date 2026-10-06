@@ -217,8 +217,8 @@ const VideoTopsideButtons = ({
                       filename: result.filename,
                       subtitle_id: result.subtitle_id,
                       method: result.method,
-                      start: subtitle.start,
-                      end: subtitle.end,
+                      start: result.original_ids?.length > 1 ? result.start : subtitle.start,
+                      end: result.original_ids?.length > 1 ? result.end : subtitle.end,
                       text: subtitle.text || result.text || '',
                       // Preserve original_ids if they exist
                       original_ids: result.original_ids || [subtitleId]
@@ -266,14 +266,14 @@ const VideoTopsideButtons = ({
 
               // Check if the response is successful
               if (!response.ok) {
-                // Try to parse error message if it's JSON
+                let errorMessage = `Failed to generate aligned audio: ${response.statusText}`;
                 try {
                   const errorData = await response.json();
-                  throw new Error(errorData.error || 'Failed to generate aligned audio');
-                } catch (jsonError) {
-                  // If it's not JSON, use the status text
-                  throw new Error(`Failed to generate aligned audio: ${response.statusText}`);
+                  errorMessage = errorData.error || errorMessage;
+                } catch {
+                  // Preserve the HTTP status when the response is not JSON.
                 }
+                throw new Error(errorMessage);
               }
 
               // Get the blob from the response

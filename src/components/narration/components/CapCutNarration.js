@@ -178,7 +178,7 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
   });
 
   const generate = (onlyIds) => run(async signal => {
-    const selected = (getSubtitles() || []).map((subtitle, index) => ({ ...subtitle, id: subtitle.id ?? index + 1 }));
+    const selected = (getSubtitles() || []).map((s, i) => ({ ...s, id: s.id ?? i + 1 }));
     if (!selected.length) throw new Error('Chưa có phụ đề để tạo thuyết minh.');
     const results = onlyIds ? [...generationResults] : [];
     const pending = onlyIds ? selected.filter(s => onlyIds.some(id => String(id) === String(s.id))) : selected;
@@ -191,7 +191,7 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
       try {
         const audio = await synthesize(subtitle.text || subtitle.translated_text, signal);
         result = { ...audio, subtitle_id: subtitle.id, text: subtitle.text || subtitle.translated_text,
-          start: subtitle.start, end: subtitle.end, method: 'capcut', voice };
+          start: subtitle.start, end: subtitle.end, original_ids: subtitle.original_ids, sourceId: subtitle.sourceId, method: 'capcut', voice };
       } catch (error) {
         if (signal.aborted) throw error;
         if (error.capcutCode === '40402004') markVoiceInactive(error.capcutVoice || voice);
@@ -204,6 +204,7 @@ export default function CapCutNarration({ children, getSubtitles, subtitleSource
       if (useGroupedSubtitles) { window.groupedNarrations = [...results]; window.useGroupedSubtitles = true; }
     }
     const failed = results.filter(r => !r.success).length;
+
     setMessage(failed ? `${failed} câu lỗi. Có thể thử lại từng câu.` : 'Đã tạo xong thuyết minh CapCut.');
   }, true);
 

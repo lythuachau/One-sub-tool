@@ -171,7 +171,8 @@ export const splitVideoOnServer = async (mediaFile, segmentDuration = 600, onPro
 const splitFileOnServer = async (mediaFile, segmentDuration, onProgress, fastSplit, options) => {
   try {
     // Extract filename from server path
-    const filename = mediaFile.serverPath.split('/').pop();
+    const serverUrl = new URL(mediaFile.serverPath, SERVER_URL);
+    const filename = decodeURIComponent(serverUrl.pathname.split('/').pop());
 
     onProgress(20, 'output.splittingVideo', 'Splitting video into segments...');
 

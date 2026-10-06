@@ -1,8 +1,8 @@
 {
   "title": "Split Subtitles",
-  "sliderTitle": "Maximum words per subtitle",
-  "description": "Smart subtitle splitting (subtitles already smaller than the limit will not be affected)",
-  "limitLabel": "Limit: {{count}} {{unit}}",
+  "sliderTitle": "Target words per segment (soft limit)",
+  "description": "Prefer punctuation and clause boundaries instead of equal-length chunks.",
+  "limitLabel": "Target: {{count}} {{unit}}",
   "wordUnit": "word",
   "wordsUnit": "words",
   "apply": "Apply",
@@ -26,5 +26,6 @@
     "title": "13 words, limit 5:",
     "split": "Split into 5-4-4 (not 5-5-3)",
     "timing": "Timings: 38%-31%-31%"
-  }
+  },
+  "naturalHelp": "New chunks need at least 6 units. Keep text intact when no suitable boundary exists. Timings are proportional estimates, not audio alignment."
 }

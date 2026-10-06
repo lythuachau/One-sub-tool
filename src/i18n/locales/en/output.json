@@ -1,4 +1,5 @@
 {
+  "videoPreparedForPreview": "Video and subtitles prepared. Loading preview...",
   "title": "Output",
   "subtitles": "Subtitles",
   "noSubtitles": "No subtitles generated yet. Upload a video or audio file to get started.",

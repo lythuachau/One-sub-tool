@@ -245,7 +245,8 @@ export const useAppHandlers = (appState) => {
           setUploadedFile,
           setIsSrtOnlyMode,
           prepareVideoWrapper,
-          t
+          t,
+          setSelectedVideo
         );
 
         // Now process with the downloaded file
@@ -274,7 +275,7 @@ export const useAppHandlers = (appState) => {
         // If we already have subtitles data (from an uploaded SRT file), don't generate new subtitles
         if (subtitlesData && subtitlesData.length > 0) {
           // Just update the status to show that the video is ready
-          setStatus({ message: t('output.videoReady', 'Video is ready for playback with uploaded subtitles!'), type: 'success' });
+          setStatus({ message: t('output.videoPreparedForPreview', 'Video and subtitles prepared. Loading preview...'), type: 'success' });
         } else {
           // Otherwise, generate new subtitles
           await generateSubtitles(input, inputType, apiKeysSet, subtitleOptions);
@@ -313,7 +314,7 @@ export const useAppHandlers = (appState) => {
       // If we already have subtitles data (from an uploaded SRT file), don't generate new subtitles
       if (subtitlesData && subtitlesData.length > 0) {
         // Just update the status to show that the video is ready
-        setStatus({ message: t('output.videoReady', 'Video is ready for playback with uploaded subtitles!'), type: 'success' });
+        setStatus({ message: t('output.videoPreparedForPreview', 'Video and subtitles prepared. Loading preview...'), type: 'success' });
       } else {
         // Otherwise, generate new subtitles
         await generateSubtitles(input, inputType, apiKeysSet, subtitleOptions);
@@ -424,7 +425,8 @@ export const useAppHandlers = (appState) => {
           setUploadedFile,
           setIsSrtOnlyMode,
           prepareVideoWrapper,
-          t
+          t,
+          setSelectedVideo
         );
 
         // Now process with the downloaded file
@@ -742,7 +744,8 @@ export const useAppHandlers = (appState) => {
       setUploadedFile,
       setIsSrtOnlyMode,
       prepareVideoForSegmentsWrapper,
-      t
+      t,
+      setSelectedVideo
     );
   };
 

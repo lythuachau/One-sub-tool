@@ -8,8 +8,11 @@ REVISION = 'e06da1f4e0c0010354f4e7702f02c18cbdd419a2'
 ROOT = Path(__file__).resolve().parents[1]
 ENV = ROOT / '.venv-capcut'
 
-subprocess.run(['uv', 'venv', '--python', '3.11', str(ENV)], check=True)
 python = ENV / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
+if not python.exists():
+    if ENV.exists():
+        raise RuntimeError('Existing CapCut environment is incomplete; rename it before reinstalling.')
+    subprocess.run(['uv', 'venv', '--python', '3.11', str(ENV)], check=True)
 subprocess.run(['uv', 'pip', 'install', '--python', str(python),
                 f'git+https://github.com/K07VN/capcut-tts-api.git@{REVISION}'], check=True)
 with urllib.request.urlopen(f'https://raw.githubusercontent.com/K07VN/capcut-tts-api/{REVISION}/Voice.json', timeout=30) as response:

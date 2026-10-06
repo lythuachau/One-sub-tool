@@ -1,7 +1,7 @@
 /**
  * Module for batch processing of audio segments
  * Handles large numbers of audio segments by splitting them into batches
- * Uses the version 1 narration timing rules while preserving speech content
+ * Uses bounded, single-pass tempo adjustment without truncating speech
  */
 
 const path = require('path');
@@ -15,255 +15,34 @@ const { TEMP_AUDIO_DIR } = require('../directoryManager');
 // Import media duration utility
 const { getMediaDuration } = require('../../../services/videoProcessing/durationUtils');
 
-const VERSION1_MIN_TEMPO = 0.75;
-const VERSION1_INITIAL_MAX_TEMPO = 1.55;
-const VERSION1_OVERLAP_MAX_TEMPO = 1.85;
-const VERSION1_OVERLAP_GAP_MS = 50;
-const VERSION1_MIN_SLOT_MS = 200;
-const VERSION1_OVERLAP_RETIME_THRESHOLD = 1.08;
-const VERSION1_FADE_MAX_MS = 70;
-
-/**
- * Find blank spaces (gaps) between segments where we can potentially move segments
- * @param {Array} segments - Array of segments with timing information
- * @returns {Array} - Array of blank spaces with start and end times
- */
-const findBlankSpaces = (segments) => {
-  const blankSpaces = [];
-
-  // Sort segments by start time
-  const sortedSegments = [...segments].sort((a, b) => a.start - b.start);
-
-  for (let i = 0; i < sortedSegments.length - 1; i++) {
-    const currentSegment = sortedSegments[i];
-    const nextSegment = sortedSegments[i + 1];
-
-    // Calculate the effective end time (allowing 0.2s overlap at the end)
-    const currentEffectiveEnd = currentSegment.naturalEnd - 0.2;
-
-    // Check if there's a gap between current segment's effective end and next segment's start
-    if (nextSegment.start > currentEffectiveEnd) {
-      const gapStart = currentEffectiveEnd;
-      const gapEnd = nextSegment.start;
-      const gapDuration = gapEnd - gapStart;
-
-      if (gapDuration > 0.1) { // Only consider gaps larger than 0.1s
-        blankSpaces.push({
-          start: gapStart,
-          end: gapEnd,
-          duration: gapDuration,
-          afterSegmentId: currentSegment.subtitle_id,
-          beforeSegmentId: nextSegment.subtitle_id
-        });
-      }
-    }
+const analyzeAndAdjustSegments = async (audioSegments) => {
+  const measured = [];
+  for (const segment of audioSegments || []) {
+    measured.push({ ...segment, actualDuration: await getMediaDuration(segment.path) });
   }
-
-  return blankSpaces;
-};
-
-/**
- * Calculate distributed shifting across multiple blank spaces with gradual decrease
- * @param {Array} segmentsToShift - The segments that need to be shifted (current and following)
- * @param {Array} blankSpaces - Available blank spaces to the left
- * @param {number} requiredShift - How much shift is needed to avoid overlap
- * @returns {Object} - Object with distributed shift amounts and strategy info
- */
-const calculateDistributedGroupShift = (segmentsToShift, blankSpaces, requiredShift) => {
-  if (blankSpaces.length === 0) {
-    return { totalShiftAmount: 0, strategy: 'push-right', canUseBlankSpaces: false, distributedShifts: [] };
+  const { planNaturalTiming } = require('./naturalTimingPlanner');
+  const planned = planNaturalTiming(measured);
+  const unresolved = planned.filter(segment => segment.overflowMs > 20);
+  console.log('[TTS TIMING]', JSON.stringify(planned.map(s => ({
+    id: s.subtitle_id, duration: s.actualDuration, available: s.availableDuration,
+    tempo: s.tempo, overflowMs: s.overflowMs
+  }))));
+  if (unresolved.length) {
+    const error = new Error('TTS vượt thời lượng ở câu ' + unresolved.map(s =>
+      String(s.subtitle_id) + ' (dư ' + s.overflowMs + ' ms)').join(', ')
+      + '. Hãy rút gọn lời rồi tạo lại thuyết minh; tốc độ được giới hạn 1.12x để giữ giọng tự nhiên.');
+    error.status = 422;
+    error.code = 'TTS_TIMING_REVIEW_REQUIRED';
+    error.segments = unresolved.map(s => ({ id: s.subtitle_id, overflowMs: s.overflowMs, requiredTempo: s.requiredTempo }));
+    throw error;
   }
-
-  // Find up to 5 blank spaces to the left, sorted by distance from the first segment (nearest first)
-  const usableBlankSpaces = blankSpaces
-    .filter(space => space.end <= segmentsToShift[0].start)
-    .map(space => ({
-      ...space,
-      distanceFromSegment: segmentsToShift[0].start - space.end,
-      maxUsableSpace: Math.min(space.duration - 0.1, segmentsToShift[0].start - space.start)
-    }))
-    .sort((a, b) => a.distanceFromSegment - b.distanceFromSegment) // Nearest first
-    .slice(0, 5); // Take up to 5 blank spaces
-
-  if (usableBlankSpaces.length === 0) {
-    return { totalShiftAmount: 0, strategy: 'push-right', canUseBlankSpaces: false, distributedShifts: [] };
-  }
-
-  // Calculate total available space across all usable blank spaces
-  const totalAvailableSpace = usableBlankSpaces.reduce((sum, space) => sum + space.maxUsableSpace, 0);
-
-  if (totalAvailableSpace < 0.1) {
-    return { totalShiftAmount: 0, strategy: 'push-right', canUseBlankSpaces: false, distributedShifts: [] };
-  }
-
-  // Calculate how much we can actually shift (limited by available space and required shift)
-  const actualShiftAmount = Math.min(requiredShift, totalAvailableSpace);
-
-  // Distribute the shift across blank spaces with gradual decrease (giảm dần)
-  // Nearest space gets the most shift, furthest gets the least
-  const distributedShifts = [];
-  let remainingShift = actualShiftAmount;
-
-  // Create a decreasing weight system: nearest = 1.0, next = 0.8, next = 0.6, etc.
-  const weights = usableBlankSpaces.map((_, index) => Math.max(0.2, 1.0 - (index * 0.2)));
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-
-  for (let i = 0; i < usableBlankSpaces.length && remainingShift > 0.05; i++) {
-    const space = usableBlankSpaces[i];
-    const weight = weights[i];
-
-    // Calculate this space's share of the total shift (proportional to weight)
-    const proposedShift = (actualShiftAmount * weight) / totalWeight;
-
-    // Limit by space availability and remaining shift
-    const actualSpaceShift = Math.min(
-      proposedShift,
-      space.maxUsableSpace,
-      remainingShift
-    );
-
-    if (actualSpaceShift > 0.05) { // Only use shifts larger than 0.05s
-      distributedShifts.push({
-        blankSpace: space,
-        shiftAmount: actualSpaceShift,
-        weight: weight,
-        segmentRange: i === 0 ? 'all' : `from-${i}`
-      });
-      remainingShift -= actualSpaceShift;
-    }
-  }
-
-  const totalShiftAchieved = distributedShifts.reduce((sum, shift) => sum + shift.shiftAmount, 0);
-
-  if (totalShiftAchieved > 0.1) {
-    return {
-      totalShiftAmount: totalShiftAchieved,
-      strategy: `distributed-shift-across-${distributedShifts.length}-spaces`,
-      canUseBlankSpaces: true,
-      distributedShifts: distributedShifts,
-      totalAvailableSpace: totalAvailableSpace
-    };
-  }
-
-  return { totalShiftAmount: 0, strategy: 'push-right', canUseBlankSpaces: false, distributedShifts: [] };
-};
-
-/**
- * Analyze audio segments and adjust their timing to avoid overlaps
- * This creates a more natural narration by ensuring segments don't talk over each other
- *
- * Version 1 timing rules:
- * 1. Fit each clip to its subtitle slot between 0.75x and 1.55x.
- * 2. Reserve a 50ms gap before the next subtitle.
- * 3. Resolve remaining overlap up to 1.85x; preserve any remaining overflow.
- *
- * @param {Array} audioSegments - Array of audio segments to analyze
- * @returns {Promise<Array>} - Array of adjusted audio segments
- */
-const runFfmpeg = (args) => new Promise((resolve, reject) => {
-  const process = spawn(getFfmpegPath(), args);
-  let stderr = '';
-  process.stderr.on('data', data => { stderr += data.toString(); });
-  process.on('error', reject);
-  process.on('close', code => {
-    if (code === 0) resolve();
-    else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
-  });
-});
-
-const changeTempoFile = async (source, destination, tempo) => {
-  await runFfmpeg([
-    '-y', '-v', 'error', '-i', source,
-    '-filter:a', `atempo=${tempo.toFixed(5)}`,
-    '-c:a', 'pcm_s16le', '-ar', '44100', destination
-  ]);
-  return destination;
-};
-
-const trimAndFadeFile = async (source, destination, duration) => {
-  const fadeDuration = Math.min(VERSION1_FADE_MAX_MS / 1000, Math.max(0.02, duration / 5));
-  const fadeStart = Math.max(0, duration - fadeDuration);
-  await runFfmpeg([
-    '-y', '-v', 'error', '-i', source,
-    '-filter:a', `atrim=duration=${duration.toFixed(4)},asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(4)}:d=${fadeDuration.toFixed(4)}`,
-    '-c:a', 'pcm_s16le', '-ar', '44100', destination
-  ]);
-  return destination;
-};
-
-const analyzeAndAdjustSegments = async (audioSegments, preserveSpeech = true) => {
-  if (!audioSegments || audioSegments.length === 0) {
-    return audioSegments || [];
-  }
-
-  const sorted = [...audioSegments].sort((a, b) => a.start - b.start);
-  const fitted = [];
-  let initialSpeedups = 0;
-  let overlapSpeedups = 0;
-  let faded = 0;
-  let preservedOverflows = 0;
-
-  for (let index = 0; index < sorted.length; index++) {
-    const segment = { ...sorted[index] };
-    const rawDuration = await getMediaDuration(segment.path);
-    const subtitleDuration = Math.max(0.35, (segment.end ?? segment.start) - segment.start);
-    const initialTempo = Math.min(VERSION1_INITIAL_MAX_TEMPO, Math.max(VERSION1_MIN_TEMPO, rawDuration / subtitleDuration));
-    if (rawDuration > 0.05 && Math.abs(initialTempo - 1) >= 0.02) {
-      const destination = path.join(TEMP_AUDIO_DIR, `legacy_fit_${Date.now()}_${index}.wav`);
-      await changeTempoFile(segment.path, destination, initialTempo);
-      segment.path = destination;
-      initialSpeedups++;
-    }
-    segment.actualDuration = await getMediaDuration(segment.path);
-    segment.naturalEnd = segment.start + segment.actualDuration;
-    fitted.push(segment);
-  }
-
-  for (let index = 0; index < fitted.length - 1; index++) {
-    const current = fitted[index];
-    const next = fitted[index + 1];
-    const slotMs = Math.max(VERSION1_MIN_SLOT_MS, Math.round((next.start - current.start) * 1000) - VERSION1_OVERLAP_GAP_MS);
-    let audioDurationMs = current.actualDuration * 1000;
-    if (audioDurationMs <= slotMs) {
-      continue;
-    }
-
-    const overlapTempo = Math.min(VERSION1_OVERLAP_MAX_TEMPO, audioDurationMs / slotMs);
-    if (overlapTempo >= VERSION1_OVERLAP_RETIME_THRESHOLD) {
-      const destination = path.join(TEMP_AUDIO_DIR, `legacy_overlap_${Date.now()}_${index}.wav`);
-      await changeTempoFile(current.path, destination, overlapTempo);
-      current.path = destination;
-      current.actualDuration = await getMediaDuration(destination);
-      current.naturalEnd = current.start + current.actualDuration;
-      audioDurationMs = current.actualDuration * 1000;
-      overlapSpeedups++;
-    }
-
-    if (audioDurationMs > slotMs && preserveSpeech) {
-      current.overflowMs = Math.round(audioDurationMs - slotMs);
-      current.overflowTargetMs = slotMs;
-      preservedOverflows++;
-      continue;
-    }
-
-    if (audioDurationMs > slotMs) {
-      const destination = path.join(TEMP_AUDIO_DIR, `legacy_fade_${Date.now()}_${index}.wav`);
-      await trimAndFadeFile(current.path, destination, slotMs / 1000);
-      current.path = destination;
-      current.actualDuration = await getMediaDuration(destination);
-      current.naturalEnd = current.start + current.actualDuration;
-      faded++;
-    }
-  }
-
-  console.log(`TTS alignment: initial speedups=${initialSpeedups}, overlap speedups=${overlapSpeedups}, fades=${faded}, preserved overflows=${preservedOverflows}`);
-  return fitted;
+  return planned;
 };
 const processBatch = async (audioSegments, outputPath, batchIndex, totalDuration, smartOverlapResolution = true, preserveSpeech = true) => {
 
-  // Apply version 1 fitting and overlap resolution if enabled
+  // Plan before mixing; the route plans globally across batch boundaries.
   let segmentsToProcess = audioSegments;
-  if (smartOverlapResolution && audioSegments.length > 1) {
+  if (smartOverlapResolution && audioSegments.length > 0) {
     try {
       // Fit clips before building the delayed audio mix
       segmentsToProcess = await analyzeAndAdjustSegments(audioSegments, preserveSpeech);
@@ -312,7 +91,7 @@ const processBatch = async (audioSegments, outputPath, batchIndex, totalDuration
     // Apply resampling and delay to the correct input stream
     // Output this processed stream as [a<index>] (e.g., [a0], [a1], ...)
     // Keep the generated TTS level unchanged, matching version 1 overlay behavior
-    filterComplex += `[${inputIndex}]aresample=44100,adelay=${delayMs}|${delayMs},volume=1.0[${delayedStreamName}]; `;
+    filterComplex += `[${inputIndex}]aresample=44100,atempo=${(segment.tempo || 1).toFixed(5)},adelay=${delayMs}|${delayMs},volume=1.0[${delayedStreamName}]; `;
     amixInputs.push(`[${delayedStreamName}]`); // Add the delayed stream name to the list for amix
   });
 
