@@ -536,6 +536,7 @@ const UnifiedNarrationSection = ({
         </VibiNarration>
       ) : narrationMethod === 'capcut' ? (
         <CapCutNarration
+          videoPath={videoPath}
           videoDuration={videoDuration}
           getOriginalSubtitles={() => originalSubtitles || subtitles || []}
           getSubtitles={() => useGroupedSubtitles && groupedSubtitles?.length ? groupedSubtitles : subtitleSource === 'translated' ? translatedSubtitles : originalSubtitles || subtitles}

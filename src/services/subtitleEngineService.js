@@ -48,30 +48,27 @@ const distributeTiming = (start, end, parts) => {
   });
 };
 
-const nearestSpeechBoundary = (value, regions, tolerance) => {
-  let best = value;
-  let distance = tolerance;
-  regions.forEach((region) => {
-    [region.start, region.end].forEach((boundary) => {
-      const candidateDistance = Math.abs(boundary - value);
-      if (candidateDistance < distance) {
-        best = boundary;
-        distance = candidateDistance;
-      }
-    });
+const nearestSpeechBoundary = (value, regions, field) => {
+  let best = value, distance = 0.25;
+  regions.forEach(region => {
+    const boundary = region[field];
+    if (Number.isFinite(boundary) && Math.abs(boundary - value) < distance) {
+      best = boundary; distance = Math.abs(boundary - value);
+    }
   });
   return best;
 };
 
 export const applySpeechRegions = (subtitles, regions, duration) => {
-  if (!Array.isArray(regions) || regions.length === 0) return subtitles;
-  const maxDuration = finiteNumber(duration, Number.POSITIVE_INFINITY);
+  if (!Array.isArray(regions) || !regions.length) return subtitles;
+  const limit = finiteNumber(duration, Infinity);
   let previousEnd = 0;
-  return subtitles.map((subtitle) => {
-    let start = nearestSpeechBoundary(subtitle.start, regions, 1.25);
-    let end = nearestSpeechBoundary(subtitle.end, regions, 1.25);
-    start = Math.max(previousEnd, Math.min(start, maxDuration));
-    end = Math.max(start + 0.05, Math.min(end, maxDuration));
+  return subtitles.map((subtitle, index) => {
+    const start = nearestSpeechBoundary(subtitle.start, regions, 'start');
+    const end = Math.min(nearestSpeechBoundary(subtitle.end, regions, 'end'), limit);
+    const minimum = Math.max(0.05, (subtitle.end - subtitle.start) * 0.5);
+    if (start < 0 || end - start < minimum || start < previousEnd
+      || end > (subtitles[index+1]?.start ?? Infinity)) { previousEnd = subtitle.end; return subtitle; }
     previousEnd = end;
     return { ...subtitle, start, end };
   });

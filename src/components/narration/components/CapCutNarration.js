@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_BASE_URL } from '../../../config';
 import { getAudioUrl } from '../../../services/narrationService';
+import { prepareSourceSpeech } from '../../../services/sourceSpeechTiming';
 import { repairNarration } from '../../../services/narrationTimingRepair';
 import { buildDubbingWindows } from '../../../utils/adaptiveDubbing';
 import GenerateButton from './GenerateButton';
@@ -39,7 +40,7 @@ const writeVoiceCatalogCache = (voices, catalogRevision, inactiveIds = []) => {
   return true;
 };
 
-export default function CapCutNarration({ children, getSubtitles, getOriginalSubtitles, videoDuration, subtitleSource, isGenerating,
+export default function CapCutNarration({ children, getSubtitles, getOriginalSubtitles, videoDuration, videoPath, subtitleSource, isGenerating,
   setIsGenerating, generationResults, setGenerationResults, downloadAllAudio, downloadAlignedAudio,
   currentAudio, isPlaying, playAudio, useGroupedSubtitles, audioRef, handleAudioEnded }) {
   const [cachedCatalog] = useState(readVoiceCatalogCache);
@@ -180,7 +181,8 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
   });
 
   const generate = (onlyIds) => run(async signal => {
-    const selected = buildDubbingWindows(getSubtitles() || [], getOriginalSubtitles?.() || [], videoDuration);
+    const sources = await prepareSourceSpeech(videoPath, getOriginalSubtitles?.() || [], signal, setMessage);
+    const selected = buildDubbingWindows(getSubtitles() || [], sources, videoDuration);
     if (!selected.length) throw new Error('Chưa có phụ đề để tạo thuyết minh.');
     const results = onlyIds ? [...generationResults] : [];
     const pending = onlyIds ? selected.filter(s => onlyIds.some(id => String(id) === String(s.id))) : selected;
@@ -191,6 +193,7 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
       setMessage(`CapCut: ${index + 1}/${pending.length}`);
       let result;
       try {
+        if (subtitle.alignmentError) throw new Error(subtitle.alignmentError);
         if (subtitle.targetDuration < 0.35) throw new Error('Khung đọc dưới 350 ms. Cần căn lại hoặc gộp cụm theo câu gốc; không ép đọc nhanh.');
         const previous = onlyIds && results.find(r => String(r.subtitle_id) === String(subtitle.id));
         const reusable = previous?.success && previous.filename && previous.voice === voice
