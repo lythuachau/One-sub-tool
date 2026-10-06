@@ -322,6 +322,7 @@ const OutputContainer = ({
 
           {/* Unified Narration Section - Now separate from Translation */}
           <UnifiedNarrationSection
+            videoDuration={videoDuration}
             subtitles={translatedSubtitles || editedLyrics || subtitlesData}
             originalSubtitles={editedLyrics || subtitlesData}
             translatedSubtitles={translatedSubtitles}

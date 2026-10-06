@@ -1,3 +1,4 @@
+import { adaptiveTimingFields, assertAdaptiveReady } from '../utils/adaptiveDubbing';
 /**
  * Service for managing aligned narration audio
  */
@@ -34,6 +35,7 @@ export const generateAlignedNarration = async (generationResults, onProgress = n
     }
 
     // Prepare the data for the aligned narration
+    assertAdaptiveReady(generationResults);
     const narrationData = generationResults
       .filter(result => result.success && (result.filename || result.audioData))
       .map(result => {
@@ -47,7 +49,8 @@ export const generateAlignedNarration = async (generationResults, onProgress = n
           method: result.method,
           start: start,
           end: end,
-          text: result.text || ''
+          text: result.text || '',
+          ...adaptiveTimingFields(result)
         };
 
         // Add either filename or audioData depending on what's available

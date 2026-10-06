@@ -79,6 +79,8 @@ def main():
             "start": float(segment.start or 0.0),
             "end": float(segment.end or 0.0),
             "text": text,
+            "words": [{"start": float(w.start), "end": float(w.end), "text": w.word}
+                      for w in (segment.words or [])],
         })
 
     result = {

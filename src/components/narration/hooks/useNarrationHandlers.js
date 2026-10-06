@@ -1,3 +1,4 @@
+import { adaptiveTimingFields, assertAdaptiveReady } from '../../../utils/adaptiveDubbing';
 import { transcribeAudio } from '../../../services/transcriptionService';
 import {
   uploadReferenceAudio,
@@ -946,6 +947,7 @@ const useNarrationHandlers = ({
 
 
       // Prepare the data for the aligned narration with correct timing
+      assertAdaptiveReady(generationResults);
       const narrationData = generationResults
         .filter(result => result.success && result.filename)
         .map(result => {
@@ -992,6 +994,7 @@ const useNarrationHandlers = ({
               start: subtitle.start,
               end: subtitle.end,
               text: subtitle.text || result.text || '',
+              ...adaptiveTimingFields(result),
               // Preserve original_ids if they exist
               original_ids: result.original_ids || [subtitleId]
             };
@@ -1005,6 +1008,7 @@ const useNarrationHandlers = ({
             start: result.start || 0,
             end: result.end || (result.start ? result.start + 5 : 5),
             text: result.text || '',
+            ...adaptiveTimingFields(result),
             // Preserve original_ids if they exist
             original_ids: result.original_ids || [subtitleId]
           };

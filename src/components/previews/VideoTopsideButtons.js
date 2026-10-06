@@ -1,3 +1,4 @@
+import { adaptiveTimingFields, assertAdaptiveReady } from '../../utils/adaptiveDubbing';
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import LiquidGlass from '../common/LiquidGlass';
@@ -174,6 +175,7 @@ const VideoTopsideButtons = ({
               });
 
               // EXACT same data preparation as downloadAlignedAudio in useNarrationHandlers.js
+              assertAdaptiveReady(generationResults);
               const narrationData = generationResults
                 .filter(result => result.success && result.filename)
                 .map(result => {
@@ -220,6 +222,7 @@ const VideoTopsideButtons = ({
                       start: result.original_ids?.length > 1 ? result.start : subtitle.start,
                       end: result.original_ids?.length > 1 ? result.end : subtitle.end,
                       text: subtitle.text || result.text || '',
+                      ...adaptiveTimingFields(result),
                       // Preserve original_ids if they exist
                       original_ids: result.original_ids || [subtitleId]
                     };
@@ -233,6 +236,7 @@ const VideoTopsideButtons = ({
                     start: result.start || 0,
                     end: result.end || (result.start ? result.start + 5 : 5),
                     text: result.text || '',
+                    ...adaptiveTimingFields(result),
                     // Preserve original_ids if they exist
                     original_ids: result.original_ids || [subtitleId]
                   };

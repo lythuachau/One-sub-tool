@@ -227,10 +227,9 @@ const concatenateAudioFiles = async (inputFiles, outputPath) => {
 
   // Build the ffmpeg command arguments
   const ffmpegArgs = [
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', fileListPath,
-    '-c', 'copy',
+    ...inputFiles.flatMap(file => ['-i', file]),
+    '-filter_complex', inputFiles.map((_,i) => '[' + i + ':a]').join('') + 'amix=inputs=' + inputFiles.length + ':duration=longest:normalize=0',
+    '-c:a', 'pcm_s16le',
     '-y',
     outputPath
   ];

@@ -389,7 +389,15 @@ const downloadAlignedAudio = async (req, res) => {
       console.log(`[SERVER] Auto TTS optimization: inspected=${optimizationStats.inspected}, optimized=${optimizationStats.optimized}, attempts=${optimizationStats.attempts}`);
     }
 
-    // Keep original audio timing; natural-speed optimization is disabled.
+    if (narrations.some(n => n.timingVersion === 1)) {
+      if (audioSegments.length !== narrations.length) throw Object.assign(new Error('Thiếu audio trong kế hoạch thuyết minh.'), { status: 422 });
+      for (const segment of audioSegments) {
+        segment.actualDuration = await getMediaDuration(segment.path);
+        segment.needsTimingReview = narrations.find(n => n.subtitle_id === segment.subtitle_id)?.needsTimingReview === true;
+      }
+      audioSegments = require('./adaptiveTimingPlanner').planAdaptiveTiming(audioSegments);
+      console.log('[ADAPTIVE TIMING]', JSON.stringify(audioSegments.map(s => ({id:s.subtitle_id, start:s.start, end:s.naturalEnd, tempo:s.tempo}))));
+    }
 
     // Find the total duration needed (end time of the last adjusted segment)
     // Use the adjusted segments to get the actual final duration
