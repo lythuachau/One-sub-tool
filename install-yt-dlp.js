@@ -159,16 +159,6 @@ try {
   }
 }
 
-// Install additional TTS libraries if not already present
-logger.progress('Installing additional TTS libraries (edge-tts, gtts)');
-try {
-  executeWithRetry('uv pip install --python .venv edge-tts gtts');
-  logger.success('Additional TTS libraries installed successfully');
-} catch (error) {
-  logger.warning(`Error installing TTS libraries: ${error.message}`);
-  logger.info('TTS libraries installation failed, but yt-dlp is working');
-}
-
 logger.newLine();
 logger.success('yt-dlp setup completed!');
 logger.info('You can now use yt-dlp for YouTube video downloads.');

@@ -9,9 +9,34 @@ exit /b %INSTALLER_EXIT%
 # ONE_SUB_POWERSHELL
 $ErrorActionPreference = 'Stop'
 $repository = 'https://github.com/lythuachau/One-sub-tool.git'
-$installBranch = 'release/v3.0.0-alpha.7'
+$installerVersion = '3.0.0-alpha.8'
+$installBranch = "release/v$installerVersion"
 $installerDirectory = Split-Path -Parent $env:ONE_SUB_INSTALLER
-$project = if (Test-Path -LiteralPath (Join-Path $installerDirectory 'package.json')) {
+$requiredProjectFiles = @(
+    'server\engines\asrCatalog.js',
+    'server\routes\engineRoutes.js',
+    'server\routes\asrUploadRoutes.js',
+    'asr_services\faster_whisper\app.py',
+    'asr_services\qwen3_asr\app.py',
+    'parakeet_wrapper\app.py'
+)
+
+function Test-CompatibleProject {
+    param([string]$Directory)
+    $manifest = Join-Path $Directory 'package.json'
+    if (!(Test-Path -LiteralPath $manifest)) { return $false }
+    try { $package = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json }
+    catch { return $false }
+    if ($package.name -ne 'one-sub-tool' -or $package.version -ne $installerVersion -or !$package.scripts.'setup:tts') {
+        return $false
+    }
+    foreach ($file in $requiredProjectFiles) {
+        if (!(Test-Path -LiteralPath (Join-Path $Directory $file))) { return $false }
+    }
+    return $true
+}
+
+$project = if (Test-CompatibleProject $installerDirectory) {
     $installerDirectory
 } else {
     Join-Path $installerDirectory 'One-sub-tool'
@@ -39,8 +64,8 @@ function Assert-Project {
     $manifest = Join-Path $project 'package.json'
     if (!(Test-Path -LiteralPath $manifest)) { throw "Chua co du an tai $project. Chon cai dat truoc." }
     $package = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
-    if ($package.name -ne 'one-sub-tool' -or !$package.scripts.'setup:tts') {
-        throw 'Thu muc nay khong phai One-sub-tool v3. Hay dung bo cai trong mot thu muc rieng.'
+    if ($package.name -ne 'one-sub-tool' -or $package.version -ne $installerVersion -or !$package.scripts.'setup:tts') {
+        throw "Yeu cau source One-sub-tool $installerVersion; tim thay $($package.name) $($package.version). Hay dung bo cai trong thu muc rieng."
     }
     if (Test-Path -LiteralPath (Join-Path $project '.git')) {
         $origin = & git -C $project remote get-url origin 2>$null
@@ -48,14 +73,7 @@ function Assert-Project {
             throw "origin khong tro toi One-sub-tool: $origin"
         }
     }
-    foreach ($requiredFile in @(
-        'server\engines\asrCatalog.js',
-        'server\routes\engineRoutes.js',
-        'server\routes\asrUploadRoutes.js',
-        'asr_services\faster_whisper\app.py',
-        'asr_services\qwen3_asr\app.py',
-        'parakeet_wrapper\app.py'
-    )) {
+    foreach ($requiredFile in $requiredProjectFiles) {
         if (!(Test-Path -LiteralPath (Join-Path $project $requiredFile))) {
             throw "Source thieu ASR catalog/Parakeet: $requiredFile. Hay cap nhat One-sub-tool v3 truoc khi cai."
         }
@@ -132,13 +150,17 @@ function Install-Application {
         Ensure-Python | Out-Host
         $python = Join-Path $project '.venv\Scripts\python.exe'
         Invoke-Checked 'uv' @('python', 'install', '3.11')
+        Write-Host 'Don dependency TTS cu trong .venv cua du an: gtts, edge-tts.'
+        Invoke-Checked 'uv' @('pip', 'uninstall', '--python', $python, 'gtts', 'edge-tts')
         Write-Host 'Cai core + Gemini/API Vibi + CapCut. Khong sua API key, video, model cache hay lich su.'
         if (Test-Path -LiteralPath 'package-lock.json') {
-            Invoke-Checked 'npm.cmd' @('ci', '--no-audit', '--no-fund')
+            Invoke-Checked 'npm.cmd' @('ci', '--include=dev', '--no-audit', '--no-fund')
         } else {
             Write-Warning 'Repository chua co lockfile goc; dung npm install, khong tu xoa lockfile.'
-            Invoke-Checked 'npm.cmd' @('install', '--no-audit', '--no-fund')
+            Invoke-Checked 'npm.cmd' @('install', '--include=dev', '--no-audit', '--no-fund')
         }
+        Invoke-Checked 'node' @('-e', "for (const name of ['cross-env', 'concurrently', 'react-scripts']) { require.resolve(name + '/package.json'); console.log(name + ' OK'); }")
+        Invoke-Checked 'npm.cmd' @('run', 'setup:react-env')
         Invoke-Checked $python @('-m', 'yt_dlp', '--version')
         Invoke-Checked 'node' @('node_modules/playwright/cli.js', 'install', 'chromium')
         Invoke-Checked $python @('scripts/setup-capcut.py')
@@ -156,6 +178,7 @@ function Install-Application {
         Invoke-Checked 'uv' @('pip', 'check', '--python', $python)
         Invoke-Checked (Join-Path $project '.venv-capcut\Scripts\python.exe') @('-c', "from capcut_tts_api import CapCutClient; print('CapCut import OK')")
         Write-Host '[OK] Cai dat hoan tat. Chon Chay tool trong menu.' -ForegroundColor Green
+        Write-Host "Thu muc chay dung: $project"
         Write-Host 'Gemini/Vibi: nhap key trong Cai dat. Lan dau mo TTS local co the tai model va mat nhieu thoi gian.'
     } finally { Pop-Location }
 }
@@ -190,8 +213,10 @@ function Start-Application {
     param([bool]$LocalTts)
     Assert-Project
     Assert-Stopped
-    if (!(Test-Path -LiteralPath (Join-Path $project 'node_modules\react-scripts\package.json'))) {
-        throw 'Chua cai dependencies. Chon cai dat truoc.'
+    foreach ($module in @('react-scripts', 'cross-env', 'concurrently')) {
+        if (!(Test-Path -LiteralPath (Join-Path $project "node_modules\$module\package.json"))) {
+            throw "Thieu dependency $module. Chon 1 hoac 2 de cai du dependencies (--include=dev)."
+        }
     }
     Push-Location -LiteralPath $project
     try {
@@ -202,6 +227,7 @@ function Start-Application {
 }
 
 function Show-Diagnostics {
+    Write-Host "Bo cai: One-sub-tool $installerVersion; nguon: $repository ($installBranch)"
     Write-Host "Du an: $project"
     foreach ($command in @('git', 'node', 'npm.cmd', 'uv', 'ffmpeg', 'ffprobe')) {
         $found = Get-Command $command -ErrorAction SilentlyContinue
@@ -229,8 +255,13 @@ if ($env:ONE_SUB_INSTALLER_ACTION -eq '/help') {
 }
 if ($env:ONE_SUB_INSTALLER_ACTION) { Write-Error 'Tham so khong hop le. Dung /help.'; exit 1 }
 while ($true) {
-    Write-Host "`n=== One-sub-tool v3 - Windows Installer ===" -ForegroundColor Cyan
+    Write-Host "`n=== One-sub-tool $installerVersion - Windows Installer ===" -ForegroundColor Cyan
     Write-Host "Du an: $project"
+    Write-Host "Nguon cai moi: $repository ($installBranch)"
+    if ($project -ne $installerDirectory -and (Test-Path -LiteralPath (Join-Path $installerDirectory 'package.json'))) {
+        Write-Host 'Thu muc hien tai la source cu/khong tuong thich. Cai ban moi trong thu muc con; giu nguyen source va du lieu cu.' -ForegroundColor Yellow
+        Write-Host 'Hay dung muc 4/5 de chay dung ban moi, thay vi npm run trong source cu.'
+    }
     Write-Host '1. Cai / sua full: TTS + Gemini/Vibi + ASR catalog (tai model theo nhu cau)'
     Write-Host '2. Cai / sua API: CapCut + Vibi/Gemini, khong cai model TTS local'
     Write-Host '3. Cap nhat ma nguon an toan (giu nhanh, chi fast-forward)'

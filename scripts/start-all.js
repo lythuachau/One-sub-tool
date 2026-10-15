@@ -5,6 +5,7 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const { version } = require('../package.json');
 
 // Import port management and CORS setup
 const { killProcessesOnPorts, cleanupTrackingFile } = require('../server/utils/portManager');
@@ -14,21 +15,21 @@ const { markStartupPhase } = require('../server/utils/startupMetrics');
 async function startAllServices() {
   process.env.STARTUP_EPOCH_MS = process.env.STARTUP_EPOCH_MS || String(Date.now());
   markStartupPhase('launcher_started');
-  console.log('🚀 Starting One-Click Subtitles Generator...');
+  console.log(`🚀 Starting One-sub-tool v${version}...`);
 
   // Setup CORS environment variables
   setupEnvironmentVariables();
   markStartupPhase('environment_ready');
-  
+
   try {
     // Clean up old processes and tracking
     console.log('🧹 Cleaning up previous processes...');
     cleanupTrackingFile();
     await killProcessesOnPorts();
     markStartupPhase('ports_cleaned');
-    
+
     console.log('✅ Cleanup complete, starting services...');
-    
+
     // Start all services using concurrently with proper command escaping
     const frontendCommand = process.env.FRONTEND_MODE === 'production'
       ? 'npm run start:prod --silent'
