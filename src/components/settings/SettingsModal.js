@@ -10,6 +10,7 @@ import { checkGeminiModels, getGeminiModelLabel } from '../../services/gemini/mo
 import LanguageSelector from '../LanguageSelector';
 import CloseButton from '../common/CloseButton';
 import { API_BASE_URL } from '../../config';
+import { normalizeSubtitleEngine } from '../../config/asrEngines';
 
 // Import modularized components
 import ApiKeysTab from './tabs/ApiKeysTab';
@@ -254,7 +255,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       const savedGeniusKey = localStorage.getItem('genius_token') || '';
       const savedVibiKey = localStorage.getItem('vibi_api_key') || '';
       const savedSegmentDuration = parseInt(localStorage.getItem('segment_duration') || '5');
-      const savedSubtitleEngine = localStorage.getItem('subtitle_engine') === 'whisper' ? 'whisper' : 'gemini';
+      const savedSubtitleEngine = normalizeSubtitleEngine(localStorage.getItem('subtitle_engine'));
       const savedGeminiModel = localStorage.getItem('gemini_model') || 'gemini-flash-latest';
       const savedTimeFormat = localStorage.getItem('time_format') || 'hms';
       const savedShowWaveform = localStorage.getItem('show_waveform') !== 'false'; // Default to true if not set
@@ -475,8 +476,8 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
       JSON.stringify(thinkingBudgets) !== JSON.stringify(originalSettings.thinkingBudgets);
 
     setHasChanges(settingsChanged);
-  }, [isSettingsLoaded, geminiApiKey, youtubeApiKey, geniusApiKey, segmentDuration, geminiModel, timeFormat, showWaveform,
-      segmentOffsetCorrection, subtitleEngine, transcriptionPrompt, useOAuth, youtubeClientId,
+  }, [isSettingsLoaded, geminiApiKey, youtubeApiKey, geniusApiKey, segmentDuration, subtitleEngine, geminiModel, timeFormat, showWaveform,
+      segmentOffsetCorrection, transcriptionPrompt, useOAuth, youtubeClientId,
       youtubeClientSecret, useVideoAnalysis, videoAnalysisModel, videoAnalysisTimeout, autoSelectDefaultPreset,
       optimizeVideos, optimizedResolution, useOptimizedPreview, useCookiesForDownload, thinkingBudgets, originalSettings, vibiApiKey]);
 

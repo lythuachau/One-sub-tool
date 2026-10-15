@@ -56,6 +56,33 @@ def _preset_voice_metadata() -> dict[str, Any]:
         return {"default_voice": None, "voices": [], "error": str(exc)}
 
 
+def _materialize_onnx_cache() -> None:
+    import shutil
+    import tempfile
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
+    from vieneu._v3_turbo_engine.onnx_runtime_lite import (
+        _V3_REPO, _V3_FILES, _CODEC_REPO, _CODEC_FILES,
+    )
+
+    for repo, files in ((_V3_REPO, _V3_FILES), (_CODEC_REPO, _CODEC_FILES)):
+        for filename in files:
+            try:
+                artifact = Path(hf_hub_download(repo_id=repo, filename=filename, local_files_only=True))
+            except LocalEntryNotFoundError:
+                artifact = Path(hf_hub_download(repo_id=repo, filename=filename))
+            if not artifact.is_symlink():
+                continue
+            # ONNX external data must resolve inside the graph directory, not HF blobs.
+            with tempfile.NamedTemporaryFile(dir=artifact.parent, suffix=".pending", delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+            try:
+                shutil.copyfile(artifact, temporary_path)
+                temporary_path.replace(artifact)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+
+
 def _load_model() -> Any:
     global model, model_error, model_loading
     if model is not None:
@@ -69,6 +96,8 @@ def _load_model() -> Any:
             from vieneu import Vieneu
 
             backend = clean_text(__import__("os").getenv("VIENEU_BACKEND", "onnx"))
+            if backend == "onnx":
+                _materialize_onnx_cache()
             try:
                 model = Vieneu(backend=backend) if backend else Vieneu()
             except TypeError:

@@ -82,9 +82,9 @@ function parseYtdlpProgress(output) {
       output.includes('merger complete') ||
       (output.includes('[Merger]') && output.includes('100%'))) {
     return {
-      progress: 100,
-      status: 'completed',
-      phase: 'completed'
+      progress: 99,
+      status: 'downloading',
+      phase: 'merge'
     };
   }
 

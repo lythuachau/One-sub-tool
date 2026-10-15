@@ -9,7 +9,7 @@ exit /b %INSTALLER_EXIT%
 # ONE_SUB_POWERSHELL
 $ErrorActionPreference = 'Stop'
 $repository = 'https://github.com/lythuachau/One-sub-tool.git'
-$installBranch = 'v3/remove-legacy-tts'
+$installBranch = 'release/v3.0.0-alpha.7'
 $installerDirectory = Split-Path -Parent $env:ONE_SUB_INSTALLER
 $project = if (Test-Path -LiteralPath (Join-Path $installerDirectory 'package.json')) {
     $installerDirectory
@@ -42,12 +42,31 @@ function Assert-Project {
     if ($package.name -ne 'one-sub-tool' -or !$package.scripts.'setup:tts') {
         throw 'Thu muc nay khong phai One-sub-tool v3. Hay dung bo cai trong mot thu muc rieng.'
     }
+    if (Test-Path -LiteralPath (Join-Path $project '.git')) {
+        $origin = & git -C $project remote get-url origin 2>$null
+        if ($LASTEXITCODE -eq 0 -and $origin -and $origin -notmatch '^(https://github\.com/|git@github\.com:)lythuachau/One-sub-tool(\.git)?/?$') {
+            throw "origin khong tro toi One-sub-tool: $origin"
+        }
+    }
+    foreach ($requiredFile in @(
+        'server\engines\asrCatalog.js',
+        'server\routes\engineRoutes.js',
+        'server\routes\asrUploadRoutes.js',
+        'asr_services\faster_whisper\app.py',
+        'asr_services\qwen3_asr\app.py',
+        'parakeet_wrapper\app.py'
+    )) {
+        if (!(Test-Path -LiteralPath (Join-Path $project $requiredFile))) {
+            throw "Source thieu ASR catalog/Parakeet: $requiredFile. Hay cap nhat One-sub-tool v3 truoc khi cai."
+        }
+    }
 }
 
 function Assert-Stopped {
-    $ports = @(3030, 3031, 3032, 3033, 3034, 3035, 3036)
+    $ports = @(3030, 3031, 3032, 3033, 3034, 3035, 3036, 3038, 3039, 3040, 3041, 3042)
     foreach ($name in @('FRONTEND_PORT', 'BACKEND_PORT', 'WEBSOCKET_PORT', 'VIDEO_RENDERER_PORT',
-        'VIDEO_RENDERER_FRONTEND_PORT', 'NARRATION_PORT', 'OMNIVOICE_PORT', 'CHATTERBOX_PORT')) {
+        'VIDEO_RENDERER_FRONTEND_PORT', 'NARRATION_PORT', 'OMNIVOICE_PORT', 'CHATTERBOX_PORT',
+        'PARAKEET_PORT', 'FW_TURBO_PORT', 'FW_LARGE_V3_PORT', 'QWEN3_ASR_17B_PORT', 'QWEN3_ASR_06B_PORT')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value -match '^\d+$') { $ports += [int]$value }
     }
@@ -112,6 +131,7 @@ function Install-Application {
     try {
         Ensure-Python | Out-Host
         $python = Join-Path $project '.venv\Scripts\python.exe'
+        Invoke-Checked 'uv' @('python', 'install', '3.11')
         Write-Host 'Cai core + Gemini/API Vibi + CapCut. Khong sua API key, video, model cache hay lich su.'
         if (Test-Path -LiteralPath 'package-lock.json') {
             Invoke-Checked 'npm.cmd' @('ci', '--no-audit', '--no-fund')
@@ -193,7 +213,9 @@ function Show-Diagnostics {
         Write-Host "Phien ban package: $($package.name) $($package.version)"
     }
     foreach ($file in @('.venv\Scripts\python.exe', '.venv-capcut\Scripts\python.exe',
-        '.venv-capcut\Voice.json', 'node_modules\react-scripts\package.json', 'server\tts_service\requirements.txt')) {
+        '.venv-capcut\Voice.json', 'node_modules\react-scripts\package.json', 'server\tts_service\requirements.txt',
+        'server\engines\asrCatalog.js', 'server\routes\asrUploadRoutes.js',
+        'asr_services\faster_whisper\app.py', 'asr_services\qwen3_asr\app.py', 'parakeet_wrapper\app.py')) {
         Write-Host ("{0}: {1}" -f $file, (Test-Path -LiteralPath (Join-Path $project $file)))
     }
     Write-Host 'Kiem tra chi doc: khong tai model, khong goi API TTS, khong thay doi he thong.'
@@ -209,7 +231,7 @@ if ($env:ONE_SUB_INSTALLER_ACTION) { Write-Error 'Tham so khong hop le. Dung /he
 while ($true) {
     Write-Host "`n=== One-sub-tool v3 - Windows Installer ===" -ForegroundColor Cyan
     Write-Host "Du an: $project"
-    Write-Host '1. Cai / sua full: VieNeu-TTS + OmniVoice + CapCut + Vibi/Gemini'
+    Write-Host '1. Cai / sua full: TTS + Gemini/Vibi + ASR catalog (tai model theo nhu cau)'
     Write-Host '2. Cai / sua API: CapCut + Vibi/Gemini, khong cai model TTS local'
     Write-Host '3. Cap nhat ma nguon an toan (giu nhanh, chi fast-forward)'
     Write-Host '4. Chay tool + VieNeu-TTS + OmniVoice'

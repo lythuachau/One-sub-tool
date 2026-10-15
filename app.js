@@ -29,6 +29,10 @@ const videoCompatibilityRoutes = require('./server/routes/videoCompatibilityRout
 const downloadOnlyRoutes = require('./server/routes/downloadOnlyRoutes');
 const diagnosticsRoutes = require('./server/routes/diagnostics');
 const subtitleEngineRoutes = require('./server/routes/subtitleEngineRoutes');
+const engineRoutes = require('./server/routes/engineRoutes');
+const asrProxyRoutes = require('./server/routes/asrProxyRoutes');
+const parakeetRoutes = require('./server/routes/parakeetRoutes');
+const asrUploadRoutes = require('./server/routes/asrUploadRoutes');
 const videoRendererRoutes = require('./server/routes/videoRendererRoutes');
 
 // Initialize Express app
@@ -288,7 +292,7 @@ app.get('/api/test', (req, res) => {
 
 
 // Health check endpoint for frontend to verify server connection
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   const healthStatus = {
     status: 'ok',
     message: 'Server is healthy',
@@ -314,6 +318,25 @@ app.get('/api/health', (req, res) => {
     }
   };
 
+  await Promise.all(['vieneu', 'omnivoice'].map(async engine => {
+    const service = healthStatus.services[engine];
+    service.ready = false;
+    if (!service.running || !service.port) return;
+    try {
+      const response = await fetch(`http://127.0.0.1:${service.port}/health`, {
+        signal: AbortSignal.timeout(2000)
+      });
+      if (!response.ok) throw new Error(`Health HTTP ${response.status}`);
+      const status = await response.json();
+      service.ready = status.ready === true;
+      service.loading = status.loading === true;
+      service.state = status.state || status.model_state;
+      service.initialization_error = status.initialization_error || null;
+    } catch (error) {
+      service.state = 'unreachable';
+      service.error = error.message;
+    }
+  }));
   res.json(healthStatus);
 });
 
@@ -363,6 +386,10 @@ app.use('/api/narration', narrationRoutes);
 app.use('/api/test', testAudioRoute);
 app.use('/api/diagnostics', diagnosticsRoutes);
 app.use('/api', subtitleEngineRoutes);
+app.use('/api', parakeetRoutes);
+app.use('/api', asrProxyRoutes);
+app.use('/api', engineRoutes);
+app.use('/api', asrUploadRoutes);
 app.use('/api/video-renderer', videoRendererRoutes);
 
 module.exports = app;

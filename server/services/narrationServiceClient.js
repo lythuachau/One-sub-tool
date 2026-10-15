@@ -116,7 +116,7 @@ const previewNarration = async ({ text, reference_audio = null, reference_text =
  * @returns {Promise<Object|null>} - Narration results or null if streaming
  */
 // Import the enhanceF5TTSNarrations function
-const { enhanceF5TTSNarrations } = require('../controllers/narration/audioFileController');
+const { enhanceF5TTSNarrations } = require('../controllers/narration/audioFile/enhancer');
 
 const generateNarration = async (reference_audio, reference_text, subtitles, settings, res) => {
   const narrationUrl = `http://127.0.0.1:${NARRATION_PORT}/api/narration/generate`;

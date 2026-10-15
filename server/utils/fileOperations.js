@@ -72,7 +72,33 @@ const safeMoveFileSync = (sourcePath, destPath) => {
   }
 };
 
+const publishVideoFile = async (sourcePath, destPath) => {
+  const stagingPath = `${destPath}.${require('crypto').randomUUID()}.pending`;
+  await fsPromises.mkdir(path.dirname(destPath), { recursive: true });
+  try {
+    await fsPromises.copyFile(sourcePath, stagingPath, fs.constants.COPYFILE_EXCL);
+    const stat = await fsPromises.stat(stagingPath);
+    if (!stat.size) throw new Error('Downloaded video is empty');
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fsPromises.rename(stagingPath, destPath);
+        break;
+      } catch (error) {
+        if (!['EBUSY', 'EPERM', 'EACCES'].includes(error.code) || attempt >= 4) throw error;
+        await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
+    await fsPromises.unlink(sourcePath).catch(error => console.warn(`Temporary video cleanup: ${error.message}`));
+    return destPath;
+  } finally {
+    await fsPromises.unlink(stagingPath).catch(error => {
+      if (error.code !== 'ENOENT') console.warn(`Video staging cleanup: ${error.message}`);
+    });
+  }
+};
+
 module.exports = {
+  publishVideoFile,
   safeMoveFile,
   safeMoveFileSync
 };

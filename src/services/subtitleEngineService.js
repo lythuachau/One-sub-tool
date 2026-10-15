@@ -1,11 +1,13 @@
 import { API_BASE_URL } from '../config';
+import { isLocalSubtitleEngine, normalizeSubtitleEngine } from '../config/asrEngines';
 
 const DEFAULT_ENGINE = 'gemini';
 
 export const getSubtitleEngine = () => {
-  const value = localStorage.getItem('subtitle_engine');
-  return value === 'whisper' ? 'whisper' : DEFAULT_ENGINE;
+  return normalizeSubtitleEngine(localStorage.getItem('subtitle_engine') || DEFAULT_ENGINE);
 };
+
+export { isLocalSubtitleEngine };
 
 const finiteNumber = (value, fallback) => {
   const parsed = Number(value);
@@ -148,6 +150,42 @@ export const transcribeWithWhisper = async (mediaFile, options = {}, onStatusUpd
   onStatusUpdate?.({
     message: `Whisper hoàn tất (${subtitles.length} segments, ${payload.detected || 'unknown'})`,
     type: 'success'
+  });
+  return subtitles;
+};
+
+export const transcribeWithSelectedAsr = async (mediaFile, options = {}, onStatusUpdate) => {
+  const engine = getSubtitleEngine();
+  if (engine === 'whisper') return transcribeWithWhisper(mediaFile, options, onStatusUpdate);
+  if (!isLocalSubtitleEngine(engine)) throw new Error(`Unsupported local ASR engine: ${engine}`);
+  if (!mediaFile) throw new Error('Choose a local video or audio file before using a local ASR model.');
+
+  const servicePath = engine === 'nvidia-parakeet' ? 'parakeet' : `asr/${engine}`;
+  const body = new FormData();
+  body.append('file', mediaFile, mediaFile.name || 'media');
+  body.append('segment_strategy', localStorage.getItem('asr_segment_strategy') || 'sentence');
+  body.append('max_chars', localStorage.getItem('asr_max_chars') || '60');
+  body.append('max_words', localStorage.getItem('asr_max_words') || '7');
+  body.append('pause_threshold', localStorage.getItem('asr_pause_threshold') || '0.8');
+  const language = options.language || localStorage.getItem('source_language');
+  if (language && language !== 'auto') body.append('language', language);
+
+  onStatusUpdate?.({ message: `${engine} đang nhận dạng tiếng nói...`, type: 'loading' });
+  const response = await fetch(`${API_BASE_URL}/${servicePath}/transcribe-file`, {
+    method: 'POST',
+    body,
+    signal: options.signal,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.error || `${engine} request failed (${response.status})`);
+  }
+
+  const duration = Number(payload.duration_seconds) > 0 ? Number(payload.duration_seconds) : undefined;
+  const subtitles = normalizeSubtitleSegments(payload.segments, duration);
+  onStatusUpdate?.({
+    message: `${engine} hoàn tất (${subtitles.length} segments)`,
+    type: 'success',
   });
   return subtitles;
 };

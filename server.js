@@ -18,6 +18,8 @@ const { startNarrationService } = require('./server/startNarrationService');
 const { initializeProgressWebSocket } = require('./server/services/shared/progressWebSocket');
 const { stopRenderer } = require('./server/services/videoRendererManager');
 const { markStartupPhase } = require('./server/utils/startupMetrics');
+const asrEngineManager = require('./server/engines/engineManager');
+const { ENGINE_IDS } = require('./server/engines/venvPaths');
 
 // Import port management
 const { killProcessesOnPorts, trackProcess, cleanupTrackingFile } = require('./server/utils/portManager');
@@ -127,6 +129,8 @@ process.on('SIGINT', async () => {
 
   try {
     const server = await serverPromise;
+
+    await Promise.allSettled(ENGINE_IDS.map((id) => asrEngineManager.stop(id)));
 
     await stopRenderer().catch((error) => {
       console.error('Error stopping video renderer:', error);

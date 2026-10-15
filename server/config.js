@@ -14,7 +14,12 @@ const PORTS = {
   VIDEO_RENDERER_FRONTEND: parseInt(process.env.VIDEO_RENDERER_FRONTEND_PORT) || 3034,
   NARRATION: parseInt(process.env.NARRATION_PORT) || 3035,
   OMNIVOICE: parseInt(process.env.OMNIVOICE_PORT || process.env.CHATTERBOX_PORT) || 3036,
-  CHATTERBOX: parseInt(process.env.OMNIVOICE_PORT || process.env.CHATTERBOX_PORT) || 3036
+  CHATTERBOX: parseInt(process.env.OMNIVOICE_PORT || process.env.CHATTERBOX_PORT) || 3036,
+  PARAKEET: parseInt(process.env.PARAKEET_PORT) || 3038,
+  FW_TURBO: parseInt(process.env.FW_TURBO_PORT) || 3039,
+  FW_LARGE_V3: parseInt(process.env.FW_LARGE_V3_PORT) || 3040,
+  QWEN3_ASR_17B: parseInt(process.env.QWEN3_ASR_17B_PORT) || 3041,
+  QWEN3_ASR_06B: parseInt(process.env.QWEN3_ASR_06B_PORT) || 3042
 };
 
 // Server configuration using unified ports
@@ -34,7 +39,9 @@ const CORS_ORIGIN = process.env.NODE_ENV === 'production' ? '*' : [
   `http://localhost:${PORTS.NARRATION}`,
   `http://127.0.0.1:${PORTS.NARRATION}`,
   `http://localhost:${PORTS.CHATTERBOX}`,
-  `http://127.0.0.1:${PORTS.CHATTERBOX}`
+  `http://127.0.0.1:${PORTS.CHATTERBOX}`,
+  ...[PORTS.PARAKEET, PORTS.FW_TURBO, PORTS.FW_LARGE_V3, PORTS.QWEN3_ASR_17B, PORTS.QWEN3_ASR_06B]
+    .flatMap((port) => [`http://localhost:${port}`, `http://127.0.0.1:${port}`])
 ];
 
 // Directory paths

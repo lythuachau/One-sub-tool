@@ -5,7 +5,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { safeMoveFile } = require('../../utils/fileOperations');
+const { publishVideoFile } = require('../../utils/fileOperations');
 const { getYtDlpPath, getYtDlpArgs } = require('../shared/ytdlpUtils');
 const {
   getDownloadProgress,
@@ -68,8 +68,8 @@ async function downloadWithYtdlp(videoURL, outputPath, quality = '360p', videoId
       '--merge-output-format', 'mp4',
       '--progress',  // Enable progress reporting
       '--newline',   // Force newlines for better parsing
-      '--no-post-overwrites',  // Prevent hanging on post-processing
-      '--prefer-ffmpeg'        // Use ffmpeg for merging (more reliable)
+      '--no-post-overwrites',
+      '--js-runtimes', `node:${process.execPath}`
     ];
 
     console.log(`[ytdlpDownloader] Running yt-dlp with args:`, args);
@@ -117,15 +117,14 @@ async function downloadWithYtdlp(videoURL, outputPath, quality = '360p', videoId
           console.log(`[ytdlpDownloader] Checking for file: ${tempPath}`);
           // Check if the file exists
           if (fs.existsSync(tempPath)) {
-            console.log(`[ytdlpDownloader] File exists, setting progress to 100% for: ${videoId}`);
-            // Set progress to 100% before moving file
+            console.log(`[ytdlpDownloader] File exists, publishing output for: ${videoId}`);
+            // Completion is acknowledged by the download route after publication.
             if (videoId) {
-              setDownloadProgress(videoId, 100, 'completed');
+              setDownloadProgress(videoId, 99, 'downloading');
             }
 
-            // Use safeMoveFile to avoid EPERM errors on Windows
-            // This uses copy-then-delete instead of rename
-            safeMoveFile(tempPath, outputPath)
+            // Publish only a fully copied file.
+            publishVideoFile(tempPath, outputPath)
               .then(() => {
                 resolve(true);
               })

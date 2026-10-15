@@ -183,21 +183,8 @@ export const downloadYoutubeVideo = async (youtubeUrl, onProgress = () => {}, fo
         await progressWebSocketClient.subscribe(videoId, (progressData) => {
           // Update local progress with real-time server progress
           if (downloadQueue[videoId]) {
-            // Preserve the URL when updating from WebSocket
-            const existingUrl = downloadQueue[videoId].url;
-            downloadQueue[videoId].progress = progressData.progress;
-            downloadQueue[videoId].status = progressData.status;
-            if (progressData.error) {
-              downloadQueue[videoId].error = progressData.error;
-            }
-            // Restore the URL if it was previously set
-            if (existingUrl && !downloadQueue[videoId].url) {
-              downloadQueue[videoId].url = existingUrl;
-            }
-            // If download is completed and we don't have a URL, construct it
-            if (progressData.status === 'completed' && !downloadQueue[videoId].url) {
-              downloadQueue[videoId].url = `${SERVER_URL}/videos/${videoId}.mp4`;
-              console.log(`[WebSocket] Set URL for completed download ${videoId}: ${downloadQueue[videoId].url}`);
+            if (!['completed', 'error', 'cancelled'].includes(downloadQueue[videoId].status)) {
+              downloadQueue[videoId].progress = Math.min(99, progressData.progress);
             }
           }
           onProgress(progressData.progress);

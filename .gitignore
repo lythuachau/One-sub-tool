@@ -104,6 +104,7 @@ tiktokdien/
 # Python virtual environments
 venv/
 .venv/
+.venvs/
 env/
 .env/
 __pycache__/

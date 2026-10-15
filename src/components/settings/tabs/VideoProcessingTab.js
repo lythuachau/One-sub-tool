@@ -7,6 +7,8 @@ import MaterialSwitch from '../../common/MaterialSwitch';
 import '../../../styles/common/material-switch.css';
 import { useGeminiModels } from '../../../hooks/useGeminiModels';
 import { getGeminiModelLabel } from '../../../services/gemini/modelDiscovery';
+import { MANAGED_ASR_ENGINES, isLocalSubtitleEngine } from '../../../config/asrEngines';
+import LocalAsrEngineManager from '../LocalAsrEngineManager';
 
 const VideoProcessingTab = ({
   segmentDuration,
@@ -126,7 +128,7 @@ const VideoProcessingTab = ({
                 {t('settings.subtitleEngine', 'Subtitle engine')}
               </label>
               <p className="setting-description">
-                {t('settings.subtitleEngineDescription', 'Choose Gemini with timestamp normalization or local Faster-Whisper transcription.')}
+                {t('settings.subtitleEngineDescription', 'Choose Gemini or a local ASR model for subtitle transcription.')}
               </p>
               <select
                 id="subtitle-engine"
@@ -135,9 +137,17 @@ const VideoProcessingTab = ({
                 className="enhanced-select"
               >
                 <option value="gemini">{t('settings.subtitleEngineGemini', 'Gemini + normalized timestamps')}</option>
-                <option value="whisper">{t('settings.subtitleEngineWhisper', 'Whisper (Faster-Whisper)')}</option>
+                {MANAGED_ASR_ENGINES.map((engine) => (
+                  <option value={engine.id} key={engine.id}>
+                    {t(engine.labelKey, engine.fallbackLabel)}
+                  </option>
+                ))}
               </select>
             </div>
+
+            {MANAGED_ASR_ENGINES.some((engine) => engine.id === subtitleEngine) && (
+              <LocalAsrEngineManager engineId={subtitleEngine} />
+            )}
 
             {/* Segment Duration Setting */}
             <div className="compact-setting">
@@ -187,7 +197,7 @@ const VideoProcessingTab = ({
                 value={geminiModel}
                 onChange={(e) => setGeminiModel(e.target.value)}
                 className="enhanced-select"
-                disabled={subtitleEngine === 'whisper'}
+                disabled={isLocalSubtitleEngine(subtitleEngine)}
               >
                 {!hasGeminiModelOption && geminiModel && (
                   <option value={geminiModel}>{geminiModel} ({t('settings.modelChecking', 'checking availability')})</option>
@@ -220,7 +230,7 @@ const VideoProcessingTab = ({
                     id="use-video-analysis"
                     checked={useVideoAnalysis}
                     onChange={(e) => setUseVideoAnalysis(e.target.checked)}
-                    disabled={subtitleEngine === 'whisper'}
+                    disabled={isLocalSubtitleEngine(subtitleEngine)}
                     ariaLabel={t('settings.useVideoAnalysis', 'Detect Patterns + Context Memory/Rules')}
                     icons={true}
                   />
@@ -245,7 +255,7 @@ const VideoProcessingTab = ({
                 value={videoAnalysisModel}
                 onChange={(e) => setVideoAnalysisModel(e.target.value)}
                 className="enhanced-select"
-                disabled={!useVideoAnalysis || subtitleEngine === 'whisper'}
+                disabled={!useVideoAnalysis || isLocalSubtitleEngine(subtitleEngine)}
               >
                 {!hasVideoAnalysisModelOption && videoAnalysisModel && (
                   <option value={videoAnalysisModel}>{videoAnalysisModel} ({t('settings.modelChecking', 'checking availability')})</option>
@@ -268,7 +278,7 @@ const VideoProcessingTab = ({
                 value={videoAnalysisTimeout}
                 onChange={(e) => setVideoAnalysisTimeout(e.target.value)}
                 className="enhanced-select"
-                disabled={!useVideoAnalysis || subtitleEngine === 'whisper'}
+                disabled={!useVideoAnalysis || isLocalSubtitleEngine(subtitleEngine)}
               >
                 <option value="none">{t('settings.timeoutNone', 'No Timeout')}</option>
                 <option value="10">{t('settings.timeout10Seconds', '10 Seconds')}</option>
@@ -286,7 +296,7 @@ const VideoProcessingTab = ({
                     id="auto-select-default-preset"
                     checked={autoSelectDefaultPreset}
                     onChange={(e) => setAutoSelectDefaultPreset(e.target.checked)}
-                    disabled={!useVideoAnalysis || subtitleEngine === 'whisper'}
+                    disabled={!useVideoAnalysis || isLocalSubtitleEngine(subtitleEngine)}
                     ariaLabel={t('settings.autoSelectDefaultPreset', 'Auto-select default preset on timeout')}
                     icons={true}
                   />

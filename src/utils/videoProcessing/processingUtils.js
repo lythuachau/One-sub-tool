@@ -15,8 +15,9 @@ import { API_BASE_URL } from '../../config';
 import { getGeminiErrorMessage } from '../../services/gemini/errorUtils';
 import {
   getSubtitleEngine,
+  isLocalSubtitleEngine,
   normalizeGeminiSubtitles,
-  transcribeWithWhisper
+  transcribeWithSelectedAsr
 } from '../../services/subtitleEngineService';
 
 const processGeminiMedia = async (mediaFile, onStatusUpdate, t, options, duration) => {
@@ -56,8 +57,8 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
   const { userProvidedSubtitles } = options;
   const isAudio = mediaFile.type.startsWith('audio/');
 
-  if (getSubtitleEngine() === 'whisper') {
-    return transcribeWithWhisper(mediaFile, {}, onStatusUpdate);
+  if (isLocalSubtitleEngine(getSubtitleEngine())) {
+    return transcribeWithSelectedAsr(mediaFile, {}, onStatusUpdate);
   }
 
   const useVideoAnalysis = !isAudio && localStorage.getItem('use_video_analysis') !== 'false';
@@ -109,10 +110,10 @@ export const processLongVideo = async (mediaFile, onStatusUpdate, t, options = {
   // Extract options
   const { userProvidedSubtitles } = options;
 
-  if (getSubtitleEngine() === 'whisper') {
+  if (isLocalSubtitleEngine(getSubtitleEngine())) {
     localStorage.setItem('video_processing_in_progress', 'true');
     try {
-      return await transcribeWithWhisper(mediaFile, {}, onStatusUpdate);
+      return await transcribeWithSelectedAsr(mediaFile, {}, onStatusUpdate);
     } finally {
       localStorage.removeItem('video_processing_in_progress');
     }

@@ -6,7 +6,7 @@ import { getTranscriptionRulesSync } from '../../utils/transcriptionRulesStore';
 import { hasValidTokens } from '../../services/youtubeApiService';
 import { PROMPT_PRESETS } from '../../services/geminiService';
 import { cleanupInvalidBlobUrls } from '../../utils/videoUtils';
-import { getSubtitleEngine } from '../../services/subtitleEngineService';
+import { getSubtitleEngine, isLocalSubtitleEngine } from '../../services/subtitleEngineService';
 
 /**
  * Custom hook for managing application state
@@ -220,7 +220,7 @@ export const useAppState = () => {
 
   // Reactively update status messages based on API key changes
   useEffect(() => {
-    if (getSubtitleEngine() === 'whisper') return;
+    if (isLocalSubtitleEngine(getSubtitleEngine())) return;
     // If we have a Gemini API key and the current status is an API key required message, clear it
     if (apiKeysSet.gemini && status?.message && status.type === 'info') {
       const isApiKeyRequiredMessage =
