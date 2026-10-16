@@ -17,10 +17,9 @@ import ApiKeysTab from './tabs/ApiKeysTab';
 import VideoProcessingTab from './tabs/VideoProcessingTab';
 import PromptsTab from './tabs/PromptsTab';
 import CacheTab from './tabs/CacheTab';
-import AboutTab from './tabs/AboutTab';
 
 // Import icons
-import { ApiKeyIcon, ProcessingIcon, PromptIcon, CacheIcon, AboutIcon } from './icons/TabIcons';
+import { ApiKeyIcon, ProcessingIcon, PromptIcon, CacheIcon } from './icons/TabIcons';
 import { FiAlertCircle, FiCheckCircle, FiRefreshCw, FiX } from 'react-icons/fi';
 
 // Import theme utilities
@@ -31,12 +30,9 @@ import initSettingsTabsDrag from '../../utils/settingsTabsDrag';
 const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState(() => {
-    // Load last active tab from localStorage or default to 'api-keys'
     const savedTab = localStorage.getItem('settings_last_active_tab');
-    // Redirect removed legacy tabs to API keys.
-    return (savedTab === 'gemini-settings' || savedTab === 'model-management')
-      ? 'api-keys'
-      : (savedTab || 'api-keys');
+    const availableTabs = ['api-keys', 'video-processing', 'prompts', 'cache'];
+    return availableTabs.includes(savedTab) ? savedTab : 'api-keys';
   });
 
   // Reference to the tabs container
@@ -51,12 +47,6 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
 
   // Theme state
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
-
-  // State for tracking which About background to show
-  const [backgroundType, setBackgroundType] = useState(() => {
-    // Initialize from localStorage
-    return localStorage.getItem('about_background_type') || 'default';
-  });
 
   // Initialize pill position and drag functionality on component mount
   useEffect(() => {
@@ -88,7 +78,7 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
 
       // Determine animation direction based on tab order
       if (previousTab) {
-        const tabOrder = ['api-keys', 'video-processing', 'prompts', 'cache', 'about'];
+        const tabOrder = ['api-keys', 'video-processing', 'prompts', 'cache'];
         const prevIndex = tabOrder.indexOf(previousTab);
         const currentIndex = tabOrder.indexOf(activeTab);
 
@@ -620,67 +610,6 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
               <CacheIcon />
               {t('settings.cache', 'Cache')}
             </button>
-            <button
-              className={`settings-tab ${activeTab === 'about' ? 'active' : ''}`}
-              onClick={() => {
-                // Select a random background when clicking on the About tab
-                if (activeTab !== 'about') {
-                  // Possible background types: default, alternative, 1, 2, 3, 4, 5
-                  const allBackgroundOptions = ['default', 'alternative', '1', '2', '3', '4', '5'];
-
-                  // Get the history of recently used backgrounds from localStorage
-                  let recentBackgrounds = [];
-                  try {
-                    const storedHistory = localStorage.getItem('about_background_history');
-                    if (storedHistory) {
-                      recentBackgrounds = JSON.parse(storedHistory);
-                    }
-                  } catch (e) {
-                    console.error('Error parsing background history:', e);
-                    // If there's an error, just use an empty array
-                    recentBackgrounds = [];
-                  }
-
-                  // Filter out recently used backgrounds (if we have enough options)
-                  // We'll avoid reusing the last 3 backgrounds if possible
-                  let availableOptions = [...allBackgroundOptions];
-
-                  // Only filter if we have enough options to choose from
-                  if (allBackgroundOptions.length > recentBackgrounds.length) {
-                    availableOptions = allBackgroundOptions.filter(
-                      option => !recentBackgrounds.includes(option)
-                    );
-                  }
-
-                  // If we somehow filtered out all options, use all backgrounds
-                  if (availableOptions.length === 0) {
-                    availableOptions = [...allBackgroundOptions];
-                  }
-
-                  // Select a random background from available options
-                  const randomBackground = availableOptions[Math.floor(Math.random() * availableOptions.length)];
-
-                  // Update the history - add the new background and keep only the last 3
-                  recentBackgrounds.unshift(randomBackground);
-                  if (recentBackgrounds.length > 3) {
-                    recentBackgrounds = recentBackgrounds.slice(0, 3);
-                  }
-
-                  // Save the updated history
-                  localStorage.setItem('about_background_history', JSON.stringify(recentBackgrounds));
-
-                  // Save the selected background
-                  localStorage.setItem('about_background_type', randomBackground);
-
-                  // Update the state
-                  setBackgroundType(randomBackground);
-                }
-                setActiveTab('about');
-              }}
-            >
-              <AboutIcon />
-              {t('settings.about', 'About')}
-            </button>
           </div>
 
           <CloseButton
@@ -774,10 +703,6 @@ const SettingsModal = ({ onClose, onSave, apiKeysSet, setApiKeysSet }) => {
             <CacheTab />
           </div>
 
-          {/* About Tab Content */}
-          <div key={`settings-tab-about-${activeTab}`} className={`settings-tab-content ${activeTab === 'about' ? 'active' : ''} settings-tab-content-slide-${animationDirection}`}>
-            <AboutTab backgroundType={backgroundType} />
-          </div>
         </div>
 
         <div className="settings-footer">

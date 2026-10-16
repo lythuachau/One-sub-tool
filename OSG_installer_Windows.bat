@@ -9,17 +9,38 @@ exit /b %INSTALLER_EXIT%
 # ONE_SUB_POWERSHELL
 $ErrorActionPreference = 'Stop'
 $repository = 'https://github.com/lythuachau/One-sub-tool.git'
-$installerVersion = '3.0.0-alpha.8'
+$installerVersion = '3.0.0-alpha.9'
 $installBranch = "release/v$installerVersion"
 $installerDirectory = Split-Path -Parent $env:ONE_SUB_INSTALLER
 $requiredProjectFiles = @(
     'server\engines\asrCatalog.js',
     'server\routes\engineRoutes.js',
     'server\routes\asrUploadRoutes.js',
+    'server\tts_service\omnivoice_service.py',
+    'src\services\chatterboxService.js',
+    'src\components\narration\components\NarrationInputSource.js',
     'asr_services\faster_whisper\app.py',
     'asr_services\qwen3_asr\app.py',
     'parakeet_wrapper\app.py'
 )
+
+function Test-OmniVoiceLanguageCatalog {
+    param([string]$Directory)
+    $servicePath = Join-Path $Directory 'server\tts_service\omnivoice_service.py'
+    $clientPath = Join-Path $Directory 'src\services\chatterboxService.js'
+    $inputPath = Join-Path $Directory 'src\components\narration\components\NarrationInputSource.js'
+    if (!(Test-Path -LiteralPath $servicePath) -or !(Test-Path -LiteralPath $clientPath) -or !(Test-Path -LiteralPath $inputPath)) {
+        return $false
+    }
+    $service = Get-Content -LiteralPath $servicePath -Raw
+    $client = Get-Content -LiteralPath $clientPath -Raw
+    $inputComponent = Get-Content -LiteralPath $inputPath -Raw
+    return $service.Contains('@app.get("/languages")') -and
+        $service.Contains('@app.get("/api/narration/languages")') -and
+        $service.Contains('LANG_NAME_TO_ID') -and
+        $client.Contains('getOmniVoiceLanguages') -and
+        $inputComponent.Contains('getOmniVoiceLanguages')
+}
 
 function Test-CompatibleProject {
     param([string]$Directory)
@@ -33,7 +54,7 @@ function Test-CompatibleProject {
     foreach ($file in $requiredProjectFiles) {
         if (!(Test-Path -LiteralPath (Join-Path $Directory $file))) { return $false }
     }
-    return $true
+    return (Test-OmniVoiceLanguageCatalog $Directory)
 }
 
 $project = if (Test-CompatibleProject $installerDirectory) {
@@ -75,8 +96,11 @@ function Assert-Project {
     }
     foreach ($requiredFile in $requiredProjectFiles) {
         if (!(Test-Path -LiteralPath (Join-Path $project $requiredFile))) {
-            throw "Source thieu ASR catalog/Parakeet: $requiredFile. Hay cap nhat One-sub-tool v3 truoc khi cai."
+            throw "Source thieu file can thiet cho One-sub-tool ${installerVersion}: $requiredFile. Hay dung bo cai trong source v3 moi nhat."
         }
+    }
+    if (!(Test-OmniVoiceLanguageCatalog $project)) {
+        throw "Source $installBranch chua co danh muc ngon ngu OmniVoice dong (endpoint /languages va lang_map). Hay cap nhat source release truoc khi cai de tranh cai phien ban cu."
     }
 }
 
@@ -171,6 +195,8 @@ function Install-Application {
             Invoke-Checked 'uv' @('pip', 'install', '--python', $python, 'torch==2.11.0', 'torchaudio==2.11.0', '--reinstall-package', 'torch', '--reinstall-package', 'torchaudio', '--index-url', $torchIndex)
             Invoke-Checked 'uv' @('pip', 'install', '--python', $python, '-r', 'server/tts_service/requirements.txt')
             Invoke-Checked $python @('-c', "import vieneu, omnivoice, torch, torchaudio; print('TTS imports OK; torch=' + torch.__version__ + '; CUDA=' + str(torch.cuda.is_available()))")
+            $languageCatalogCheck = "import importlib.util,pathlib; package=importlib.util.find_spec('omnivoice'); root=next(iter(package.submodule_search_locations)); path=pathlib.Path(root)/'utils'/'lang_map.py'; spec=importlib.util.spec_from_file_location('_one_sub_omnivoice_lang_map',path); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); languages=getattr(module,'LANG_NAME_TO_ID',{}); assert len(languages)>3,'OmniVoice language map is incomplete'; assert 'ru' in languages.values(),'Russian language mapping is missing'; print('OmniVoice dynamic language catalog OK; languages='+str(len(languages)))"
+            Invoke-Checked $python @('-c', $languageCatalogCheck)
             if ($device -eq '1') {
                 Invoke-Checked $python @('-c', "import torch; assert torch.cuda.is_available(), 'CUDA chua san sang: kiem tra driver NVIDIA hoac chon cai CPU'; print(torch.zeros(1, device='cuda'))")
             }
@@ -240,10 +266,14 @@ function Show-Diagnostics {
     }
     foreach ($file in @('.venv\Scripts\python.exe', '.venv-capcut\Scripts\python.exe',
         '.venv-capcut\Voice.json', 'node_modules\react-scripts\package.json', 'server\tts_service\requirements.txt',
+        'server\tts_service\omnivoice_service.py', 'src\components\narration\components\NarrationInputSource.js',
         'server\engines\asrCatalog.js', 'server\routes\asrUploadRoutes.js',
         'asr_services\faster_whisper\app.py', 'asr_services\qwen3_asr\app.py', 'parakeet_wrapper\app.py')) {
         Write-Host ("{0}: {1}" -f $file, (Test-Path -LiteralPath (Join-Path $project $file)))
     }
+    $languageCatalogReady = Test-OmniVoiceLanguageCatalog $project
+    Write-Host ("OmniVoice dynamic language catalog: {0}" -f $(if ($languageCatalogReady) { 'OK' } else { 'MISSING' }))
+    Write-Host ("Installer source compatibility: {0}" -f $(if (Test-CompatibleProject $project) { 'OK' } else { 'MISMATCH' }))
     Write-Host 'Kiem tra chi doc: khong tai model, khong goi API TTS, khong thay doi he thong.'
 }
 

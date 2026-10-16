@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 
 // Import directory paths and functions
 const { OUTPUT_AUDIO_DIR, ensureSubtitleDirectory } = require('./directoryManager');
+const { isGenerationCancelled } = require('../../services/omnivoiceCancellation');
 
 /**
  * Save audio data to disk (common function for both Gemini and F5-TTS)
@@ -21,9 +22,9 @@ const { OUTPUT_AUDIO_DIR, ensureSubtitleDirectory } = require('./directoryManage
  * @returns {Promise<Object>} - Result object with filename and success status
  */
 const saveAudioToFile = async (options) => {
-  const { audioData, subtitle_id, sampleRate = 24000, mimeType, prefix = '', generationId = '' } = options;
+  const { audioData, subtitle_id, sampleRate = 24000, mimeType, prefix = '', generationId = '', isCancelled } = options;
 
-  if (!audioData || !subtitle_id) {
+  if (!audioData || subtitle_id === undefined || subtitle_id === null || subtitle_id === '') {
     throw new Error('Missing required data (audioData or subtitle_id)');
   }
 
@@ -41,6 +42,7 @@ const saveAudioToFile = async (options) => {
   const scope = generationId ? `${String(generationId).replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^[-_.]+|[-_.]+$/g, '')}/` : '';
   const fullFilename = `${scope}subtitle_${subtitle_id}/${filename}`;
   const filepath = path.join(subtitleDir, filename);
+  const writePath = isCancelled ? `${filepath}.${uuidv4()}.tmp` : filepath;
 
   // Log if we're overriding an existing file
   if (fs.existsSync(filepath)) {
@@ -51,7 +53,7 @@ const saveAudioToFile = async (options) => {
   const audioBuffer = Buffer.from(audioData, 'base64');
 
   // Create file stream
-  const fileStream = fs.createWriteStream(filepath);
+  const fileStream = fs.createWriteStream(writePath);
 
   // Ensure we're using the correct sample rate
   const actualSampleRate = sampleRate || 24000;
@@ -104,13 +106,12 @@ const saveAudioToFile = async (options) => {
     fileStream.on('finish', () => {
       // Verify the file exists and has content
       try {
-        const stats = fs.statSync(filepath);
-        console.log(`[DEBUG] Verified file saved: ${filepath}, size: ${stats.size} bytes`);
+        const stats = fs.statSync(writePath);
 
         // Check if the file is a valid WAV file
         if (stats.size >= 44) { // WAV header is 44 bytes
           const header = Buffer.alloc(12);
-          const fd = fs.openSync(filepath, 'r');
+          const fd = fs.openSync(writePath, 'r');
           fs.readSync(fd, header, 0, 12, 0);
           fs.closeSync(fd);
 
@@ -122,10 +123,10 @@ const saveAudioToFile = async (options) => {
 
             // Try to fix the file by adding a proper WAV header
             try {
-              const fileData = fs.readFileSync(filepath);
+              const fileData = fs.readFileSync(writePath);
               const wavHeader = createWavHeader(fileData.length, actualSampleRate);
               const fixedData = Buffer.concat([wavHeader, fileData]);
-              fs.writeFileSync(filepath, fixedData);
+              fs.writeFileSync(writePath, fixedData);
               console.log(`[DEBUG] Fixed WAV header for file: ${filepath}`);
             } catch (fixError) {
               console.error(`[DEBUG] Error fixing WAV header: ${fixError.message}`);
@@ -134,6 +135,13 @@ const saveAudioToFile = async (options) => {
         } else {
           console.warn(`[DEBUG] WARNING: Saved file is too small to be a valid WAV file: ${filepath}, size: ${stats.size} bytes`);
         }
+
+        if (isCancelled?.()) {
+          fs.unlinkSync(writePath);
+          return reject(new Error('OmniVoice generation cancelled before saving audio'));
+        }
+        if (writePath !== filepath) fs.renameSync(writePath, filepath);
+        console.log(`[DEBUG] Verified file saved: ${filepath}, size: ${stats.size} bytes`);
 
         // Return success with the filename
         resolve({
@@ -230,7 +238,11 @@ const saveChatterboxAudio = async (req, res) => {
   try {
     const { audioData, subtitle_id, sampleRate, mimeType, generation_id } = req.body;
 
-    if (!audioData || !subtitle_id) {
+    if (isGenerationCancelled(generation_id)) {
+      return res.status(409).json({ cancelled: true, generation_id });
+    }
+
+    if (!audioData || subtitle_id === undefined || subtitle_id === null) {
       console.error('Missing required data');
       return res.status(400).json({ error: 'Missing required data (audioData or subtitle_id)' });
     }
@@ -242,11 +254,18 @@ const saveChatterboxAudio = async (req, res) => {
         sampleRate,
         mimeType,
         generationId: generation_id,
-        prefix: '' // Use empty prefix like F5-TTS to generate "1.wav" and enable cache loading
+        prefix: '',
+        isCancelled: () => isGenerationCancelled(generation_id)
       });
 
+      if (isGenerationCancelled(generation_id)) {
+        return res.status(409).json({ cancelled: true, generation_id });
+      }
       res.json(result);
     } catch (error) {
+      if (isGenerationCancelled(generation_id)) {
+        return res.status(409).json({ cancelled: true, generation_id });
+      }
       console.error(`Error saving Chatterbox audio: ${error.message}`);
       res.status(500).json({ error: `Error saving Chatterbox audio: ${error.message}` });
     }

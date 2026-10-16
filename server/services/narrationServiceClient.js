@@ -156,6 +156,7 @@ const generateNarration = async (reference_audio, reference_text, subtitles, set
           subtitles,
           settings: {
             ...settings,
+            generation_id: settings?.generationId || settings?.generation_id,
             // Ensure the skipClearOutput flag is passed to the Python service
             skipClearOutput: settings && settings.skipClearOutput === true
           }
@@ -326,6 +327,7 @@ const generateNarration = async (reference_audio, reference_text, subtitles, set
         subtitles,
         settings: {
           ...settings,
+          generation_id: settings?.generationId || settings?.generation_id,
           // Ensure the skipClearOutput flag is passed to the Python service
           skipClearOutput: settings && settings.skipClearOutput === true
         }

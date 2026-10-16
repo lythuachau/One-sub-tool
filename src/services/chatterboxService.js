@@ -12,49 +12,90 @@ const SERVER_API_BASE_URL = API_URLS.BACKEND;
 // Track if the OmniVoice service has been successfully initialized
 let chatterboxServiceInitialized = false;
 
-/**
- * Sleep for a specified number of milliseconds
- * @param {number} ms - Milliseconds to sleep
- * @returns {Promise<void>}
- */
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const throwIfAborted = signal => {
+  if (signal?.aborted) throw new DOMException('OmniVoice generation cancelled', 'AbortError');
+};
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  throwIfAborted(signal);
+  const onAbort = () => {
+    clearTimeout(timer);
+    reject(new DOMException('OmniVoice generation cancelled', 'AbortError'));
+  };
+  const timer = setTimeout(() => {
+    signal?.removeEventListener('abort', onAbort);
+    resolve();
+  }, ms);
+  signal?.addEventListener('abort', onAbort, { once: true });
+});
+
+const withRequestCancellation = async (signal, timeoutMs, request) => {
+  throwIfAborted(signal);
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const result = await request(controller.signal);
+    throwIfAborted(signal);
+    return result;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', onAbort);
+  }
+};
+
+export const cancelOmniVoiceGeneration = async generationId => {
+  return withRequestCancellation(null, 10000, async signal => {
+    const response = await fetch(`${SERVER_API_BASE_URL}/api/narration/omnivoice/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generation_id: generationId }),
+      signal,
+      keepalive: true
+    });
+    if (!response.ok) throw new Error(`OmniVoice cancellation returned HTTP ${response.status}`);
+    const result = await response.json();
+    if (!result.cancelled || result.generation_id !== generationId) throw new Error('OmniVoice cancellation was not acknowledged');
+    return result;
+  });
+};
 
 /**
  * Check server health to see if OmniVoice service should be running
  * @returns {Promise<{shouldBeRunning: boolean, message?: string}>}
  */
-const checkServerChatterboxStatus = async () => {
+const checkServerChatterboxStatus = async (signal) => {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+    return await withRequestCancellation(signal, 3000, async requestSignal => {
 
-    const response = await fetch(`${SERVER_API_BASE_URL}/api/health`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
+      const response = await fetch(`${SERVER_API_BASE_URL}/api/health`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: requestSignal,
+      });
 
-    clearTimeout(timeoutId);
+      if (!response.ok) {
+        return {
+          shouldBeRunning: false,
+          message: 'Server health check failed'
+        };
+      }
 
-    if (!response.ok) {
+      const healthData = await response.json();
+      const chatterboxRunning = healthData.services?.chatterbox?.running || healthData.services?.omnivoice?.running || false;
+
       return {
-        shouldBeRunning: false,
-        message: 'Server health check failed'
+        shouldBeRunning: chatterboxRunning,
+        message: chatterboxRunning ?
+          'OmniVoice service should be running' :
+          'OmniVoice service not started (use npm run dev:cuda)'
       };
-    }
-
-    const healthData = await response.json();
-    const chatterboxRunning = healthData.services?.chatterbox?.running || healthData.services?.omnivoice?.running || false;
-
-    return {
-      shouldBeRunning: chatterboxRunning,
-      message: chatterboxRunning ?
-        'OmniVoice service should be running' :
-        'OmniVoice service not started (use npm run dev:cuda)'
-    };
+    });
   } catch (error) {
+    throwIfAborted(signal);
     if (error.name === 'AbortError') {
       return {
         shouldBeRunning: false,
@@ -73,57 +114,56 @@ const checkServerChatterboxStatus = async () => {
  * Single attempt to check OmniVoice API availability
  * @returns {Promise<{available: boolean, message?: string}>}
  */
-export const checkChatterboxAvailabilitySingle = async () => {
+export const checkChatterboxAvailabilitySingle = async (signal) => {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    return await withRequestCancellation(signal, 5000, async requestSignal => {
 
-    const response = await fetch(`${CHATTERBOX_API_BASE_URL}/health`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
+      const response = await fetch(`${CHATTERBOX_API_BASE_URL}/health`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: requestSignal,
+      });
 
-    clearTimeout(timeoutId);
+      if (!response.ok) {
+        return {
+          available: false,
+          message: `OmniVoice API returned status ${response.status}`
+        };
+      }
 
-    if (!response.ok) {
+      const healthData = await response.json();
+
+      // The adapter can load its model lazily on wake-up.
+      if (!healthData.available && !healthData.models_loaded?.tts) {
+        return {
+          available: false,
+          ready: false,
+          loading: Boolean(healthData.loading),
+          state: healthData.state || healthData.model_state || 'unavailable',
+          initialization_error: healthData.initialization_error || null,
+          message: healthData.initialization_error || 'OmniVoice package is not installed'
+        };
+      }
+
+      const ready = healthData.ready ?? healthData.models_loaded?.tts ?? false;
+      chatterboxServiceInitialized = Boolean(ready);
+
       return {
-        available: false,
-        message: `OmniVoice API returned status ${response.status}`
-      };
-    }
-
-    const healthData = await response.json();
-
-    // The adapter can load its model lazily on wake-up.
-    if (!healthData.available && !healthData.models_loaded?.tts) {
-      return {
-        available: false,
-        ready: false,
+        available: Boolean(healthData.available),
+        ready: Boolean(ready),
         loading: Boolean(healthData.loading),
-        state: healthData.state || healthData.model_state || 'unavailable',
+        state: healthData.state || healthData.model_state || (ready ? 'ready' : 'starting'),
+        needsWakeUp: Boolean(healthData.available && !ready),
+        device: healthData.device,
+        models: healthData.models_loaded,
         initialization_error: healthData.initialization_error || null,
-        message: healthData.initialization_error || 'OmniVoice package is not installed'
+        message: ready ? undefined : 'OmniVoice service is running; model is not loaded yet.'
       };
-    }
-
-    const ready = healthData.ready ?? healthData.models_loaded?.tts ?? false;
-    chatterboxServiceInitialized = Boolean(ready);
-
-    return {
-      available: Boolean(healthData.available),
-      ready: Boolean(ready),
-      loading: Boolean(healthData.loading),
-      state: healthData.state || healthData.model_state || (ready ? 'ready' : 'starting'),
-      needsWakeUp: Boolean(healthData.available && !ready),
-      device: healthData.device,
-      models: healthData.models_loaded,
-      initialization_error: healthData.initialization_error || null,
-      message: ready ? undefined : 'OmniVoice service is running; model is not loaded yet.'
-    };
+    });
   } catch (error) {
+    throwIfAborted(signal);
     if (error.name === 'AbortError') {
       return {
         available: false,
@@ -149,40 +189,39 @@ export const checkChatterboxAvailabilitySingle = async () => {
  * Wake up the OmniVoice service by calling the wake-up endpoint
  * @returns {Promise<{success: boolean, message?: string}>}
  */
-export const wakeUpChatterboxService = async () => {
+export const wakeUpChatterboxService = async (signal) => {
   try {
     console.log('🔧 Attempting to wake up OmniVoice service...');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout for model loading
+    return await withRequestCancellation(signal, 30000, async requestSignal => {
 
-    const response = await fetch(`${CHATTERBOX_API_BASE_URL}/wake-up`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
+      const response = await fetch(`${CHATTERBOX_API_BASE_URL}/wake-up`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: requestSignal,
+      });
 
-    clearTimeout(timeoutId);
+      if (!response.ok) {
+        return {
+          success: false,
+          message: `Failed to wake up OmniVoice service: ${response.status}`
+        };
+      }
 
-    if (!response.ok) {
+      const result = await response.json();
+      console.log('✅ OmniVoice service wake-up response:', result.status);
+
       return {
-        success: false,
-        message: `Failed to wake up OmniVoice service: ${response.status}`
+        success: true,
+        ready: Boolean(result.ready ?? result.models_loaded?.tts ?? true),
+        models: result.models_loaded,
+        message: result.message || 'OmniVoice service awakened successfully'
       };
-    }
-
-    const result = await response.json();
-    console.log('✅ OmniVoice service wake-up response:', result.status);
-
-    return {
-      success: true,
-      ready: Boolean(result.ready ?? result.models_loaded?.tts ?? true),
-      models: result.models_loaded,
-      message: result.message || 'OmniVoice service awakened successfully'
-    };
+    });
   } catch (error) {
+    throwIfAborted(signal);
     if (error.name === 'AbortError') {
       return {
         success: false,
@@ -212,9 +251,10 @@ export const wakeUpChatterboxService = async () => {
  * @param {boolean} attemptWakeUp - Whether to attempt waking up the service if not running (default: true)
  * @returns {Promise<{available: boolean, message?: string}>}
  */
-export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 2000, attemptWakeUp = true) => {
+export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 2000, attemptWakeUp = true, signal) => {
   // First, try to connect directly to see if service is already running
-  let directCheck = await checkChatterboxAvailabilitySingle();
+  throwIfAborted(signal);
+  const directCheck = await checkChatterboxAvailabilitySingle(signal);
   if (directCheck.available && directCheck.ready) {
     return directCheck;
   }
@@ -226,7 +266,7 @@ export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 200
   // A running service can still need to load the model on first use.
   if (attemptWakeUp) {
     console.log('🔧 OmniVoice model is not ready, attempting to wake up service...');
-    const wakeUpResult = await wakeUpChatterboxService();
+    const wakeUpResult = await wakeUpChatterboxService(signal);
 
     if (!wakeUpResult.success) {
       // If wake-up failed, return the error immediately
@@ -240,7 +280,7 @@ export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 200
     console.log('⏳ Wake-up successful, verifying service availability...');
   } else {
     // If wake-up is disabled, check server status first
-    const serverStatus = await checkServerChatterboxStatus();
+    const serverStatus = await checkServerChatterboxStatus(signal);
     if (!serverStatus.shouldBeRunning) {
       return {
         available: false,
@@ -254,7 +294,7 @@ export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 200
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const result = await checkChatterboxAvailabilitySingle();
+      const result = await checkChatterboxAvailabilitySingle(signal);
 
       // If successful, return immediately
       if (result.available && result.ready) {
@@ -270,9 +310,10 @@ export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 200
       }
 
       // Wait before next attempt
-      await sleep(delayMs);
+      await sleep(delayMs, signal);
 
     } catch (error) {
+      throwIfAborted(signal);
       lastError = {
         available: false,
         message: `Chatterbox API error: ${error.message}`
@@ -284,7 +325,7 @@ export const checkChatterboxAvailability = async (maxAttempts = 5, delayMs = 200
       }
 
       // Wait before next attempt
-      await sleep(delayMs);
+      await sleep(delayMs, signal);
     }
   }
 
@@ -317,90 +358,102 @@ export const generateChatterboxSpeech = async (
   referenceText = '',
   voiceMode = 'reference',
   instruct = '',
-  language = null
+  language = null,
+  { signal, generationId } = {}
 ) => {
   try {
-    const mode = voiceMode || 'reference';
-    if (mode === 'reference' && !voiceFile && !voiceFilePath) {
-      throw new Error('Reference audio is required for OmniVoice clone mode');
-    }
-    if (mode === 'design' && !instruct.trim()) {
-      throw new Error('Voice design instructions are required for OmniVoice design mode');
-    }
-
-    const url = `${CHATTERBOX_API_BASE_URL}/tts/generate`;
-    const createFormData = (file = null) => {
-      const formData = new FormData();
-      formData.append('text', text);
-      formData.append('voice_mode', mode);
-      formData.append('exaggeration', exaggeration.toString());
-      formData.append('cfg_weight', cfgWeight.toString());
-      if (language) formData.append('language', language);
-      if (mode === 'reference') {
-        if (referenceText) formData.append('ref_text', referenceText);
-        if (file) formData.append('voice_file', file);
+    return await withRequestCancellation(signal, 60000, async requestSignal => {
+      const mode = voiceMode || 'reference';
+      if (mode === 'reference' && !voiceFile && !voiceFilePath) {
+        throw new Error('Reference audio is required for OmniVoice clone mode');
       }
-      if (mode === 'design') formData.append('instruct', instruct.trim());
-      return formData;
-    };
+      if (mode === 'design' && !instruct.trim()) {
+        throw new Error('Voice design instructions are required for OmniVoice design mode');
+      }
 
-    let body;
-
-    if (mode === 'reference' && voiceFilePath) {
-      // Convert file path to actual file by fetching it from the server
-      try {
-        console.log('Converting reference audio path for OmniVoice:', voiceFilePath);
-
-        // Create a URL to fetch the file from the server
-        // The file path is typically something like: /path/to/reference_audio/filename.wav
-        // We need to convert it to a server URL
-        const filename = voiceFilePath.split(/[/\\]/).pop(); // Get filename from path
-        const fileUrl = `${SERVER_API_BASE_URL}/api/narration/reference-audio/${filename}`;
-
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch reference audio file: ${response.status}`);
+      const url = `${CHATTERBOX_API_BASE_URL}/tts/generate`;
+      const createFormData = (file = null) => {
+        const formData = new FormData();
+        formData.append('text', text);
+        if (generationId) formData.append('generation_id', generationId);
+        formData.append('voice_mode', mode);
+        formData.append('exaggeration', exaggeration.toString());
+        formData.append('cfg_weight', cfgWeight.toString());
+        const languageValue = typeof language === 'string'
+          ? language.trim()
+          : language?.languageCode || language?.code || language?.languageName || language?.name || '';
+        if (languageValue) formData.append('language', languageValue);
+        if (mode === 'reference') {
+          if (referenceText) formData.append('ref_text', referenceText);
+          if (file) formData.append('voice_file', file);
         }
+        if (mode === 'design') formData.append('instruct', instruct.trim());
+        return formData;
+      };
 
-        const blob = await response.blob();
-        const file = new File([blob], filename, { type: 'audio/wav' });
+      let body;
 
-        body = createFormData(file);
+      if (mode === 'reference' && voiceFilePath) {
+        // Convert file path to actual file by fetching it from the server
+        try {
+          console.log('Converting reference audio path for OmniVoice:', voiceFilePath);
 
-        console.log('Successfully converted file path to file for Chatterbox API');
-      } catch (error) {
-        console.error('Error converting file path to file:', error);
-        throw new Error(`Failed to convert reference audio file: ${error.message}`);
+          // Create a URL to fetch the file from the server
+          // The file path is typically something like: /path/to/reference_audio/filename.wav
+          // We need to convert it to a server URL
+          const filename = voiceFilePath.split(/[/\\]/).pop(); // Get filename from path
+          const fileUrl = `${SERVER_API_BASE_URL}/api/narration/reference-audio/${filename}`;
+
+          const response = await fetch(fileUrl, { signal: requestSignal });
+          if (!response.ok) {
+            throw new Error(`Failed to fetch reference audio file: ${response.status}`);
+          }
+
+          const blob = await response.blob();
+          const file = new File([blob], filename, { type: 'audio/wav' });
+
+          body = createFormData(file);
+
+          console.log('Successfully converted file path to file for Chatterbox API');
+        } catch (error) {
+          if (requestSignal.aborted) throw error;
+          console.error('Error converting file path to file:', error);
+          throw new Error(`Failed to convert reference audio file: ${error.message}`);
+        }
+      } else if (mode === 'reference' && voiceFile) {
+        body = createFormData(voiceFile);
+      } else {
+        body = createFormData();
       }
-    } else if (mode === 'reference' && voiceFile) {
-      body = createFormData(voiceFile);
-    } else {
-      body = createFormData();
-    }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+      const response = await fetch(url, {
+        method: 'POST',
+        body,
+        signal: requestSignal,
+      });
 
-    const response = await fetch(url, {
-      method: 'POST',
-      body,
-      signal: controller.signal,
+      if (!response.ok) {
+        if (response.status === 409) {
+          const error = new DOMException('OmniVoice generation cancelled', 'AbortError');
+          error.cancelled = true;
+          throw error;
+        }
+        const errorText = await response.text();
+        throw new Error(`OmniVoice API error: ${response.status} - ${errorText}`);
+      }
+
+      // Return the audio blob
+      return await response.blob();
     });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OmniVoice API error: ${response.status} - ${errorText}`);
-    }
-
-    // Return the audio blob
-    return await response.blob();
   } catch (error) {
+    throwIfAborted(signal);
+    if (error.cancelled) throw error;
     console.error('Error generating Chatterbox speech:', error);
 
     if (error.name === 'AbortError') {
-      throw new Error('OmniVoice generation timeout - text may be too long');
+      const timeout = new Error('OmniVoice generation timeout - text may be too long');
+      timeout.name = 'TimeoutError';
+      throw timeout;
     }
 
     if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
@@ -496,6 +549,23 @@ export const getOmniVoiceDesignOptions = async () => {
   }
 
   return response.json();
+};
+
+export const getOmniVoiceLanguages = async ({ signal } = {}) => {
+  const response = await fetch(`${CHATTERBOX_API_BASE_URL}/languages`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+    signal
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `OmniVoice language catalog returned ${response.status}`);
+  }
+  if (!Array.isArray(data.languages)) {
+    throw new Error('OmniVoice returned an invalid language catalog');
+  }
+  return data.languages;
 };
 
 /**

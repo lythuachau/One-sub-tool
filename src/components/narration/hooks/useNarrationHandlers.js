@@ -57,7 +57,8 @@ const useNarrationHandlers = ({
   setRetryingSubtitleId,
   useGroupedSubtitles,
   setUseGroupedSubtitles,
-  groupedSubtitles
+  groupedSubtitles,
+  standaloneTextMode = false
 }) => {
   // Handle file upload
   const handleFileUpload = async (event) => {
@@ -527,9 +528,10 @@ const useNarrationHandlers = ({
 
   // Generate narration for all subtitles
   const handleGenerateNarration = async () => {
-    // Clear all caches and files for fresh generation
-    const { clearNarrationCachesAndFiles } = await import('../utils/cacheManager');
-    await clearNarrationCachesAndFiles(setGenerationResults);
+    if (!standaloneTextMode) {
+      const { clearNarrationCachesAndFiles } = await import('../utils/cacheManager');
+      await clearNarrationCachesAndFiles(setGenerationResults);
+    }
 
     const needsReferenceAudio = vieneuVoiceMode === 'reference';
     if (needsReferenceAudio && (!referenceAudio || !referenceAudio.filepath)) {
@@ -550,7 +552,7 @@ const useNarrationHandlers = ({
 
     // Get the appropriate subtitles based on the selected source
     // If grouped subtitles are available and enabled, use them instead
-    const useGrouped = window.useGroupedSubtitles && window.groupedSubtitles && window.groupedSubtitles.length > 0;
+    const useGrouped = !standaloneTextMode && window.useGroupedSubtitles && window.groupedSubtitles && window.groupedSubtitles.length > 0;
     const selectedSubtitles = useGrouped ? window.groupedSubtitles : getSelectedSubtitles();
 
     if (!selectedSubtitles || selectedSubtitles.length === 0) {
@@ -576,7 +578,7 @@ const useNarrationHandlers = ({
       }));
 
       // Update state immediately if we're generating grouped subtitles
-      if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+      if (!standaloneTextMode && useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
         // Initialize empty grouped narrations in window object
         window.groupedNarrations = [];
         window.useGroupedSubtitles = true;
@@ -586,9 +588,11 @@ const useNarrationHandlers = ({
       }
 
       // Add subtitle source to generation status message
-      const sourceText = subtitleSource === 'original' ?
-        t('narration.originalSubtitles', 'original subtitles') :
-        t('narration.translatedSubtitles', 'translated subtitles');
+      const sourceText = standaloneTextMode
+        ? 'văn bản riêng'
+        : subtitleSource === 'original'
+          ? t('narration.originalSubtitles', 'original subtitles')
+          : t('narration.translatedSubtitles', 'translated subtitles');
 
       setGenerationStatus(
         t('narration.generatingNarrationWithSource', 'Generating narration for {{count}} {{source}}...', {
@@ -610,7 +614,11 @@ const useNarrationHandlers = ({
         batchSize: advancedSettings.batchSize === 'all' ? subtitlesWithIds.length : parseInt(advancedSettings.batchSize),
         // Include the selected model ID
         modelId: selectedNarrationModel,
-        voice: vieneuVoiceMode === 'preset' ? vieneuVoice : undefined
+        voice: vieneuVoiceMode === 'preset' ? vieneuVoice : undefined,
+        skipClearOutput: standaloneTextMode,
+        generationId: standaloneTextMode
+          ? `generation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          : undefined
       };
 
       // Handle seed
@@ -645,8 +653,11 @@ const useNarrationHandlers = ({
       };
 
       const handleResult = (result, progress, total) => {
+        const scopedResult = standaloneTextMode
+          ? { ...result, generation_id: apiSettings.generationId, standaloneText: true }
+          : result;
         // Add the result to the temporary results array
-        tempResults.push(result);
+        tempResults.push(scopedResult);
 
         // Update the UI with the current results
         // This ensures each result is shown immediately as it's received
@@ -654,7 +665,7 @@ const useNarrationHandlers = ({
         setGenerationResults([...tempResults]);
 
         // Update window.groupedNarrations incrementally if we're generating grouped subtitles
-        if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+        if (!standaloneTextMode && useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
           window.groupedNarrations = [...tempResults];
         }
 
@@ -666,7 +677,7 @@ const useNarrationHandlers = ({
             {
               progress,
               total,
-              id: result.subtitle_id
+              id: scopedResult.subtitle_id
             }
           )
         );
@@ -691,8 +702,11 @@ const useNarrationHandlers = ({
 
       const handleComplete = (results) => {
         setGenerationStatus(t('narration.generationComplete', 'Narration generation complete'));
-        // Ensure we have the final results
-        setGenerationResults(results);
+        const finalResults = standaloneTextMode
+          ? results.map(result => ({ ...result, generation_id: apiSettings.generationId, standaloneText: true }))
+          : results;
+        setGenerationResults(finalResults);
+        if (standaloneTextMode) return;
 
         // Cache narrations and reference audio to localStorage for VieNeu-TTS
         try {
@@ -825,7 +839,12 @@ const useNarrationHandlers = ({
       const { SERVER_URL } = require('../../../config');
 
       // Extract filenames from generation results
-      const filenames = generationResults.map(result => result.filename);
+      const filenames = generationResults
+        .filter(result => result.success && result.filename)
+        .map(result => result.filename);
+      if (!filenames.length) {
+        throw new Error(t('narration.noResults', 'No narration results to download'));
+      }
 
 
       // Create a download link with the filenames as query parameters
@@ -1117,7 +1136,7 @@ const useNarrationHandlers = ({
 
     // Get the appropriate subtitles based on the selected source
     // If grouped subtitles are available and enabled, use them instead
-    const useGrouped = window.useGroupedSubtitles && window.groupedSubtitles && window.groupedSubtitles.length > 0;
+    const useGrouped = !standaloneTextMode && window.useGroupedSubtitles && window.groupedSubtitles && window.groupedSubtitles.length > 0;
     const selectedSubtitles = useGrouped ? window.groupedSubtitles : getSelectedSubtitles();
 
     if (!selectedSubtitles || selectedSubtitles.length === 0) {
@@ -1148,7 +1167,7 @@ const useNarrationHandlers = ({
       // CRITICAL FIX: Force reset the aligned narration before retrying
       // This ensures that the aligned narration will be regenerated with the new audio
 
-      if (window.resetAlignedNarration) {
+      if (!standaloneTextMode && window.resetAlignedNarration) {
         window.resetAlignedNarration();
       }
 
@@ -1172,7 +1191,10 @@ const useNarrationHandlers = ({
         modelId: selectedNarrationModel,
         voice: vieneuVoiceMode === 'preset' ? vieneuVoice : undefined,
         // CRITICAL FIX: Add a flag to skip clearing the output directory
-        skipClearOutput: true
+        skipClearOutput: true,
+        generationId: standaloneTextMode
+          ? `generation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          : undefined
       };
 
       // Handle seed
@@ -1189,6 +1211,10 @@ const useNarrationHandlers = ({
       };
 
       const handleResult = (result) => {
+        if (standaloneTextMode) {
+          result.generation_id = apiSettings.generationId;
+          result.standaloneText = true;
+        }
         // Add a flag to force regeneration of aligned narration
         result.forceRegenerate = true;
 
@@ -1202,7 +1228,7 @@ const useNarrationHandlers = ({
           );
 
           // Update the global narration references to ensure video player uses the latest version
-          if (subtitleSource === 'original') {
+          if (!standaloneTextMode && subtitleSource === 'original') {
             // Update window.originalNarrations
             window.originalNarrations = [...updatedResults];
 
@@ -1230,7 +1256,7 @@ const useNarrationHandlers = ({
               console.error('Error storing updated originalNarrations in localStorage:', e);
             }
 
-          } else {
+          } else if (!standaloneTextMode) {
             // Update window.translatedNarrations
             window.translatedNarrations = [...updatedResults];
 
@@ -1270,7 +1296,7 @@ const useNarrationHandlers = ({
               forceRegenerate: true // Add flag to force regeneration of aligned narration
             }
           });
-          window.dispatchEvent(event);
+          if (!standaloneTextMode) window.dispatchEvent(event);
 
           // Removed automatic regeneration of aligned narration
           // Users must now manually click the "Refresh Narration" button to regenerate aligned narration
@@ -1370,7 +1396,7 @@ const useNarrationHandlers = ({
         // Retry the VieNeu-TTS segment with the current reference voice.
         // CRITICAL FIX: Force reset the aligned narration before retrying
 
-        if (window.resetAlignedNarration) {
+        if (!standaloneTextMode && window.resetAlignedNarration) {
           window.resetAlignedNarration();
         }
 
@@ -1390,7 +1416,10 @@ const useNarrationHandlers = ({
           removeSilence: advancedSettings.removeSilence,
           modelId: selectedNarrationModel,
           voice: vieneuVoiceMode === 'preset' ? vieneuVoice : undefined,
-          skipClearOutput: true
+          skipClearOutput: true,
+          generationId: standaloneTextMode
+            ? `generation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            : undefined
         };
 
         // Handle seed
@@ -1409,6 +1438,10 @@ const useNarrationHandlers = ({
           apiSettings,
           (message) => setGenerationStatus(`${message} (ID: ${subtitleId})`),
           (result) => {
+            if (standaloneTextMode) {
+              result.generation_id = apiSettings.generationId;
+              result.standaloneText = true;
+            }
             // Add flags and timestamp
             result.forceRegenerate = true;
             result.retriedAt = Date.now();
@@ -1420,7 +1453,7 @@ const useNarrationHandlers = ({
               );
 
               // Update global references
-              if (subtitleSource === 'original') {
+              if (!standaloneTextMode && subtitleSource === 'original') {
                 window.originalNarrations = [...updatedResults];
                 try {
                   // Extract only the necessary information to avoid localStorage quota issues
@@ -1434,7 +1467,7 @@ const useNarrationHandlers = ({
                 } catch (e) {
                   console.error('Error storing updated originalNarrations in localStorage:', e);
                 }
-              } else {
+              } else if (!standaloneTextMode) {
                 window.translatedNarrations = [...updatedResults];
                 try {
                   // Extract only the necessary information to avoid localStorage quota issues
@@ -1451,7 +1484,7 @@ const useNarrationHandlers = ({
               }
 
               // Dispatch events
-              window.dispatchEvent(new CustomEvent('narration-retried', {
+              if (!standaloneTextMode) window.dispatchEvent(new CustomEvent('narration-retried', {
                 detail: {
                   source: subtitleSource,
                   narration: result,

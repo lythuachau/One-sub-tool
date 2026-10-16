@@ -10,6 +10,9 @@ const multer = require('multer');
 const path = require('path');
 const narrationController = require('../controllers/narrationController');
 const narrationServiceClient = require('../services/narrationServiceClient');
+const omnivoiceCancellation = require('../services/omnivoiceCancellation');
+
+router.post('/omnivoice/cancel', express.json(), omnivoiceCancellation.cancelGeneration);
 
 // Ensure narration directories exist
 narrationController.ensureNarrationDirectories();

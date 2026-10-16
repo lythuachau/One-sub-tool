@@ -189,7 +189,9 @@ const NarrationResults = ({
   getAudioUrl,
   onRetry,
   retryingSubtitleId,
-  onRetryFailed
+  onRetryFailed,
+  title,
+  standaloneTextMode = false
 }) => {
   const { t } = useTranslation();
   const listRef = useRef(null);
@@ -382,6 +384,7 @@ const NarrationResults = ({
         body: JSON.stringify({
           audioData: result.audioData,
           subtitle_id: result.subtitle_id,
+          generation_id: result.generation_id,
           sampleRate: result.sampleRate || 24000,
           mimeType: result.mimeType || 'audio/pcm'
         })
@@ -433,6 +436,8 @@ const NarrationResults = ({
         Promise.all(savePromises)
           .then(updatedResults => {
             if (updatedResults.length > 0) {
+              if (standaloneTextMode) return;
+
               // Get subtitles from window object for enhancing narrations with timing information
               const subtitles = window.originalSubtitles || window.subtitlesData || [];
 
@@ -487,7 +492,7 @@ const NarrationResults = ({
         console.error('Error processing F5-TTS narrations for saving:', error);
       }
     }
-  }, [generationResults]);
+  }, [generationResults, standaloneTextMode]);
 
   // We no longer need to load narrations from localStorage cache
   // The narrations will be loaded from the file system by the parent component
@@ -522,7 +527,7 @@ const NarrationResults = ({
   return (
     <div className="results-section">
       <div className="results-header">
-        <h4>{t('narration.results', 'Generated Narration')}</h4>
+        <h4>{title || t('narration.results', 'Generated Narration')}</h4>
 
         {/* Retry Failed Narrations button */}
         {hasFailedNarrations && onRetryFailed && (

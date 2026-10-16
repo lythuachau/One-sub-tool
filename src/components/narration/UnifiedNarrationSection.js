@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useCallback, useMemo, useRef, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getAudioUrl } from '../../services/narrationService';
 import useNarrationHandlers from './hooks/useNarrationHandlers';
@@ -37,10 +37,13 @@ import NarrationResults from './components/NarrationResults';
 import GeminiNarrationResults from './components/GeminiNarrationResults';
 import StatusMessage from './components/StatusMessage';
 import NarrationMethodSelection from './components/NarrationMethodSelection';
+import NarrationInputSource, { buildStandaloneNarrationSegments } from './components/NarrationInputSource';
+import { buildMergedNarrationWav } from './utils/mergeStandaloneNarration';
 import { NARRATION_METHODS } from './narrationMethods';
 
 // Import styles
 import '../../styles/narration/unifiedNarrationRedesign.css';
+import '../../styles/narration/standaloneNarration.css';
 
 /**
  * Unified Narration Section component that combines settings and generation
@@ -141,6 +144,62 @@ const UnifiedNarrationSection = ({
     updateReferenceAudio
   } = narrationState;
 
+  const [narrationInputMode, setNarrationInputMode] = useState('subtitles');
+  const [standaloneText, setStandaloneText] = useState('');
+  const [standaloneTextLanguage, setStandaloneTextLanguage] = useState('vi');
+  const [standaloneResultsByMethod, setStandaloneResultsByMethod] = useState({});
+  const standaloneTextMode = narrationInputMode === 'text';
+  const standaloneSegments = useMemo(() => buildStandaloneNarrationSegments(standaloneText), [standaloneText]);
+  const activeGenerationResults = useMemo(() => standaloneTextMode
+    ? (standaloneResultsByMethod[narrationMethod]?.text === standaloneText ? standaloneResultsByMethod[narrationMethod].results : [])
+    : generationResults, [generationResults, narrationMethod, standaloneResultsByMethod, standaloneText, standaloneTextMode]);
+  const activeSubtitleSource = standaloneTextMode ? 'original' : subtitleSource;
+  const activeOriginalSubtitles = useMemo(() => standaloneTextMode
+    ? standaloneSegments
+    : (originalSubtitles || subtitles || []), [originalSubtitles, standaloneSegments, standaloneTextMode, subtitles]);
+  const activeTranslatedSubtitles = useMemo(() => standaloneTextMode ? [] : translatedSubtitles, [standaloneTextMode, translatedSubtitles]);
+  const activeSubtitleFallback = standaloneTextMode ? standaloneSegments : subtitles;
+  const activeOriginalLanguage = standaloneTextMode ? standaloneTextLanguage : originalLanguage;
+  const activeTranslatedLanguage = standaloneTextMode ? standaloneTextLanguage : translatedLanguage;
+  const activeUseGroupedSubtitles = standaloneTextMode ? false : useGroupedSubtitles;
+  const activeGroupedSubtitles = standaloneTextMode ? null : groupedSubtitles;
+  const getActiveSubtitles = useCallback(() => {
+    if (standaloneTextMode) return standaloneSegments;
+    if (activeUseGroupedSubtitles && activeGroupedSubtitles?.length) return activeGroupedSubtitles;
+    if (activeSubtitleSource === 'translated' && activeTranslatedSubtitles?.length) return activeTranslatedSubtitles;
+    return activeOriginalSubtitles;
+  }, [activeGroupedSubtitles, activeOriginalSubtitles, activeSubtitleSource, activeTranslatedSubtitles, activeUseGroupedSubtitles, standaloneSegments, standaloneTextMode]);
+  const setActiveGenerationResults = useCallback((update) => {
+    if (!standaloneTextMode) {
+      setGenerationResults(update);
+      return;
+    }
+    setStandaloneResultsByMethod((previous) => {
+      const bucket = previous[narrationMethod];
+      const current = bucket?.text === standaloneText ? bucket.results : [];
+      const next = typeof update === 'function' ? update(current) : update;
+      return { ...previous, [narrationMethod]: { text: standaloneText, results: next } };
+    });
+  }, [narrationMethod, setGenerationResults, standaloneText, standaloneTextMode]);
+
+  const hasStandaloneText = standaloneSegments.length > 0;
+  const downloadStandaloneAudio = useCallback(async () => {
+    try {
+      const blob = await buildMergedNarrationWav(activeGenerationResults, getAudioUrl);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'thuyet-minh-van-ban.wav';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (mergeError) {
+      setError(mergeError.message || 'Không thể ghép audio thuyết minh.');
+    }
+  }, [activeGenerationResults, setError]);
+
   // Use availability check hook
   useAvailabilityCheck({
     narrationMethod,
@@ -199,32 +258,34 @@ const UnifiedNarrationSection = ({
     retryChatterboxNarration,
     retryFailedChatterboxNarrations
   } = useChatterboxNarration({
+    narrationMethod,
     setIsGenerating,
     setGenerationStatus,
     setError,
-    setGenerationResults,
-    generationResults,
-    subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
-    originalLanguage,
-    translatedLanguage,
+    setGenerationResults: setActiveGenerationResults,
+    generationResults: activeGenerationResults,
+    subtitleSource: activeSubtitleSource,
+    originalSubtitles: activeOriginalSubtitles,
+    translatedSubtitles: activeTranslatedSubtitles,
+    subtitles: activeSubtitleFallback,
+    originalLanguage: activeOriginalLanguage,
+    translatedLanguage: activeTranslatedLanguage,
     exaggeration,
     cfgWeight,
     omnivoiceMode,
     omnivoiceInstruct,
     referenceAudio,
     referenceText,
-    useGroupedSubtitles,
+    useGroupedSubtitles: activeUseGroupedSubtitles,
     setUseGroupedSubtitles,
-    groupedSubtitles,
+    groupedSubtitles: activeGroupedSubtitles,
     setGroupedSubtitles,
     isGroupingSubtitles,
     setIsGroupingSubtitles,
     groupingIntensity,
     t,
-    setRetryingSubtitleId
+    setRetryingSubtitleId,
+    standaloneTextMode
   });
 
   // Use Edge TTS narration hook
@@ -297,6 +358,14 @@ const UnifiedNarrationSection = ({
     currentAudio,
     setIsPlaying
   });
+
+  useEffect(() => {
+    setError('');
+    setGenerationStatus('');
+    setCurrentAudio(null);
+    setIsPlaying(false);
+    audioRef.current?.pause();
+  }, [audioRef, narrationInputMode, narrationMethod, setCurrentAudio, setError, setGenerationStatus, setIsPlaying]);
 
   // Use narration storage hook
   useNarrationStorage({
@@ -446,6 +515,7 @@ const UnifiedNarrationSection = ({
     videoPath,
     onReferenceAudioChange,
     getSelectedSubtitles: () => {
+      if (standaloneTextMode) return standaloneSegments;
       // Check if we should use grouped subtitles
       if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
         return groupedSubtitles;
@@ -459,25 +529,26 @@ const UnifiedNarrationSection = ({
     setIsGenerating,
     isGenerating,
     setGenerationStatus,
-    setGenerationResults,
-    generationResults,
+    setGenerationResults: setActiveGenerationResults,
+    generationResults: activeGenerationResults,
     currentAudio,
     setCurrentAudio,
     setIsPlaying,
     statusRef,
     t,
-    subtitleSource,
-    translatedSubtitles,
+    subtitleSource: activeSubtitleSource,
+    translatedSubtitles: activeTranslatedSubtitles,
     vieneuVoiceMode,
     vieneuVoice,
     isPlaying,
     selectedNarrationModel,
-    originalLanguage,
-    translatedLanguage,
+    originalLanguage: activeOriginalLanguage,
+    translatedLanguage: activeTranslatedLanguage,
     setRetryingSubtitleId,
-    useGroupedSubtitles,
+    useGroupedSubtitles: activeUseGroupedSubtitles,
     setUseGroupedSubtitles,
-    groupedSubtitles
+    groupedSubtitles: activeGroupedSubtitles,
+    standaloneTextMode
   });
 
 
@@ -502,19 +573,33 @@ const UnifiedNarrationSection = ({
         isVibiAvailable
       />
 
+      <NarrationInputSource
+        mode={narrationInputMode}
+        setMode={setNarrationInputMode}
+        text={standaloneText}
+        setText={setStandaloneText}
+        disabled={isGenerating}
+        language={standaloneTextLanguage}
+        setLanguage={setStandaloneTextLanguage}
+        showLanguage={narrationMethod === NARRATION_METHODS.OMNIVOICE && standaloneTextMode}
+      />
+
       {/* Error Message - only show when there's an actual error message */}
       {error && <StatusMessage message={error} type="error" />}
 
       <div className="narration-content-container" ref={contentRef}>
       {narrationMethod === 'vibi' ? (
         <VibiNarration
-          getSubtitles={() => useGroupedSubtitles && groupedSubtitles?.length ? groupedSubtitles : subtitleSource === 'translated' ? translatedSubtitles : originalSubtitles || subtitles}
-          subtitleSource={subtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
-          generationResults={generationResults} setGenerationResults={setGenerationResults}
-          downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
+          getSubtitles={getActiveSubtitles}
+          subtitleSource={activeSubtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
+          generationResults={activeGenerationResults} setGenerationResults={setActiveGenerationResults}
+          downloadAllAudio={downloadAllAudio} downloadAlignedAudio={standaloneTextMode ? downloadStandaloneAudio : downloadAlignedAudio}
           currentAudio={currentAudio} isPlaying={isPlaying} playAudio={playAudio}
-          useGroupedSubtitles={useGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}>
-          <SubtitleSourceSelection
+          useGroupedSubtitles={activeUseGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}
+          standaloneTextMode={standaloneTextMode} isInputValid={!standaloneTextMode || hasStandaloneText}
+          combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
+          combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}>
+          {!standaloneTextMode && <SubtitleSourceSelection
             subtitleSource={subtitleSource}
             setSubtitleSource={setSubtitleSource}
             isGenerating={isGenerating}
@@ -532,20 +617,23 @@ const UnifiedNarrationSection = ({
             setGroupingIntensity={setGroupingIntensity}
             onGroupedSubtitlesGenerated={setGroupedSubtitles}
             narrationMethod={narrationMethod}
-          />
+          />}
         </VibiNarration>
       ) : narrationMethod === 'capcut' ? (
         <CapCutNarration
           videoPath={videoPath}
           videoDuration={videoDuration}
-          getOriginalSubtitles={() => originalSubtitles || subtitles || []}
-          getSubtitles={() => useGroupedSubtitles && groupedSubtitles?.length ? groupedSubtitles : subtitleSource === 'translated' ? translatedSubtitles : originalSubtitles || subtitles}
-          subtitleSource={subtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
-          generationResults={generationResults} setGenerationResults={setGenerationResults}
-          downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
+          getOriginalSubtitles={() => activeOriginalSubtitles}
+          getSubtitles={getActiveSubtitles}
+          subtitleSource={activeSubtitleSource} isGenerating={isGenerating} setIsGenerating={setIsGenerating}
+          generationResults={activeGenerationResults} setGenerationResults={setActiveGenerationResults}
+          downloadAllAudio={downloadAllAudio} downloadAlignedAudio={standaloneTextMode ? downloadStandaloneAudio : downloadAlignedAudio}
           currentAudio={currentAudio} isPlaying={isPlaying} playAudio={playAudio}
-          useGroupedSubtitles={useGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}>
-          <SubtitleSourceSelection
+          useGroupedSubtitles={activeUseGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}
+          standaloneTextMode={standaloneTextMode} isInputValid={!standaloneTextMode || hasStandaloneText}
+          combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
+          combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}>
+          {!standaloneTextMode && <SubtitleSourceSelection
             subtitleSource={subtitleSource}
             setSubtitleSource={setSubtitleSource}
             isGenerating={isGenerating}
@@ -570,7 +658,7 @@ const UnifiedNarrationSection = ({
                 setTranslatedLanguage(language);
               }
             }}
-          />
+          />}
         </CapCutNarration>
       ) : narrationMethod === NARRATION_METHODS.VIENEU ? (
         // F5-TTS UI
@@ -616,7 +704,7 @@ const UnifiedNarrationSection = ({
           )}
 
           {/* Subtitle Source Selection */}
-          <SubtitleSourceSelection
+          {!standaloneTextMode && <SubtitleSourceSelection
             subtitleSource={subtitleSource}
             setSubtitleSource={setSubtitleSource}
             isGenerating={isGenerating}
@@ -664,7 +752,7 @@ const UnifiedNarrationSection = ({
                 console.error('Error storing detected language in localStorage:', e);
               }
             }}
-          />
+          />}
 
           {/* Advanced Settings Toggle */}
           <AdvancedSettingsToggle
@@ -678,13 +766,17 @@ const UnifiedNarrationSection = ({
             handleGenerateNarration={handleGenerateNarration}
             isGenerating={isGenerating}
             referenceAudio={referenceAudio}
-            generationResults={generationResults}
+            generationResults={activeGenerationResults}
             downloadAllAudio={downloadAllAudio}
-            downloadAlignedAudio={downloadAlignedAudio}
+            downloadAlignedAudio={standaloneTextMode ? downloadStandaloneAudio : downloadAlignedAudio}
             cancelGeneration={cancelGeneration}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
             isServiceAvailable={isAvailable}
             requiresReferenceAudio={vieneuVoiceMode === 'reference'}
+            isInputValid={!standaloneTextMode || hasStandaloneText}
+            inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
+            combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
+            combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}
             serviceUnavailableMessage={t('narration.serviceUnavailableMessage', 'Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được.')}
           />
 
@@ -699,7 +791,7 @@ const UnifiedNarrationSection = ({
 
           {/* Results */}
           <NarrationResults
-            generationResults={generationResults}
+            generationResults={activeGenerationResults}
             playAudio={playAudio}
             currentAudio={currentAudio}
             isPlaying={isPlaying}
@@ -707,6 +799,8 @@ const UnifiedNarrationSection = ({
             onRetry={retryF5TTSNarration}
             retryingSubtitleId={retryingSubtitleId}
             onRetryFailed={retryFailedNarrations}
+            title={standaloneTextMode ? 'Thuyết minh từ văn bản' : undefined}
+            standaloneTextMode={standaloneTextMode}
           />
 
           {/* Hidden audio player for playback */}
@@ -731,7 +825,7 @@ const UnifiedNarrationSection = ({
             referenceText={referenceText}
             exaggeration={exaggeration}
             cfgWeight={cfgWeight}
-            language={subtitleSource === 'translated' ? translatedLanguage : originalLanguage}
+             language={activeSubtitleSource === 'translated' ? activeTranslatedLanguage : activeOriginalLanguage}
           />
 
           {omnivoiceMode === 'reference' && (
@@ -749,7 +843,7 @@ const UnifiedNarrationSection = ({
           )}
 
           {/* Subtitle Source Selection - reuse from F5-TTS */}
-          <SubtitleSourceSelection
+          {!standaloneTextMode && <SubtitleSourceSelection
             subtitleSource={subtitleSource}
             setSubtitleSource={setSubtitleSource}
             isGenerating={isGenerating}
@@ -774,7 +868,7 @@ const UnifiedNarrationSection = ({
                 setTranslatedLanguage(language);
               }
             }}
-          />
+          />}
 
           {/* Chatterbox Controls */}
           <ChatterboxControls
@@ -790,28 +884,32 @@ const UnifiedNarrationSection = ({
             handleGenerateNarration={handleChatterboxNarration}
             isGenerating={isGenerating}
             referenceAudio={referenceAudio}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
             cancelGeneration={cancelChatterboxGeneration}
             downloadAllAudio={downloadAllAudio}
-            downloadAlignedAudio={downloadAlignedAudio}
-            generationResults={generationResults}
+            downloadAlignedAudio={standaloneTextMode ? downloadStandaloneAudio : downloadAlignedAudio}
+            generationResults={activeGenerationResults}
             isServiceAvailable={isChatterboxAvailable}
             requiresReferenceAudio={omnivoiceMode === 'reference'}
+            isInputValid={!standaloneTextMode || hasStandaloneText}
+            inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
+            combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
+            combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}
             serviceUnavailableMessage={t('narration.chatterboxUnavailableMessage', 'Chatterbox API is not available. Please start the Chatterbox service.')}
           />
 
           {/* Generation Status */}
           <StatusMessage
-            message={(isGenerating || retryingSubtitleId) ? generationStatus : ''}
+            message={generationStatus}
             type="info"
             statusRef={statusRef}
-            showProgress={isGenerating && generationStatus && generationStatus.includes('Generating')}
+            showProgress={isGenerating && Boolean(generationStatus)}
             isGenerating={isGenerating}
           />
 
           {/* Chatterbox Results - reuse F5-TTS results component */}
           <NarrationResults
-            generationResults={generationResults}
+            generationResults={activeGenerationResults}
             onRetry={retryChatterboxNarration}
             retryingSubtitleId={retryingSubtitleId}
             onRetryFailed={retryFailedChatterboxNarrations}
@@ -820,7 +918,9 @@ const UnifiedNarrationSection = ({
             isPlaying={isPlaying}
             playAudio={playAudio}
             getAudioUrl={getAudioUrl}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
+            title={standaloneTextMode ? 'Thuyết minh từ văn bản' : undefined}
+            standaloneTextMode={standaloneTextMode}
           />
 
           {/* Hidden audio player for playback */}

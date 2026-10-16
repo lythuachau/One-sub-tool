@@ -25,7 +25,8 @@ const readVoiceSettings = () => {
 
 export default function VibiNarration({ children, getSubtitles, subtitleSource, isGenerating, setIsGenerating,
   generationResults, setGenerationResults, downloadAllAudio, downloadAlignedAudio, currentAudio, isPlaying,
-  playAudio, useGroupedSubtitles, audioRef, handleAudioEnded }) {
+  playAudio, useGroupedSubtitles, audioRef, handleAudioEnded,
+  standaloneTextMode = false, isInputValid = true, combinedAudioLabel = '', combinedAudioTooltip = '' }) {
   const [modelId, setModelId] = useState('');
   const [voiceId, setVoiceId] = useState(() => localStorage.getItem('vibi_voice_id') || '');
   const [languageCode, setLanguageCode] = useState(() => localStorage.getItem('vibi_language_code') || 'vi');
@@ -136,7 +137,8 @@ export default function VibiNarration({ children, getSubtitles, subtitleSource, 
       try {
         const audio = await synthesize(subtitle.text || subtitle.translated_text || '', signal);
         result = { ...audio, subtitle_id: subtitle.id, text: subtitle.text || subtitle.translated_text,
-          start: subtitle.start, end: subtitle.end, method: 'vibi', voice: voiceId, model: modelId };
+          ...(standaloneTextMode ? { standaloneText: true } : { start: subtitle.start, end: subtitle.end }),
+          method: 'vibi', voice: voiceId, model: modelId };
       } catch (error) {
         if (signal.aborted) throw error;
         result = { success: false, subtitle_id: subtitle.id, text: subtitle.text || subtitle.translated_text, error: error.message };
@@ -147,7 +149,7 @@ export default function VibiNarration({ children, getSubtitles, subtitleSource, 
       if (useGroupedSubtitles) { window.groupedNarrations = [...results]; window.useGroupedSubtitles = true; }
     }
     const failed = results.filter(result => !result.success).length;
-    setMessage(failed ? `${failed} câu lỗi. Có thể thử lại từng câu.` : 'Đã tạo xong thuyết minh Vibi.');
+    setMessage(failed ? `${failed} câu lỗi. Có thể thử lại từng câu.` : standaloneTextMode ? 'Đã tạo xong audio thuyết minh Vibi từ văn bản.' : 'Đã tạo xong thuyết minh Vibi.');
   }, true);
 
   const updateSetting = (key, value) => setVoiceSettings(current => ({ ...current, [key]: value }));
@@ -212,13 +214,16 @@ export default function VibiNarration({ children, getSubtitles, subtitleSource, 
     <GenerateButton handleGenerateNarration={() => generate()} isGenerating={isGenerating || busy}
       requiresReferenceAudio={false} isServiceAvailable={!!apiKey() && catalogLoaded && !!modelId && !!voiceId} subtitleSource={subtitleSource}
       cancelGeneration={() => controller.current?.abort()} generationResults={generationResults}
-      downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio} />
+      downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
+      isInputValid={isInputValid} inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
+      combinedAudioLabel={combinedAudioLabel} combinedAudioTooltip={combinedAudioTooltip} />
     {message && <p role="status">{message}</p>}
     <NarrationResults generationResults={generationResults} retryingSubtitleId={retrying}
       onRetry={id => { if (!controller.current) { setRetrying(id); generate([id]); } }}
       onRetryFailed={() => generate(generationResults.filter(result => !result.success).map(result => result.subtitle_id))}
       hasGenerationError={generationResults.some(result => !result.success)} currentAudio={currentAudio}
-      isPlaying={isPlaying} playAudio={playAudio} getAudioUrl={getAudioUrl} subtitleSource={subtitleSource} />
+      isPlaying={isPlaying} playAudio={playAudio} getAudioUrl={getAudioUrl} subtitleSource={subtitleSource}
+      title={standaloneTextMode ? 'Thuyết minh từ văn bản' : undefined} standaloneTextMode={standaloneTextMode} />
     <audio ref={audioRef} src={currentAudio?.url} onEnded={handleAudioEnded} style={{ display: 'none' }} />
   </div>;
 }

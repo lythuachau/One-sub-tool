@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
+import re
 import threading
+import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +23,29 @@ model_lock = threading.Lock()
 model: Any = None
 model_error: str | None = None
 model_loading = False
+cancel_lock = threading.Lock()
+cancelled_generations: dict[str, float] = {}
+
+
+class GenerationCancelled(Exception):
+    pass
+
+
+def _validate_generation_id(value: Any) -> str:
+    generation_id = str(value or "")
+    if generation_id and not re.fullmatch(r"generation_[A-Za-z0-9_-]{1,112}", generation_id):
+        raise ValueError("Invalid OmniVoice generation_id")
+    return generation_id
+
+
+def _raise_if_cancelled(generation_id: str) -> None:
+    if not generation_id:
+        return
+    with cancel_lock:
+        cancelled_at = cancelled_generations.get(generation_id)
+    if cancelled_at is not None and time.monotonic() - cancelled_at < 3600:
+        raise GenerationCancelled(generation_id)
+
 
 _VOICE_DESIGN_FALLBACK = {
     "gender": ["male", "female"],
@@ -102,9 +129,58 @@ def _status() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _load_language_catalog() -> tuple[dict[str, str], ...]:
+    package_spec = importlib.util.find_spec("omnivoice")
+    package_paths = package_spec.submodule_search_locations if package_spec else None
+    if not package_paths:
+        raise RuntimeError("OmniVoice package is not installed")
+
+    language_map_path = Path(next(iter(package_paths))) / "utils" / "lang_map.py"
+    language_spec = importlib.util.spec_from_file_location("_omnivoice_language_map", language_map_path)
+    if language_spec is None or language_spec.loader is None:
+        raise RuntimeError("OmniVoice language catalog is missing")
+
+    language_map = importlib.util.module_from_spec(language_spec)
+    language_spec.loader.exec_module(language_map)
+    names_to_ids = getattr(language_map, "LANG_NAME_TO_ID", {})
+    display_name = getattr(language_map, "lang_display_name", lambda name: name.title())
+    if not names_to_ids:
+        raise RuntimeError("OmniVoice language catalog is empty")
+
+    languages = [
+        {"code": str(code), "name": display_name(name)}
+        for name, code in names_to_ids.items()
+    ]
+    return tuple(sorted(languages, key=lambda language: (language["name"].casefold(), language["code"])))
+
+
+def _language_catalog() -> list[dict[str, str]]:
+    try:
+        return list(_load_language_catalog())
+    except Exception as exc:
+        logger.warning("Could not load OmniVoice language catalog: %s", exc)
+        return []
+
+
+@app.get("/languages")
+@app.get("/api/narration/languages")
+def languages():
+    catalog = _language_catalog()
+    if not catalog:
+        return jsonify({
+            "success": False,
+            "languages": [],
+            "count": 0,
+            "error": "OmniVoice language catalog is unavailable",
+        }), 503
+    return jsonify({"success": True, "engine": "omnivoice", "languages": catalog, "count": len(catalog)})
+
+
 def _model_catalog() -> dict[str, Any]:
     available, import_error = package_available("omnivoice")
     model_id = os.getenv("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
+    languages = _language_catalog()
     state = "ready" if model is not None else ("loading" if model_loading else ("error" if model_error else "not_loaded"))
     model_info = {
         "id": model_id,
@@ -112,7 +188,8 @@ def _model_catalog() -> dict[str, Any]:
         "engine": "omnivoice",
         "provider": "local",
         "language": "multi",
-        "languages": ["vi", "en", "zh"],
+        "languages": [language["code"] for language in languages],
+        "language_count": len(languages),
         "available": available,
         "ready": model is not None,
         "loading": model_loading,
@@ -194,8 +271,33 @@ def _generate(model_instance: Any, text: str, ref_audio: str | None, ref_text: s
         return model_instance.generate(**fallback)
 
 
+@app.post("/tts/cancel")
+def cancel_generation():
+    try:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("A JSON object with generation_id is required")
+        generation_id = _validate_generation_id(payload.get("generation_id"))
+        if not generation_id:
+            raise ValueError("OmniVoice generation_id is required")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    now = time.monotonic()
+    with cancel_lock:
+        expired = [key for key, timestamp in cancelled_generations.items() if now - timestamp >= 3600]
+        for key in expired:
+            del cancelled_generations[key]
+        cancelled_generations[generation_id] = now
+    logger.info("OmniVoice cancellation requested generation=%s", generation_id)
+    return jsonify({"cancelled": True, "generation_id": generation_id})
+
+
 @app.post("/tts/generate")
 def generate():
+    try:
+        generation_id = _validate_generation_id(request.form.get("generation_id"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     text = str(request.form.get("text") or "").strip()
     voice_file = request.files.get("voice_file")
     voice_mode = str(request.form.get("voice_mode") or "reference").strip().lower()
@@ -215,10 +317,15 @@ def generate():
         temporary_path = Path(temporary.name)
         temporary.close()
     try:
+        _raise_if_cancelled(generation_id)
         if voice_file is not None and temporary_path is not None:
             voice_file.save(str(temporary_path))
         instance = _load_model()
-        with model_lock:
+        while not model_lock.acquire(timeout=0.1):
+            _raise_if_cancelled(generation_id)
+        try:
+            _raise_if_cancelled(generation_id)
+            logger.info("OmniVoice synthesis started generation=%s", generation_id or "preview")
             audio = _generate(
                 instance,
                 text,
@@ -226,10 +333,17 @@ def generate():
                 str(request.form.get("ref_text") or ""),
                 request.form,
             )
+            _raise_if_cancelled(generation_id)
+        finally:
+            model_lock.release()
         data, sample_rate = audio_response(audio, 24000)
+        _raise_if_cancelled(generation_id)
         response = app.response_class(data, mimetype="audio/wav")
         response.headers["X-Sample-Rate"] = str(sample_rate)
         return response
+    except GenerationCancelled:
+        logger.info("OmniVoice result discarded generation=%s", generation_id)
+        return jsonify({"cancelled": True, "generation_id": generation_id}), 409
     except Exception as exc:
         logger.exception("OmniVoice generation failed")
         return jsonify({"error": str(exc), "engine": "omnivoice"}), 503

@@ -42,7 +42,8 @@ const writeVoiceCatalogCache = (voices, catalogRevision, inactiveIds = []) => {
 
 export default function CapCutNarration({ children, getSubtitles, getOriginalSubtitles, videoDuration, videoPath, subtitleSource, isGenerating,
   setIsGenerating, generationResults, setGenerationResults, downloadAllAudio, downloadAlignedAudio,
-  currentAudio, isPlaying, playAudio, useGroupedSubtitles, audioRef, handleAudioEnded }) {
+  currentAudio, isPlaying, playAudio, useGroupedSubtitles, audioRef, handleAudioEnded,
+  standaloneTextMode = false, isInputValid = true, combinedAudioLabel = '', combinedAudioTooltip = '' }) {
   const [cachedCatalog] = useState(readVoiceCatalogCache);
   const [voices, setVoices] = useState(() => cachedCatalog?.voices || []);
   const [language, setLanguage] = useState('vi-VN');
@@ -181,8 +182,12 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
   });
 
   const generate = (onlyIds) => run(async signal => {
-    const sources = await prepareSourceSpeech(videoPath, getOriginalSubtitles?.() || [], signal, setMessage);
-    const selected = buildDubbingWindows(getSubtitles() || [], sources, videoDuration);
+    const sources = standaloneTextMode
+      ? []
+      : await prepareSourceSpeech(videoPath, getOriginalSubtitles?.() || [], signal, setMessage);
+    const selected = standaloneTextMode
+      ? (getSubtitles() || [])
+      : buildDubbingWindows(getSubtitles() || [], sources, videoDuration);
     if (!selected.length) throw new Error('Chưa có phụ đề để tạo thuyết minh.');
     const results = onlyIds ? [...generationResults] : [];
     const pending = onlyIds ? selected.filter(s => onlyIds.some(id => String(id) === String(s.id))) : selected;
@@ -193,23 +198,38 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
       setMessage(`CapCut: ${index + 1}/${pending.length}`);
       let result;
       try {
-        if (subtitle.alignmentError) throw new Error(subtitle.alignmentError);
-        if (subtitle.targetDuration < 0.35) throw new Error('Khung đọc dưới 350 ms. Cần căn lại hoặc gộp cụm theo câu gốc; không ép đọc nhanh.');
+        if (!standaloneTextMode && subtitle.alignmentError) throw new Error(subtitle.alignmentError);
+        if (!standaloneTextMode && subtitle.targetDuration < 0.35) throw new Error('Khung đọc dưới 350 ms. Cần căn lại hoặc gộp cụm theo câu gốc; không ép đọc nhanh.');
         const previous = onlyIds && results.find(r => String(r.subtitle_id) === String(subtitle.id));
         const reusable = previous?.success && previous.filename && previous.voice === voice
           && (previous.originalNarration?.text || previous.text) === (subtitle.text || subtitle.translated_text)
-          && previous.start === subtitle.start && previous.end === subtitle.end;
+          && (standaloneTextMode || (previous.start === subtitle.start && previous.end === subtitle.end));
         const audio = reusable ? previous : await synthesize(subtitle.text || subtitle.translated_text, signal);
-        result = { ...audio, subtitle_id: subtitle.id, text: audio.text || subtitle.text || subtitle.translated_text,
-          start: subtitle.start, end: subtitle.end, original_ids: subtitle.original_ids, sourceId: subtitle.sourceId, method: 'capcut', voice, timingVersion: 1, timingBasis: subtitle.timingBasis };
-        setMessage('Đang đo và tự cân chỉnh cụm ' + subtitle.id);
-        result = await repairNarration({ result, target: subtitle.targetDuration,
-          sourceText: subtitle.sourceText, contextText: selected.map(s => s.text || s.translated_text || '').join(' '),
-          synthesize, audioUrl: getAudioUrl, signal });
+        result = {
+          ...audio,
+          subtitle_id: subtitle.id,
+          text: audio.text || subtitle.text || subtitle.translated_text,
+          method: 'capcut',
+          voice,
+          ...(standaloneTextMode ? { standaloneText: true } : {
+            start: subtitle.start,
+            end: subtitle.end,
+            original_ids: subtitle.original_ids,
+            sourceId: subtitle.sourceId,
+            timingVersion: 1,
+            timingBasis: subtitle.timingBasis
+          })
+        };
+        if (!standaloneTextMode) {
+          setMessage('Đang đo và tự cân chỉnh cụm ' + subtitle.id);
+          result = await repairNarration({ result, target: subtitle.targetDuration,
+            sourceText: subtitle.sourceText, contextText: selected.map(s => s.text || s.translated_text || '').join(' '),
+            synthesize, audioUrl: getAudioUrl, signal });
+        }
       } catch (error) {
         if (signal.aborted) throw error;
         if (error.capcutCode === '40402004') markVoiceInactive(error.capcutVoice || voice);
-        result = { success: false, timingVersion: 1, subtitle_id: subtitle.id, text: subtitle.text, error: error.message };
+        result = { success: false, ...(standaloneTextMode ? { standaloneText: true } : { timingVersion: 1 }), subtitle_id: subtitle.id, text: subtitle.text, error: error.message };
       }
       signal.throwIfAborted();
       const oldIndex = results.findIndex(r => String(r.subtitle_id) === String(subtitle.id));
@@ -220,7 +240,7 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
     const failed = results.filter(r => !r.success).length;
 
     const review = results.filter(r => r.needsTimingReview).length;
-    setMessage(review ? review + ' cụm chưa khớp; chưa ghép vào preview. Xem lý do và thử lại riêng cụm.' : failed ? `${failed} câu lỗi. Có thể thử lại từng câu.` : 'Đã tạo xong thuyết minh CapCut.');
+    setMessage(review ? review + ' cụm chưa khớp; chưa ghép vào preview. Xem lý do và thử lại riêng cụm.' : failed ? `${failed} câu lỗi. Có thể thử lại từng câu.` : standaloneTextMode ? 'Đã tạo xong audio thuyết minh CapCut từ văn bản.' : 'Đã tạo xong thuyết minh CapCut.');
   }, true);
 
   const availableVoices = voices.filter(item => item.capcut_supported !== false);
@@ -245,22 +265,27 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
       <button className="pill-button secondary" disabled={busy || isGenerating} onClick={loadVoices}>{catalogCached ? 'Làm mới danh sách giọng' : 'Tải danh sách giọng'}</button>
       <button className="pill-button primary" disabled={busy || isGenerating || !voice} onClick={listen}>Nghe thử giọng</button>
     </div></div>
-    <p className="narration-description">Văn bản được gửi đến dịch vụ CapCut để tạo giọng. Không cần âm thanh tham chiếu. Hãy nghe thử voice trước khi tạo hàng loạt.</p>
+    <p className="narration-description">{standaloneTextMode
+      ? 'Văn bản được gửi đến dịch vụ CapCut để tạo audio riêng, không căn theo timeline video.'
+      : 'Văn bản được gửi đến dịch vụ CapCut để tạo giọng. Không cần âm thanh tham chiếu. Hãy nghe thử voice trước khi tạo hàng loạt.'}</p>
     <audio ref={previewAudio} preload="auto" aria-hidden="true" style={{ display: 'none' }} />
     {children}
     <GenerateButton handleGenerateNarration={() => generate()} isGenerating={isGenerating || busy}
       requiresReferenceAudio={false} isServiceAvailable={!!voice} subtitleSource={subtitleSource}
       cancelGeneration={() => controller.current?.abort()} generationResults={generationResults}
-      downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio} />
+      downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
+      isInputValid={isInputValid} inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
+      combinedAudioLabel={combinedAudioLabel} combinedAudioTooltip={combinedAudioTooltip} />
     {message && <p role="status">{message}</p>}
     {generationResults.some(r => r.needsTimingReview) && <button disabled={busy || isGenerating} onClick={() => generate(generationResults.filter(r => r.needsTimingReview).map(r => r.subtitle_id))}>Thử lại các cụm lệch</button>}
-    <p>Căn tự động theo timestamp từ nếu có; nếu chưa có thì dùng mốc phụ đề ước lượng. Chỉ câu lệch mới được gửi Gemini để chỉnh lời.</p>
+    {!standaloneTextMode && <p>Căn tự động theo timestamp từ nếu có; nếu chưa có thì dùng mốc phụ đề ước lượng. Chỉ câu lệch mới được gửi Gemini để chỉnh lời.</p>}
     {generationResults.filter(r => r.needsTimingReview).map(r => <p key={r.subtitle_id} role="alert">Cụm {r.subtitle_id}: {r.repairError || 'Thời lượng vẫn lệch khung đọc'} — {r.duration?.toFixed(2)}s / {r.timingTarget?.toFixed(2)}s</p>)}
     <NarrationResults generationResults={generationResults} retryingSubtitleId={retrying}
       onRetry={id => { if (!controller.current) { setRetrying(id); generate([id]); } }}
       onRetryFailed={() => generate(generationResults.filter(r => !r.success).map(r => r.subtitle_id))}
       hasGenerationError={generationResults.some(r => !r.success)} currentAudio={currentAudio}
-      isPlaying={isPlaying} playAudio={playAudio} getAudioUrl={getAudioUrl} subtitleSource={subtitleSource} />
+      isPlaying={isPlaying} playAudio={playAudio} getAudioUrl={getAudioUrl} subtitleSource={subtitleSource}
+      title={standaloneTextMode ? 'Thuyết minh từ văn bản' : undefined} standaloneTextMode={standaloneTextMode} />
     <audio ref={audioRef} src={currentAudio?.url} onEnded={handleAudioEnded} style={{ display: 'none' }} />
   </div>;
 }
