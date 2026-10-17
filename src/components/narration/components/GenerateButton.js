@@ -31,6 +31,7 @@ const GenerateButton = ({
   serviceUnavailableMessage = '',
   isInputValid = true,
   inputValidationMessage = '',
+  standaloneTextMode = false,
   combinedAudioLabel = '',
   combinedAudioTooltip = ''
 }) => {
@@ -76,7 +77,7 @@ const GenerateButton = ({
         {/* Right side - Download buttons */}
         <div className="generate-button-right">
           <div className="pill-button-group">
-            <button
+            {!standaloneTextMode && <button
               className="pill-button secondary download-all-btn"
               onClick={downloadAllAudio}
               title={t('narration.downloadAllTooltip', 'Download all generated audio files')}
@@ -88,7 +89,7 @@ const GenerateButton = ({
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
               {t('narration.downloadAll', 'Tải xuống tất cả')}
-            </button>
+            </button>}
 
             <button
               className="pill-button secondary"

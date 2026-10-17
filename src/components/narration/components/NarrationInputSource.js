@@ -1,19 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getOmniVoiceLanguages } from '../../../services/chatterboxService';
 
-export const buildStandaloneNarrationSegments = (text) => String(text || '')
-  .replace(/\r/g, '')
-  .split(/\n\s*\n/)
-  .map((value) => value.trim())
-  .filter(Boolean)
-  .map((value, index) => ({
-    id: index + 1,
-    subtitle_id: index + 1,
+export const buildStandaloneNarrationSegments = (text) => {
+  const value = String(text || '').replace(/\r\n?/g, '\n').trim();
+  if (!value) return [];
+
+  return [{
+    id: 1,
+    subtitle_id: 1,
     text: value,
     translated_text: value
-  }));
+  }];
+};
 
-const NarrationInputSource = ({ mode, setMode, text, setText, disabled, language, setLanguage, showLanguage }) => {
+const NarrationInputSource = ({ mode, setMode, text, setText, disabled, hasSubtitles, language, setLanguage, showLanguage }) => {
   const segments = buildStandaloneNarrationSegments(text);
   const wordCount = String(text || '').trim().split(/\s+/).filter(Boolean).length;
   const [languageOptions, setLanguageOptions] = useState([]);
@@ -76,7 +76,7 @@ const NarrationInputSource = ({ mode, setMode, text, setText, disabled, language
                   value={value}
                   checked={mode === value}
                   onChange={() => setMode(value)}
-                  disabled={disabled}
+                  disabled={disabled || (value === 'subtitles' && !hasSubtitles)}
                 />
                 <label htmlFor={`narration-input-${value}`}>{label}</label>
               </div>
@@ -143,11 +143,11 @@ const NarrationInputSource = ({ mode, setMode, text, setText, disabled, language
                 onChange={(event) => setText(event.target.value)}
                 disabled={disabled}
                 rows={6}
-                placeholder="Nhập nội dung cần đọc. Mỗi đoạn cách nhau bằng một dòng trống sẽ tạo thành một mục audio riêng."
+                placeholder="Nhập toàn bộ nội dung cần đọc. Dù xuống dòng, văn bản vẫn được tạo thành một audio duy nhất."
                 aria-label="Văn bản cần tạo thuyết minh"
               />
               <div className="standalone-text-meta" aria-live="polite">
-                <span>{segments.length} đoạn</span>
+                <span>{segments.length ? '1 audio duy nhất' : '0 audio'}</span>
                 <span>{wordCount} từ · {String(text || '').length} ký tự</span>
               </div>
             </div>

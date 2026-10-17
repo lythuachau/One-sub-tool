@@ -216,6 +216,7 @@ export default function VibiNarration({ children, getSubtitles, subtitleSource, 
       cancelGeneration={() => controller.current?.abort()} generationResults={generationResults}
       downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
       isInputValid={isInputValid} inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
+      standaloneTextMode={standaloneTextMode}
       combinedAudioLabel={combinedAudioLabel} combinedAudioTooltip={combinedAudioTooltip} />
     {message && <p role="status">{message}</p>}
     <NarrationResults generationResults={generationResults} retryingSubtitleId={retrying}

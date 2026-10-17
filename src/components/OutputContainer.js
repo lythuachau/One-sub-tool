@@ -7,7 +7,7 @@ import LyricsDisplay from './LyricsDisplay';
 import TranslationSection from './translation';
 import { UnifiedNarrationSection } from './narration';
 import ParallelProcessingStatus from './ParallelProcessingStatus';
-import { hasValidDownloadedVideo, isBlobUrlValid } from '../utils/videoUtils';
+import { hasValidDownloadedVideo } from '../utils/videoUtils';
 import { persistVideoIdentity } from '../utils/videoIdentity';
 // BackgroundImageGenerator moved back to AppLayout
 
@@ -44,6 +44,7 @@ const OutputContainer = ({
   const [translatedSubtitles, setTranslatedSubtitles] = useState(null);
   const [seekTime, setSeekTime] = useState(null); // Track when seeking happens
   const [referenceAudio, setReferenceAudio] = useState(null); // Reference audio for narration
+  const hasSubtitleData = Array.isArray(subtitlesData) && subtitlesData.length > 0;
 
   const handleLyricClick = (time) => {
     setCurrentTabIndex(time);
@@ -198,13 +199,6 @@ const OutputContainer = ({
 
   // Background Image Generator functionality moved back to AppLayout
 
-  // Don't render anything if there's no content to show
-  if (!status?.message && !subtitlesData) {
-    return null;
-  }
-
-
-
   return (
     <div className="output-container">
       {/* Add Subtitles Button removed - now only in buttons-container */}
@@ -248,7 +242,7 @@ const OutputContainer = ({
         )
       )}
 
-      {subtitlesData && (
+      {hasSubtitleData && (
         <>
           <div className="preview-section">
             {/* Check if we should hide sections for URL + SRT without downloaded video */}
@@ -320,20 +314,19 @@ const OutputContainer = ({
             onSaveTranslatedSubtitles={handleSaveSubtitles}
           />
 
-          {/* Unified Narration Section - Now separate from Translation */}
-          <UnifiedNarrationSection
-            videoDuration={videoDuration}
-            subtitles={translatedSubtitles || editedLyrics || subtitlesData}
-            originalSubtitles={editedLyrics || subtitlesData}
-            translatedSubtitles={translatedSubtitles}
-            referenceAudio={referenceAudio}
-            videoPath={actualVideoUrl}
-            onReferenceAudioChange={setReferenceAudio}
-          />
-
           {/* Background Image Generator moved back to AppLayout */}
         </>
       )}
+
+      <UnifiedNarrationSection
+        videoDuration={videoDuration}
+        subtitles={translatedSubtitles || editedLyrics || subtitlesData || []}
+        originalSubtitles={editedLyrics || subtitlesData || []}
+        translatedSubtitles={translatedSubtitles || []}
+        referenceAudio={referenceAudio}
+        videoPath={actualVideoUrl}
+        onReferenceAudioChange={setReferenceAudio}
+      />
     </div>
   );
 };

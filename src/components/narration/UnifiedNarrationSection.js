@@ -38,7 +38,6 @@ import GeminiNarrationResults from './components/GeminiNarrationResults';
 import StatusMessage from './components/StatusMessage';
 import NarrationMethodSelection from './components/NarrationMethodSelection';
 import NarrationInputSource, { buildStandaloneNarrationSegments } from './components/NarrationInputSource';
-import { buildMergedNarrationWav } from './utils/mergeStandaloneNarration';
 import { NARRATION_METHODS } from './narrationMethods';
 
 // Import styles
@@ -144,11 +143,31 @@ const UnifiedNarrationSection = ({
     updateReferenceAudio
   } = narrationState;
 
-  const [narrationInputMode, setNarrationInputMode] = useState('subtitles');
+  const hasSubtitleInput = [subtitles, originalSubtitles, translatedSubtitles]
+    .some(items => Array.isArray(items) && items.length > 0);
+  const [narrationInputMode, setNarrationInputMode] = useState(() => hasSubtitleInput ? 'subtitles' : 'text');
+  const [hasChosenInputMode, setHasChosenInputMode] = useState(false);
   const [standaloneText, setStandaloneText] = useState('');
   const [standaloneTextLanguage, setStandaloneTextLanguage] = useState('vi');
   const [standaloneResultsByMethod, setStandaloneResultsByMethod] = useState({});
   const standaloneTextMode = narrationInputMode === 'text';
+  const handleNarrationInputModeChange = useCallback((mode) => {
+    setHasChosenInputMode(true);
+    setNarrationInputMode(mode);
+  }, []);
+
+  useEffect(() => {
+    if (!hasSubtitleInput && narrationInputMode === 'subtitles') {
+      setNarrationInputMode('text');
+      setHasChosenInputMode(false);
+      return;
+    }
+
+    if (hasSubtitleInput && !hasChosenInputMode && !standaloneText.trim()) {
+      setNarrationInputMode('subtitles');
+    }
+  }, [hasChosenInputMode, hasSubtitleInput, narrationInputMode, standaloneText]);
+
   const standaloneSegments = useMemo(() => buildStandaloneNarrationSegments(standaloneText), [standaloneText]);
   const activeGenerationResults = useMemo(() => standaloneTextMode
     ? (standaloneResultsByMethod[narrationMethod]?.text === standaloneText ? standaloneResultsByMethod[narrationMethod].results : [])
@@ -185,18 +204,25 @@ const UnifiedNarrationSection = ({
   const hasStandaloneText = standaloneSegments.length > 0;
   const downloadStandaloneAudio = useCallback(async () => {
     try {
-      const blob = await buildMergedNarrationWav(activeGenerationResults, getAudioUrl);
+      const result = activeGenerationResults.find(item => item.success && item.filename);
+      if (!result) throw new Error('Chưa có audio thuyết minh thành công để tải xuống.');
+
+      const response = await fetch(getAudioUrl(result.filename));
+      if (!response.ok) throw new Error(`Không tải được audio (HTTP ${response.status}).`);
+      const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'thuyet-minh-van-ban.wav';
+      const sourceName = String(result.filename).split(/[\\/]/).pop();
+      const extension = sourceName.includes('.') ? sourceName.split('.').pop() : 'audio';
+      link.download = `thuyet-minh-van-ban.${extension}`;
       link.style.display = 'none';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (mergeError) {
-      setError(mergeError.message || 'Không thể ghép audio thuyết minh.');
+    } catch (downloadError) {
+      setError(downloadError.message || 'Không thể tải audio thuyết minh.');
     }
   }, [activeGenerationResults, setError]);
 
@@ -575,10 +601,11 @@ const UnifiedNarrationSection = ({
 
       <NarrationInputSource
         mode={narrationInputMode}
-        setMode={setNarrationInputMode}
+        setMode={handleNarrationInputModeChange}
         text={standaloneText}
         setText={setStandaloneText}
         disabled={isGenerating}
+        hasSubtitles={hasSubtitleInput}
         language={standaloneTextLanguage}
         setLanguage={setStandaloneTextLanguage}
         showLanguage={narrationMethod === NARRATION_METHODS.OMNIVOICE && standaloneTextMode}
@@ -597,8 +624,8 @@ const UnifiedNarrationSection = ({
           currentAudio={currentAudio} isPlaying={isPlaying} playAudio={playAudio}
           useGroupedSubtitles={activeUseGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}
           standaloneTextMode={standaloneTextMode} isInputValid={!standaloneTextMode || hasStandaloneText}
-          combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
-          combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}>
+          combinedAudioLabel={standaloneTextMode ? 'Tải audio' : ''}
+          combinedAudioTooltip={standaloneTextMode ? 'Tải audio duy nhất được tạo từ toàn bộ văn bản.' : ''}>
           {!standaloneTextMode && <SubtitleSourceSelection
             subtitleSource={subtitleSource}
             setSubtitleSource={setSubtitleSource}
@@ -631,8 +658,8 @@ const UnifiedNarrationSection = ({
           currentAudio={currentAudio} isPlaying={isPlaying} playAudio={playAudio}
           useGroupedSubtitles={activeUseGroupedSubtitles} audioRef={audioRef} handleAudioEnded={handleAudioEnded}
           standaloneTextMode={standaloneTextMode} isInputValid={!standaloneTextMode || hasStandaloneText}
-          combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
-          combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}>
+          combinedAudioLabel={standaloneTextMode ? 'Tải audio' : ''}
+          combinedAudioTooltip={standaloneTextMode ? 'Tải audio duy nhất được tạo từ toàn bộ văn bản.' : ''}>
           {!standaloneTextMode && <SubtitleSourceSelection
             subtitleSource={subtitleSource}
             setSubtitleSource={setSubtitleSource}
@@ -775,8 +802,9 @@ const UnifiedNarrationSection = ({
             requiresReferenceAudio={vieneuVoiceMode === 'reference'}
             isInputValid={!standaloneTextMode || hasStandaloneText}
             inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
-            combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
-            combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}
+            standaloneTextMode={standaloneTextMode}
+            combinedAudioLabel={standaloneTextMode ? 'Tải audio' : ''}
+            combinedAudioTooltip={standaloneTextMode ? 'Tải audio duy nhất được tạo từ toàn bộ văn bản.' : ''}
             serviceUnavailableMessage={t('narration.serviceUnavailableMessage', 'Vui lòng chạy ứng dụng bằng npm run dev:cuda để dùng chức năng Thuyết minh. Nếu đã chạy bằng npm run dev:cuda, vui lòng đợi khoảng 1 phút sẽ dùng được.')}
           />
 
@@ -893,8 +921,9 @@ const UnifiedNarrationSection = ({
             requiresReferenceAudio={omnivoiceMode === 'reference'}
             isInputValid={!standaloneTextMode || hasStandaloneText}
             inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
-            combinedAudioLabel={standaloneTextMode ? 'Tải audio đã ghép' : ''}
-            combinedAudioTooltip={standaloneTextMode ? 'Ghép các đoạn thuyết minh văn bản theo thứ tự thành một tệp WAV.' : ''}
+            standaloneTextMode={standaloneTextMode}
+            combinedAudioLabel={standaloneTextMode ? 'Tải audio' : ''}
+            combinedAudioTooltip={standaloneTextMode ? 'Tải audio duy nhất được tạo từ toàn bộ văn bản.' : ''}
             serviceUnavailableMessage={t('narration.chatterboxUnavailableMessage', 'Chatterbox API is not available. Please start the Chatterbox service.')}
           />
 

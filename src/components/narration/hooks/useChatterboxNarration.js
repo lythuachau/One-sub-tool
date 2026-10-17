@@ -187,7 +187,11 @@ const useChatterboxNarration = ({
             subtitle.text, exaggeration, cfgWeight, voiceFile, voiceFilePath,
             referenceAudio?.text || referenceText || '', omnivoiceMode, omnivoiceInstruct,
             subtitleSource === 'translated' ? translatedLanguage : originalLanguage,
-            { signal: run.controller.signal, generationId: run.id }
+            {
+              signal: run.controller.signal,
+              generationId: run.id,
+              timeoutMs: standaloneTextMode ? null : 60000
+            }
           );
           assertActive(run);
           const filename = await saveAudioBlobToServer(audio, id, run);

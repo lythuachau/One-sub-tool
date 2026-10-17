@@ -34,7 +34,9 @@ const withRequestCancellation = async (signal, timeoutMs, request) => {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
   try {
     const result = await request(controller.signal);
     throwIfAborted(signal);
@@ -359,10 +361,10 @@ export const generateChatterboxSpeech = async (
   voiceMode = 'reference',
   instruct = '',
   language = null,
-  { signal, generationId } = {}
+  { signal, generationId, timeoutMs = 60000 } = {}
 ) => {
   try {
-    return await withRequestCancellation(signal, 60000, async requestSignal => {
+    return await withRequestCancellation(signal, timeoutMs, async requestSignal => {
       const mode = voiceMode || 'reference';
       if (mode === 'reference' && !voiceFile && !voiceFilePath) {
         throw new Error('Reference audio is required for OmniVoice clone mode');
@@ -451,8 +453,13 @@ export const generateChatterboxSpeech = async (
     console.error('Error generating Chatterbox speech:', error);
 
     if (error.name === 'AbortError') {
-      const timeout = new Error('OmniVoice generation timeout - text may be too long');
-      timeout.name = 'TimeoutError';
+      const timeoutSeconds = Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? Math.round(timeoutMs / 1000)
+        : null;
+      const timeout = new Error(timeoutSeconds
+        ? `OmniVoice generation timed out after ${timeoutSeconds} seconds`
+        : 'OmniVoice generation was interrupted');
+      timeout.name = timeoutSeconds ? 'TimeoutError' : 'AbortError';
       throw timeout;
     }
 

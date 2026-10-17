@@ -275,6 +275,7 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
       cancelGeneration={() => controller.current?.abort()} generationResults={generationResults}
       downloadAllAudio={downloadAllAudio} downloadAlignedAudio={downloadAlignedAudio}
       isInputValid={isInputValid} inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
+      standaloneTextMode={standaloneTextMode}
       combinedAudioLabel={combinedAudioLabel} combinedAudioTooltip={combinedAudioTooltip} />
     {message && <p role="status">{message}</p>}
     {generationResults.some(r => r.needsTimingReview) && <button disabled={busy || isGenerating} onClick={() => generate(generationResults.filter(r => r.needsTimingReview).map(r => r.subtitle_id))}>Thử lại các cụm lệch</button>}
