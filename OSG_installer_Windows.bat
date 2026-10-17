@@ -9,7 +9,7 @@ exit /b %INSTALLER_EXIT%
 # ONE_SUB_POWERSHELL
 $ErrorActionPreference = 'Stop'
 $repository = 'https://github.com/lythuachau/One-sub-tool.git'
-$installerVersion = '3.0.0-alpha.9'
+$installerVersion = '3.0.0-alpha.10'
 $installBranch = "release/v$installerVersion"
 $installerDirectory = Split-Path -Parent $env:ONE_SUB_INSTALLER
 $requiredProjectFiles = @(
