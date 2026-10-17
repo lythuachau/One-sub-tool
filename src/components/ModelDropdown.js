@@ -47,12 +47,12 @@ const ModelDropdown = ({
           ? t('translation.dynamicModelDescription', 'Provider model supporting generateContent')
           : (model.description || t('models.dynamicModel', 'Detected from the active API key')),
         icon: isPro
-          ? <FiStar className="model-icon star-icon" />
+          ? <FiStar className="gemini-model-dropdown__icon gemini-model-dropdown__icon--tertiary" />
           : isLite
-            ? <FiTrendingUp className="model-icon trending-icon" />
+            ? <FiTrendingUp className="gemini-model-dropdown__icon gemini-model-dropdown__icon--tertiary" />
             : isFlash
-              ? <FiZap className="model-icon zap-icon" />
-              : <FiCpu className="model-icon cpu-icon" />,
+              ? <FiZap className="gemini-model-dropdown__icon gemini-model-dropdown__icon--tertiary" />
+              : <FiCpu className="gemini-model-dropdown__icon gemini-model-dropdown__icon--success" />,
         color: isPro ? 'var(--md-tertiary)' : 'var(--md-primary)',
         bgColor: isPro ? 'rgba(var(--md-tertiary-rgb), 0.1)' : 'rgba(var(--md-primary-rgb), 0.1)'
       };
@@ -151,9 +151,9 @@ const ModelDropdown = ({
   }, [isOpen, positionDropdown]);
 
   return (
-    <div className={`model-dropdown-container ${isOpen ? 'dropdown-open' : ''}`}>
+    <div className={`gemini-model-dropdown ${isOpen ? 'gemini-model-dropdown--open' : ''}`}>
       <button
-        className={`model-dropdown-btn ${buttonClassName} ${isOpen ? 'active-dropdown-btn' : ''} ${disabled || modelUnavailable ? 'disabled' : ''}`}
+        className={`gemini-model-dropdown__button ${buttonClassName} ${isOpen ? 'gemini-model-dropdown__button--active' : ''} ${disabled || modelUnavailable ? 'gemini-model-dropdown__button--disabled' : ''}`}
         onClick={handleButtonClick}
         title={disabled ? t('common.disabled', 'Disabled during translation') : isLoading ? t('models.loading', 'Checking available models...') : error ? t('models.noUsableModels', 'No verified models available') : t('common.selectModel', 'Select model')}
         ref={buttonRef}
@@ -161,30 +161,30 @@ const ModelDropdown = ({
         aria-expanded={isOpen}
         disabled={disabled || isLoading || modelOptions.length === 0}
       >
-        {label && <span className="model-dropdown-label">{label}</span>}
-        <span className="model-dropdown-selected">
-          {currentModel?.icon || <FiCpu className="model-icon cpu-icon" />}
-          <span className="model-name">
+        {label && <span className="gemini-model-dropdown__label">{label}</span>}
+        <span className="gemini-model-dropdown__selected">
+          {currentModel?.icon || <FiCpu className="gemini-model-dropdown__icon" />}
+          <span className="gemini-model-dropdown__name">
             {currentModel?.name || (isLoading
               ? t('models.loading', 'Checking available models...')
               : t('models.noUsableModels', 'No verified models available'))}
           </span>
         </span>
-        <FiChevronDown size={14} className="dropdown-icon" />
+        <FiChevronDown size={14} className="gemini-model-dropdown__chevron" />
       </button>
 
       {isOpen && (
         <div
-          className="model-options-dropdown"
+          className="gemini-model-dropdown__popup"
           ref={dropdownRef}
           role="menu"
         >
-          <div className="model-options-header">
+          <div className="gemini-model-dropdown__header">
             {headerText || t('common.selectModel', 'Select model')}
           </div>
-          <div className="model-options-list">
+          <div className="gemini-model-dropdown__list">
             {modelOptions.length === 0 && (
-              <div className="model-options-empty">
+              <div className="gemini-model-dropdown__empty">
                 {isLoading
                   ? t('models.loading', 'Checking available models...')
                   : t('models.noUsableModels', 'No verified translation models are available for this API key.')}
@@ -193,7 +193,7 @@ const ModelDropdown = ({
             {modelOptions.map((model) => (
               <button
                 key={model.id}
-                className={`model-option-btn ${model.id === selectedModel ? 'selected' : ''}`}
+                className={`gemini-model-dropdown__option ${model.id === selectedModel ? 'gemini-model-dropdown__option--selected' : ''}`}
                 onClick={(e) => handleModelSelect(e, model.id)}
                 style={{
                   '--model-color': model.color,
@@ -201,12 +201,12 @@ const ModelDropdown = ({
                 }}
                 role="menuitem"
               >
-                <div className="model-option-icon">{model.icon}</div>
-                <div className="model-option-text">
-                  <div className="model-option-name">
+                <div className="gemini-model-dropdown__option-icon">{model.icon}</div>
+                <div className="gemini-model-dropdown__option-text">
+                  <div className="gemini-model-dropdown__option-name">
                     {model.name}
                   </div>
-                  <div className="model-option-description">{model.description}</div>
+                  <div className="gemini-model-dropdown__option-description">{model.description}</div>
                 </div>
               </button>
             ))}

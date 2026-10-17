@@ -1,23 +1,20 @@
-/* Model dropdown container */
-.model-dropdown-container {
+.gemini-model-dropdown {
   position: relative;
   display: inline-block;
 }
 
-/* When dropdown is open, ensure container has higher z-index */
-.model-dropdown-container.dropdown-open {
-  z-index: 99999; /* High z-index to ensure it appears above other elements */
+.gemini-model-dropdown--open {
+  z-index: 99999;
 }
 
-/* Model dropdown button */
-.model-dropdown-btn {
+.gemini-model-dropdown__button {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
+  border: 1px solid var(--border-color);
   border-radius: 21px;
   background-color: var(--md-surface-2);
-  border: 1px solid var(--border-color);
   color: var(--text-primary);
   font-family: 'Open Sans', sans-serif;
   font-size: 0.9rem;
@@ -27,213 +24,178 @@
   white-space: nowrap;
 }
 
-.model-dropdown-btn:hover {
+.gemini-model-dropdown__button:hover {
   background-color: var(--md-surface-3);
 }
 
-.model-dropdown-btn.active-dropdown-btn {
+.gemini-model-dropdown__button--active {
   background-color: var(--md-surface-3);
   box-shadow: var(--md-elevation-level2);
-  font-family: 'Open Sans', sans-serif;
 }
 
-.model-dropdown-btn.disabled {
+.gemini-model-dropdown__button--disabled,
+.gemini-model-dropdown__button--disabled:hover {
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
-}
-
-.model-dropdown-btn.disabled:hover {
   background-color: var(--md-surface-2);
   transform: none;
 }
 
-/* Selected model display */
-.model-dropdown-selected {
+.gemini-model-dropdown__selected {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
-/* Model name in button */
-.model-name {
+.gemini-model-dropdown__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Dropdown icon */
-.dropdown-icon {
+.gemini-model-dropdown__chevron {
+  flex: 0 0 auto;
   margin-left: 2px;
   transition: transform 0.2s var(--md-easing-standard);
 }
 
-.active-dropdown-btn .dropdown-icon {
+.gemini-model-dropdown__button--active .gemini-model-dropdown__chevron {
   transform: rotate(180deg);
 }
 
-/* Model options dropdown */
-.model-options-dropdown {
-  position: fixed; /* Fixed position to avoid layout issues */
+.gemini-model-dropdown__popup {
+  position: fixed;
+  z-index: 99999;
   width: 380px;
-  background-color: var(--md-surface-1);
-  border-radius: 12px;
-  box-shadow: var(--md-elevation-level3);
-  border: 1px solid var(--border-color);
-  z-index: 99999; /* Very high z-index to ensure it appears above other elements */
   overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background-color: var(--md-surface-1);
+  box-shadow: var(--md-elevation-level3);
 }
 
-/* Header for the dropdown */
-.model-options-header {
+.gemini-model-dropdown__header {
   padding: 12px 16px;
-  font-size: var(--md-body-medium-size);
-  font-weight: var(--md-body-medium-weight);
-  color: var(--md-on-surface);
   border-bottom: 1px solid var(--md-outline-variant);
   background-color: var(--md-surface-3);
+  color: var(--md-on-surface);
+  font-size: var(--md-body-medium-size);
+  font-weight: var(--md-body-medium-weight);
 }
 
-/* List of model options */
-.model-options-list {
+.gemini-model-dropdown__list {
   max-height: 300px;
   overflow-y: auto;
   font-family: 'Open Sans', sans-serif;
 }
 
-/* Individual model option button */
-.model-option-btn {
+.gemini-model-dropdown__option {
+  position: relative;
   display: flex;
   align-items: center;
   width: 100%;
-  padding: 12px 16px;
+  height: auto;
+  min-height: 56px;
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  overflow: visible;
+  border: 0;
   background-color: transparent;
-  border: none;
+  color: var(--md-on-surface);
   cursor: pointer;
   text-align: left;
-  position: relative;
-  overflow: hidden;
-  color: var(--md-on-surface);
   transition: background-color 0.2s;
 }
 
-.model-option-btn:hover {
+.gemini-model-dropdown__option:hover {
   background-color: var(--md-surface-2);
 }
 
-.model-option-btn.selected {
+.gemini-model-dropdown__option--selected {
   background-color: var(--model-bg-color, rgba(var(--md-primary-rgb), 0.1));
 }
 
-.model-option-btn.selected::after {
-  content: '';
+.gemini-model-dropdown__option--selected::after {
   position: absolute;
-  left: 0;
   top: 0;
   bottom: 0;
+  left: 0;
   width: 3px;
   background-color: var(--model-color, var(--md-primary));
+  content: '';
 }
 
-/* Model icon container */
-.model-option-icon {
+.gemini-model-dropdown__option-icon {
   display: flex;
+  flex: 0 0 32px;
   align-items: center;
   justify-content: center;
   width: 32px;
   height: 32px;
+  margin-right: 12px;
   border-radius: 50%;
   background-color: var(--model-bg-color, rgba(var(--md-primary-rgb), 0.1));
-  margin-right: 12px;
-  flex-shrink: 0;
 }
 
-/* Model icon styling */
-.model-icon {
+.gemini-model-dropdown__icon {
   width: 16px;
   height: 16px;
   color: var(--model-color, var(--md-primary));
 }
 
-/* Special styling for each icon type */
-.star-icon {
+.gemini-model-dropdown__icon--tertiary {
   color: var(--md-tertiary);
 }
 
-.award-icon {
-  color: var(--md-secondary);
-}
-
-.zap-icon {
-  color: var(--md-tertiary);
-}
-
-.trending-icon {
-  color: var(--md-tertiary);
-}
-
-.activity-icon {
-  color: var(--md-primary);
-}
-
-.cpu-icon {
+.gemini-model-dropdown__icon--success {
   color: var(--success-color);
 }
 
-/* Model text container */
-.model-option-text {
+.gemini-model-dropdown__option-text {
   display: flex;
-  flex-direction: column;
-  flex: 1;
   min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
 }
 
-/* Model name styling */
-.model-option-name {
+.gemini-model-dropdown__option-name {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--md-on-surface);
   font-size: var(--md-body-medium-size);
   font-weight: var(--md-body-medium-weight);
-  color: var(--md-on-surface);
-  margin-bottom: 2px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  line-height: 1.25;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-
-
-/* Model description styling */
-.model-option-description {
-  font-size: var(--md-body-small-size);
-  color: var(--md-on-surface-variant);
   line-height: 1.3;
-  white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.model-options-empty {
+.gemini-model-dropdown__option-description {
+  color: var(--md-on-surface-variant);
+  font-size: var(--md-body-small-size);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.gemini-model-dropdown__empty {
   padding: 18px 16px;
   color: var(--md-on-surface-variant);
   font-size: var(--md-body-small-size);
   line-height: 1.4;
 }
 
-/* Optional label styling */
-.model-dropdown-label {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
+.gemini-model-dropdown__label {
   margin-right: 4px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
 }
 
-/* Responsive adjustments */
 @media (max-width: 768px) {
-  .model-options-dropdown {
+  .gemini-model-dropdown__popup {
     width: 220px;
   }
 
-  .model-name {
+  .gemini-model-dropdown__name {
     max-width: 80px;
   }
 }
