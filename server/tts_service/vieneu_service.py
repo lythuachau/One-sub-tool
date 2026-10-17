@@ -35,6 +35,21 @@ model_loading = False
 
 
 def _preset_voice_metadata() -> dict[str, Any]:
+    loaded_presets = getattr(model, "_preset_voices", None) if model is not None else None
+    if isinstance(loaded_presets, dict):
+        return {
+            "default_voice": getattr(model, "_default_voice", None),
+            "voices": [
+                {
+                    "id": name,
+                    "name": name,
+                    "description": value.get("description", ""),
+                    "gender": value.get("gender"),
+                }
+                for name, value in loaded_presets.items()
+            ],
+        }
+
     try:
         asset = importlib.resources.files("vieneu").joinpath("assets", "voices_v3_turbo.json")
         data = json.loads(asset.read_text(encoding="utf-8"))
@@ -61,16 +76,31 @@ def _materialize_onnx_cache() -> None:
     import tempfile
     from huggingface_hub import hf_hub_download
     from huggingface_hub.errors import LocalEntryNotFoundError
-    from vieneu._v3_turbo_engine.onnx_runtime_lite import (
-        _V3_REPO, _V3_FILES, _CODEC_REPO, _CODEC_FILES,
-    )
+    from vieneu._v3_turbo_engine import onnx_runtime_lite
 
-    for repo, files in ((_V3_REPO, _V3_FILES), (_CODEC_REPO, _CODEC_FILES)):
+    graph_files = getattr(onnx_runtime_lite, "_V3_FILES", None)
+    graph_subfolder = None
+    if not graph_files:
+        graph_files = getattr(onnx_runtime_lite, "_GRAPH_FILES", None)
+        graph_subfolder = "onnx_update"
+    if not graph_files:
+        raise RuntimeError("VieNeu ONNX graph file list is unavailable")
+
+    artifacts = (
+        (onnx_runtime_lite._V3_REPO, graph_files, graph_subfolder),
+        (onnx_runtime_lite._CODEC_REPO, onnx_runtime_lite._CODEC_FILES, None),
+    )
+    for repo, files, subfolder in artifacts:
         for filename in files:
+            download_options = {
+                "repo_id": repo,
+                "filename": filename,
+                "subfolder": subfolder,
+            }
             try:
-                artifact = Path(hf_hub_download(repo_id=repo, filename=filename, local_files_only=True))
+                artifact = Path(hf_hub_download(**download_options, local_files_only=True))
             except LocalEntryNotFoundError:
-                artifact = Path(hf_hub_download(repo_id=repo, filename=filename))
+                artifact = Path(hf_hub_download(**download_options))
             if not artifact.is_symlink():
                 continue
             # ONNX external data must resolve inside the graph directory, not HF blobs.

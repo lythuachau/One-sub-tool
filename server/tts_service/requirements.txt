@@ -2,5 +2,5 @@ flask>=3.0
 flask-cors>=4.0
 numpy>=1.26
 soundfile>=0.12
-vieneu @ git+https://github.com/pnnbao97/VieNeu-TTS.git@e41fdeaa280610e946466736b60cf141e45f3cab
+vieneu @ git+https://github.com/pnnbao97/VieNeu-TTS.git@bd0f88eb8de7d560753a6172ba9c868f309a101c
 omnivoice @ git+https://github.com/k2-fsa/OmniVoice.git@08be0b4ccbac3e13e374e86fbfead4b4cac343e2
