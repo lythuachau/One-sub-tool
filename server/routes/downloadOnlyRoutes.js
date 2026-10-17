@@ -7,6 +7,8 @@ const { VIDEOS_DIR } = require('../config');
 const { getYtDlpPath, getYtDlpArgs } = require('../services/shared/ytdlpUtils');
 const { setDownloadProgress, getDownloadProgress } = require('../services/shared/progressTracker');
 const { updateProgressFromYtdlpOutput } = require('../services/shared/progressTracker');
+const { downloadVideoWithRetry } = require('../services/allSites/downloader');
+const { isBilibiliUrl } = require('../services/allSites/formatPolicy');
 
 // Track active downloads to prevent duplicates
 const activeDownloads = new Map();
@@ -121,8 +123,16 @@ router.post('/download-only', async (req, res) => {
       fs.unlinkSync(outputPath);
     }
 
-    // Start download process asynchronously
-    downloadMediaAsync(url, outputPath, type, quality, videoId, useCookies);
+    // Start download process asynchronously and consume failures so a failed download
+    // cannot become an unhandled rejection that terminates the backend process.
+    downloadMediaAsync(url, outputPath, type, quality, videoId, useCookies).catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[DOWNLOAD-ONLY] Background download failed for ${videoId}:`, message);
+      setDownloadProgress(videoId, 0, 'error', { error: message });
+      activeDownloads.delete(downloadKey);
+      activeFileOperations.delete(outputPath);
+      activeYtdlpProcesses.delete(processKey);
+    });
 
     res.json({
       success: true,
@@ -153,7 +163,8 @@ router.get('/download-only-progress/:videoId', async (req, res) => {
     res.json({
       success: true,
       progress: progress.progress || 0,
-      status: progress.status || 'unknown'
+      status: progress.status || 'unknown',
+      error: progress.error || null
     });
   } catch (error) {
     console.error('[DOWNLOAD-ONLY] Error getting progress:', error);
@@ -222,6 +233,30 @@ router.get('/download-only-file/:videoId', (req, res) => {
  */
 async function downloadMediaAsync(url, outputPath, type, quality, videoId, useCookies = false) {
   return new Promise((resolve, reject) => {
+    if (type === 'video' && isBilibiliUrl(url)) {
+      downloadVideoWithRetry(videoId, url, quality, useCookies)
+        .then(() => {
+          setDownloadProgress(videoId, 100, 'completed');
+          const downloadKey = `${url}_${type}_${quality || 'default'}`;
+          activeDownloads.delete(downloadKey);
+          activeFileOperations.delete(outputPath);
+          activeYtdlpProcesses.delete(downloadKey);
+          try {
+            const { broadcastProgress } = require('../services/shared/progressWebSocket');
+            broadcastProgress(videoId, 100, 'completed', 'download');
+          } catch (error) {
+            // WebSocket module might not be initialized yet.
+          }
+          resolve();
+        })
+        .catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          setDownloadProgress(videoId, 0, 'error', { error: message });
+          reject(error);
+        });
+      return;
+    }
+
     const ytDlpPath = getYtDlpPath();
     
     // Initialize progress tracking

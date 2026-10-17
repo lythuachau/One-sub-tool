@@ -15,6 +15,25 @@ const {
   quarantineStaleVideoArtifact
 } = require('../services/shared/videoSourceMetadata');
 
+async function cleanupDownloadArtifacts(videoId) {
+  const videoName = `${videoId}.mp4`;
+  const metadataName = `${videoName}.source.json`;
+  const partialPrefix = `${videoId}.temp.`;
+  const entries = await fs.promises.readdir(VIDEOS_DIR, { withFileTypes: true }).catch(() => []);
+  const targets = entries
+    .filter(entry => entry.isFile() && (
+      entry.name === videoName ||
+      entry.name === metadataName ||
+      entry.name === `${videoId}.temp.mp4` ||
+      entry.name.startsWith(partialPrefix)
+    ))
+    .map(entry => path.join(VIDEOS_DIR, entry.name));
+
+  await Promise.all(targets.map(target => fs.promises.unlink(target).catch(error => {
+    if (error.code !== 'ENOENT') console.warn(`[allSites] Could not clean ${path.basename(target)}: ${error.message}`);
+  })));
+}
+
 /**
  * POST /api/download-generic-video - Download a video from any supported site
  */
@@ -25,6 +44,10 @@ router.post('/download-generic-video', async (req, res) => {
 
   if (!videoId || !url) {
     return res.status(400).json({ error: 'Video ID and URL are required' });
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(String(videoId))) {
+    return res.status(400).json({ error: 'Video ID contains invalid characters' });
   }
 
   const videoPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
@@ -67,18 +90,7 @@ router.post('/download-generic-video', async (req, res) => {
   } catch (error) {
     console.error('Error downloading video:', error);
 
-    // Clean up any partial file
-    try {
-      if (fs.existsSync(videoPath)) {
-        fs.unlinkSync(videoPath);
-      }
-      const tempPath = path.join(VIDEOS_DIR, `${videoId}.temp.mp4`);
-      if (fs.existsSync(tempPath)) {
-        fs.unlinkSync(tempPath);
-      }
-    } catch (e) {
-      console.error('Error cleaning up incomplete file:', e);
-    }
+    await cleanupDownloadArtifacts(videoId);
 
     return res.status(500).json({
       error: 'Failed to download video',
@@ -104,6 +116,7 @@ router.get('/generic-download-progress/:videoId', (req, res) => {
       videoId: videoId,
       progress: progress.progress,
       status: progress.status,
+      error: progress.error || null,
       timestamp: progress.timestamp
     });
   } catch (error) {

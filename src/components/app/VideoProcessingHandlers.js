@@ -3,7 +3,7 @@ import { splitVideoOnServer } from '../../utils/videoSplitter';
 import { extractYoutubeVideoId, downloadYoutubeVideo } from '../../utils/videoDownloader';
 import { extractDouyinVideoId, downloadDouyinVideo } from '../../utils/douyinDownloader';
 import { downloadDouyinVideoPlaywright } from '../../utils/douyinPlaywrightDownloader';
-import { downloadGenericVideo } from '../../utils/allSitesDownloader';
+import { downloadGenericVideo, fetchGenericVideoFile } from '../../utils/allSitesDownloader';
 import { persistDownloadedVideoIdentity, persistVideoIdentity } from '../../utils/videoIdentity';
 
 // Function to ensure video compatibility
@@ -263,20 +263,7 @@ export const downloadAndPrepareYouTubeVideo = async (
             }
           }
 
-          const response = await fetch(`/videos/${latestVideoId}.mp4`);
-
-          if (!response.ok) {
-            throw new Error(`Failed to fetch video: ${response.status} ${response.statusText}`);
-          }
-
-          const blob = await response.blob();
-
-          // Check if the blob has a reasonable size
-          if (blob.size < 1000) { // Less than 1KB
-            throw new Error(`Video file is too small (${blob.size} bytes), likely not a valid video`);
-          }
-
-          const videoFile = new File([blob], `${latestVideoId}.mp4`, { type: 'video/mp4' });
+          const videoFile = await fetchGenericVideoFile(latestVideoId);
 
 
 
@@ -287,7 +274,7 @@ export const downloadAndPrepareYouTubeVideo = async (
           window.downloadedVideoFile = videoFile;
         } catch (fallbackError) {
           console.error('Fallback method failed:', fallbackError);
-          throw new Error(`Failed to download video: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+          throw new Error(`Failed to download video: ${error.message}. Direct server check: ${fallbackError.message}`);
         }
       }
     } else {

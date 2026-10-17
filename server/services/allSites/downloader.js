@@ -1,399 +1,171 @@
-/**
- * Generic URL downloader module that uses yt-dlp for downloading videos from any supported site
- */
-
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { VIDEOS_DIR } = require('../../config');
-const { safeMoveFile } = require('../../utils/fileOperations');
-const { getYtDlpPath, getYtDlpArgs, getOptimizedYtDlpArgs } = require('../shared/ytdlpUtils');
-const {
-  setDownloadProgress,
-  updateProgressFromYtdlpOutput
-} = require('../shared/progressTracker');
+const { publishVideoFile } = require('../../utils/fileOperations');
+const { getYtDlpPath, getYtDlpArgs } = require('../shared/ytdlpUtils');
+const { validateVideoArtifact } = require('../douyin/videoArtifactValidator');
+const { buildDownloadPlans, getHeightLimit, isBilibiliUrl } = require('./formatPolicy');
+const { setDownloadProgress, updateProgressFromYtdlpOutput } = require('../shared/progressTracker');
 
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
+async function removeAttemptArtifacts(videoId) {
+  const prefix = `${videoId}.temp.`;
+  const exactTempName = `${videoId}.temp.mp4`;
+  const entries = await fs.promises.readdir(VIDEOS_DIR, { withFileTypes: true }).catch(() => []);
+  const paths = entries
+    .filter(entry => entry.isFile() && (entry.name === exactTempName || entry.name.startsWith(prefix)))
+    .map(entry => path.join(VIDEOS_DIR, entry.name));
 
-/**
- * Check if yt-dlp is installed and get its version
- * @returns {Promise<string>} - yt-dlp version
- */
-async function checkYtDlpVersion() {
+  await Promise.all(paths.map(filePath => fs.promises.unlink(filePath).catch(error => {
+    if (error.code !== 'ENOENT') console.warn(`[allSites] Could not remove partial download ${path.basename(filePath)}: ${error.message}`);
+  })));
+}
+
+function getDiagnosticExcerpt(output) {
+  const lines = output
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .split(/[\r\n]+/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('[debug]') && !/https?:\/\//i.test(line));
+  const usefulLines = lines.filter(line => !/^(?:File ".*", line \d+|Traceback|return error\(|error=IDENTITY|self\.trouble\(|self\.error_callback\()/i.test(line));
+  const actionableLines = usefulLines.filter(line => /(?:Got error:\s*\d+ bytes read|HTTP Error|^ERROR:\s+\S|timed out|incomplete)/i.test(line));
+  const selectedLines = (actionableLines.length ? actionableLines : usefulLines)
+    .slice(-4);
+
+  return selectedLines
+    .join(' | ')
+    .slice(-2000);
+}
+
+function getPythonPath() {
+  const pythonDirectory = process.platform === 'win32' ? 'Scripts' : 'bin';
+  const pythonExecutable = process.platform === 'win32' ? 'python.exe' : 'python';
+  const pythonPath = path.join(process.cwd(), '.venv', pythonDirectory, pythonExecutable);
+  return fs.existsSync(pythonPath) ? pythonPath : null;
+}
+
+function runYtDlpAttempt({ videoId, videoURL, quality, useCookies, plan }) {
   const ytDlpPath = getYtDlpPath();
-
-  try {
-    const { stdout } = await require('util').promisify(require('child_process').exec)(`"${ytDlpPath}" --version`);
-
-    return stdout.trim();
-  } catch (error) {
-    console.error('Error checking yt-dlp version:', error.message);
-    console.warn('yt-dlp is not installed or not in PATH. Will attempt to use alternative methods.');
-    return 'not-installed';
-  }
-}
-
-/**
- * Download video from any site using yt-dlp
- * @param {string} videoId - Generated video ID
- * @param {string} videoURL - Video URL
- * @param {string} quality - Desired video quality (e.g., '144p', '360p', '720p')
- * @param {boolean} useCookies - Whether to use browser cookies for authentication
- * @returns {Promise<Object>} - Result object with success status and path
- */
-async function downloadVideoWithYtDlp(videoId, videoURL, quality = '360p', useCookies = false) {
-  const outputPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
   const tempPath = path.join(VIDEOS_DIR, `${videoId}.temp.mp4`);
+  const pythonPath = plan.bilibiliMirrors ? getPythonPath() : null;
+  const command = pythonPath || ytDlpPath;
+  const args = pythonPath
+    ? [
+        path.join(__dirname, 'bilibiliMirrorDownloader.py'),
+        '--url', videoURL,
+        '--format', plan.format,
+        '--output', tempPath,
+        '--shared-args', JSON.stringify(getYtDlpArgs(useCookies))
+      ]
+    : [
+        ...getYtDlpArgs(useCookies),
+        ...plan.args,
+        '--verbose',
+        '--format', plan.format,
+        '--merge-output-format', 'mp4',
+        '--output', tempPath,
+        '--force-overwrites',
+        '--no-check-certificate',
+        '--user-agent', USER_AGENT,
+        videoURL
+      ];
 
+  console.log(`[allSites] Starting ${plan.name} (${quality}); format=${plan.format}`);
 
-
-  try {
-    // Check if yt-dlp is installed
-    const ytdlpVersion = await checkYtDlpVersion();
-
-  } catch (error) {
-    console.error('yt-dlp check failed:', error.message);
-    throw error;
-  }
-
-  // Convert quality string to resolution for yt-dlp
-  let resolution;
-  switch (quality) {
-    case '144p': resolution = '144'; break;
-    case '240p': resolution = '240'; break;
-    case '360p': resolution = '360'; break;
-    case '480p': resolution = '480'; break;
-    case '720p': resolution = '720'; break;
-    case '1080p': resolution = '1080'; break;
-    default: resolution = '360'; // Default to 360p
-  }
-
-  // Create a promise to handle the download process
   return new Promise((resolve, reject) => {
-    // Get the path to yt-dlp
-    const ytDlpPath = getYtDlpPath();
+    let output = '';
+    let settled = false;
+    const child = spawn(command, args, { windowsHide: true });
+    const appendOutput = data => {
+      const chunk = data.toString();
+      output = `${output}${chunk}`.slice(-30000);
+      updateProgressFromYtdlpOutput(videoId, chunk);
+    };
 
-    // Choose format strategy based on the site for better compatibility
-    let formatString;
-    if (videoURL.includes('tiktok.com') || videoURL.includes('douyin.com')) {
-      // For TikTok/Douyin, use simple format to avoid compatibility issues
-      formatString = `best[height<=${resolution}]`;
-      console.log(`[allSites] Using TikTok/Douyin compatible format: ${formatString}`);
-    } else {
-      // For other sites, use complex format for better quality
-      formatString = `bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`;
-      console.log(`[allSites] Using complex format: ${formatString}`);
-    }
-
-    // Use yt-dlp with site-appropriate format options and conditional cookie support
-    const args = [
-      ...getYtDlpArgs(useCookies),
-      '--verbose',
-      '--format', formatString,
-      '--merge-output-format', 'mp4',
-      '--output', tempPath,
-      '--force-overwrites',
-      '--no-check-certificate',
-      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      videoURL
-    ];
-
-    console.log(`[allSites] Running yt-dlp with args:`, args);
-    const ytdlpProcess = spawn(ytDlpPath, args);
-
-    let errorOutput = '';
-    let stdoutData = '';
-
-    ytdlpProcess.stdout.on('data', (data) => {
-      const dataStr = data.toString();
-      stdoutData += dataStr;
-
-    });
-
-    ytdlpProcess.stderr.on('data', (data) => {
-      const dataStr = data.toString();
-      errorOutput += dataStr;
-      console.error(`yt-dlp stderr: ${dataStr}`);
-    });
-
-    ytdlpProcess.on('close', (code) => {
-      if (code === 0) {
-        // Check if the file was created successfully
-        if (fs.existsSync(tempPath)) {
-          // Check if the file size is reasonable (at least 100KB)
-          const fileStats = fs.statSync(tempPath);
-          if (fileStats.size < 100 * 1024) { // Less than 100KB
-            console.error(`Downloaded file is too small (${fileStats.size} bytes), likely not a valid video`);
-            reject(new Error(`Downloaded file is too small (${fileStats.size} bytes), likely not a valid video`));
-            return;
-          }
-
-          // Move the temp file to the final location
-          safeMoveFile(tempPath, outputPath)
-            .then(() => {
-
-              resolve({
-                success: true,
-                path: outputPath,
-                message: 'Video downloaded successfully with yt-dlp',
-                method: 'yt-dlp',
-                size: fileStats.size
-              });
-            })
-            .catch(err => {
-              console.error(`Error moving downloaded file: ${err.message}`);
-              reject(err);
-            });
-        } else {
-          console.error(`Download completed but video file was not found at ${tempPath}`);
-          reject(new Error('Download completed but video file was not found'));
-        }
-      } else {
-        console.error(`yt-dlp process exited with code ${code}`);
-        console.error(`Error output: ${errorOutput}`);
-        console.error(`Standard output: ${stdoutData}`);
-        reject(new Error(`yt-dlp process failed with code ${code}: ${errorOutput}`));
-      }
-    });
-
-    ytdlpProcess.on('error', (error) => {
-      console.error(`Error spawning yt-dlp process: ${error.message}`);
+    child.stdout.on('data', appendOutput);
+    child.stderr.on('data', appendOutput);
+    child.on('error', error => {
+      if (settled) return;
+      settled = true;
       reject(error);
     });
-  });
-}
+    child.on('close', async code => {
+      if (settled) return;
+      settled = true;
 
-/**
- * Download video from any site with retry mechanism
- * @param {string} videoId - Generated video ID
- * @param {string} videoURL - Video URL
- * @param {string} quality - Desired video quality (e.g., '144p', '360p', '720p')
- * @param {boolean} useCookies - Whether to use browser cookies for authentication
- * @returns {Promise<Object>} - Result object with success status and path
- */
-async function downloadVideoWithRetry(videoId, videoURL, quality = '360p', useCookies = false) {
-  try {
-    // First attempt with standard options
-    return await downloadVideoWithYtDlp(videoId, videoURL, quality, useCookies);
-  } catch (error) {
-    console.error(`First download attempt failed: ${error.message}`);
+      if (code !== 0) {
+        const details = getDiagnosticExcerpt(output);
+        reject(new Error(`${plan.name} failed with exit code ${code}${details ? `: ${details}` : ''}`));
+        return;
+      }
 
-    // Try with fallback options
-    try {
-      return await downloadVideoWithFallbackOptions(videoId, videoURL, quality, useCookies);
-    } catch (fallbackError) {
-      console.error(`Fallback download attempt failed: ${fallbackError.message}`);
-
-      // Try with most basic options (no format specification)
       try {
-        return await downloadVideoWithBasicOptions(videoId, videoURL, useCookies);
-      } catch (basicError) {
-        console.error(`Basic download attempt failed: ${basicError.message}`);
-        throw basicError;
-      }
-    }
-  }
-}
-
-/**
- * Download video with fallback options
- * @param {string} videoId - Generated video ID
- * @param {string} videoURL - Video URL
- * @param {string} quality - Desired video quality (e.g., '144p', '360p', '720p')
- * @param {boolean} useCookies - Whether to use browser cookies for authentication
- * @returns {Promise<Object>} - Result object with success status and path
- */
-async function downloadVideoWithFallbackOptions(videoId, videoURL, quality = '360p', useCookies = false) {
-  const outputPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
-  const tempPath = path.join(VIDEOS_DIR, `${videoId}.temp.mp4`);
-
-  // Convert quality string to resolution for yt-dlp fallback
-  let resolution;
-  switch (quality) {
-    case '144p': resolution = '144'; break;
-    case '240p': resolution = '240'; break;
-    case '360p': resolution = '360'; break;
-    case '480p': resolution = '480'; break;
-    case '720p': resolution = '720'; break;
-    case '1080p': resolution = '1080'; break;
-    default: resolution = '360'; // Default to 360p
-  }
-
-  return new Promise((resolve, reject) => {
-    // Get the path to yt-dlp
-    const ytDlpPath = getYtDlpPath();
-
-    // For TikTok, try even more basic format options
-    let formatString;
-    if (videoURL.includes('tiktok.com') || videoURL.includes('douyin.com')) {
-      // For TikTok, use the most basic format possible
-      formatString = 'best';
-      console.log(`[allSites-fallback] Using most basic format for TikTok: ${formatString}`);
-    } else {
-      // For other sites, still try to respect quality limit
-      formatString = `best[height<=${resolution}]`;
-      console.log(`[allSites-fallback] Using quality-limited format: ${formatString}`);
-    }
-
-    // Use yt-dlp with minimal options and conditional cookie support
-    const args = [
-      ...getYtDlpArgs(useCookies),
-      '--verbose',
-      '--no-check-certificate',
-      '--format', formatString,
-      '--output', tempPath,
-      videoURL
-    ];
-
-    console.log(`[allSites-fallback] Running yt-dlp with args:`, args);
-    const ytdlpProcess = spawn(ytDlpPath, args);
-
-    let errorOutput = '';
-    let stdoutData = '';
-
-    ytdlpProcess.stdout.on('data', (data) => {
-      const dataStr = data.toString();
-      stdoutData += dataStr;
-
-    });
-
-    ytdlpProcess.stderr.on('data', (data) => {
-      const dataStr = data.toString();
-      errorOutput += dataStr;
-      console.error(`Fallback stderr: ${dataStr}`);
-    });
-
-    ytdlpProcess.on('close', (code) => {
-      if (code === 0) {
-        // Check if the file was created successfully
-        if (fs.existsSync(tempPath)) {
-          // Check if the file size is reasonable (at least 100KB)
-          const fileStats = fs.statSync(tempPath);
-          if (fileStats.size < 100 * 1024) { // Less than 100KB
-            console.error(`Downloaded file is too small (${fileStats.size} bytes), likely not a valid video`);
-            reject(new Error(`Downloaded file is too small (${fileStats.size} bytes), likely not a valid video`));
-            return;
-          }
-
-          // Move the temp file to the final location
-          safeMoveFile(tempPath, outputPath)
-            .then(() => {
-
-              resolve({
-                success: true,
-                path: outputPath,
-                message: 'Video downloaded successfully with fallback options',
-                method: 'yt-dlp-fallback',
-                size: fileStats.size
-              });
-            })
-            .catch(err => {
-              console.error(`Error moving downloaded file: ${err.message}`);
-              reject(err);
-            });
-        } else {
-          console.error(`Fallback download completed but video file was not found at ${tempPath}`);
-          reject(new Error('Fallback download completed but video file was not found'));
+        const validation = await validateVideoArtifact(tempPath, { requireAudio: true });
+        if (!validation.valid) {
+          throw new Error(`Downloaded artifact failed validation: ${validation.reason}`);
         }
-      } else {
-        console.error(`Fallback yt-dlp process exited with code ${code}`);
-        reject(new Error(`Fallback yt-dlp process failed with code ${code}: ${errorOutput}`));
-      }
-    });
 
-    ytdlpProcess.on('error', (error) => {
-      console.error(`Error spawning fallback yt-dlp process: ${error.message}`);
-      reject(error);
+        const outputPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
+        await publishVideoFile(tempPath, outputPath);
+
+        const finalValidation = await validateVideoArtifact(outputPath, { requireAudio: true });
+        if (!finalValidation.valid) {
+          await fs.promises.unlink(outputPath).catch(() => {});
+          throw new Error(`Published video failed validation: ${finalValidation.reason}`);
+        }
+
+        resolve({
+          success: true,
+          path: outputPath,
+          message: `Video downloaded and validated (${plan.name})`,
+          method: plan.name,
+          size: finalValidation.size
+        });
+        setDownloadProgress(videoId, 100, 'completed');
+      } catch (error) {
+        reject(error);
+      }
     });
   });
 }
 
-/**
- * Download video with most basic options (no format specification)
- * @param {string} videoId - Generated video ID
- * @param {string} videoURL - Video URL
- * @param {boolean} useCookies - Whether to use browser cookies for authentication
- * @returns {Promise<Object>} - Result object with success status and path
- */
-async function downloadVideoWithBasicOptions(videoId, videoURL, useCookies = false) {
-  const outputPath = path.join(VIDEOS_DIR, `${videoId}.mp4`);
-  const tempPath = path.join(VIDEOS_DIR, `${videoId}.temp.mp4`);
+async function downloadVideoWithRetry(videoId, videoURL, quality = '360p', useCookies = false) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(String(videoId || ''))) {
+    throw new Error('Invalid video ID');
+  }
 
-  return new Promise((resolve, reject) => {
-    // Get the path to yt-dlp
-    const ytDlpPath = getYtDlpPath();
-
-    console.log(`[allSites-basic] Attempting download with no format specification`);
-
-    // Use yt-dlp with absolute minimal options and conditional cookie support
-    const args = [
-      ...getYtDlpArgs(useCookies),
-      '--no-check-certificate',
-      '--output', tempPath,
-      videoURL
-    ];
-
-    console.log(`[allSites-basic] Running yt-dlp with args:`, args);
-    const ytdlpProcess = spawn(ytDlpPath, args);
-
-    let errorOutput = '';
-    let stdoutData = '';
-
-    ytdlpProcess.stdout.on('data', (data) => {
-      const dataStr = data.toString();
-      stdoutData += dataStr;
+  setDownloadProgress(videoId, 0, 'downloading');
+  const plans = buildDownloadPlans(videoURL, quality);
+  if (isBilibiliUrl(videoURL)) {
+    const height = getHeightLimit(quality);
+    plans.unshift({
+      name: 'bilibili-backup-cdn-range-download',
+      format: `bestvideo[height<=${height}][vcodec^=av01]+bestaudio[abr<=70]/bestvideo[height<=${height}]+bestaudio[abr<=70]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
+      args: [],
+      bilibiliMirrors: true
     });
+  }
+  const failures = [];
 
-    ytdlpProcess.stderr.on('data', (data) => {
-      const dataStr = data.toString();
-      errorOutput += dataStr;
-      console.error(`Basic stderr: ${dataStr}`);
-    });
+  for (const plan of plans) {
+    await removeAttemptArtifacts(videoId);
+    try {
+      return await runYtDlpAttempt({ videoId, videoURL, quality, useCookies, plan });
+    } catch (error) {
+      failures.push(`${plan.name}: ${error.message}`);
+      console.error(`[allSites] ${plan.name} failed: ${error.message}`);
+      await removeAttemptArtifacts(videoId);
+    }
+  }
 
-    ytdlpProcess.on('close', (code) => {
-      if (code === 0) {
-        // Check if the file was created successfully
-        if (fs.existsSync(tempPath)) {
-          // Check if the file size is reasonable (at least 100KB)
-          const fileStats = fs.statSync(tempPath);
-          if (fileStats.size < 100 * 1024) { // Less than 100KB
-            console.error(`Downloaded file is too small (${fileStats.size} bytes), likely not a valid video`);
-            reject(new Error(`Downloaded file is too small (${fileStats.size} bytes), likely not a valid video`));
-            return;
-          }
-
-          // Move the temp file to the final location
-          safeMoveFile(tempPath, outputPath)
-            .then(() => {
-              resolve({
-                success: true,
-                path: outputPath,
-                message: 'Video downloaded successfully with basic options',
-                method: 'yt-dlp-basic',
-                size: fileStats.size
-              });
-            })
-            .catch(err => {
-              console.error(`Error moving downloaded file: ${err.message}`);
-              reject(err);
-            });
-        } else {
-          console.error(`Basic download completed but video file was not found at ${tempPath}`);
-          reject(new Error('Basic download completed but video file was not found'));
-        }
-      } else {
-        console.error(`Basic yt-dlp process exited with code ${code}`);
-        reject(new Error(`Basic yt-dlp process failed with code ${code}: ${errorOutput}`));
-      }
-    });
-
-    ytdlpProcess.on('error', (error) => {
-      console.error(`Error spawning basic yt-dlp process: ${error.message}`);
-      reject(error);
-    });
-  });
+  const error = new Error(`All ${plans.length} bounded download attempts failed. ${failures.join(' | ')}`);
+  setDownloadProgress(videoId, 0, 'error', { error: error.message });
+  throw error;
 }
 
 module.exports = {
-  downloadVideoWithRetry
+  downloadVideoWithRetry,
+  getDiagnosticExcerpt
 };

@@ -5,7 +5,6 @@ import { FiVideo, FiMusic, FiDownload, FiInfo } from 'react-icons/fi';
 import CloseButton from './common/CloseButton';
 import '../styles/DownloadOnlyModal.css';
 import { scanVideoQualities } from '../utils/qualityScanner';
-import progressWebSocketClient from '../utils/progressWebSocketClient';
 
 // Global singleton to prevent multiple download modals
 let activeDownloadModal = null;
@@ -22,6 +21,7 @@ const DownloadOnlyModal = ({
   const [availableQualities, setAvailableQualities] = useState([]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadError, setDownloadError] = useState('');
   // eslint-disable-next-line no-unused-vars
   const [downloadVideoId, setDownloadVideoId] = useState(null);
 
@@ -59,6 +59,7 @@ const DownloadOnlyModal = ({
       setIsScanning(false);
       setIsDownloading(false);
       setDownloadProgress(0);
+      setDownloadError('');
       setDownloadVideoId(null);
     }
   }, [isOpen]);
@@ -126,6 +127,7 @@ const DownloadOnlyModal = ({
 
     setIsDownloading(true);
     setDownloadProgress(0);
+    setDownloadError('');
 
     try {
       const downloadData = {
@@ -158,6 +160,7 @@ const DownloadOnlyModal = ({
       }
     } catch (error) {
       console.error('Error starting download:', error);
+      setDownloadError(error.message || 'Failed to start download');
       setIsDownloading(false);
     }
   };
@@ -174,6 +177,10 @@ const DownloadOnlyModal = ({
           if (data.status === 'completed' || data.status === 'error') {
             clearInterval(interval);
             setIsDownloading(false);
+
+            if (data.status === 'error') {
+              setDownloadError(data.error || 'Video download failed. Check the server log for details.');
+            }
             
             if (data.status === 'completed') {
               // Trigger download using the download endpoint
@@ -325,6 +332,12 @@ const DownloadOnlyModal = ({
             )}
           </div>
         </div>
+
+        {downloadError && (
+          <div className="download-error-message" role="alert">
+            {downloadError}
+          </div>
+        )}
 
         {/* Footer */}
         <div className="modal-actions">

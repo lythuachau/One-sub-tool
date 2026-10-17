@@ -23,9 +23,9 @@ function getDownloadProgress(videoId) {
  * @param {number} progress - Progress percentage (0-100)
  * @param {string} status - Download status
  */
-function setDownloadProgress(videoId, progress, status = 'downloading') {
+function setDownloadProgress(videoId, progress, status = 'downloading', details = {}) {
   console.log(`[setDownloadProgress] ${videoId}: ${progress}% - ${status}`);
-  downloadProgress.set(videoId, { progress, status, timestamp: Date.now() });
+  downloadProgress.set(videoId, { ...details, progress, status, timestamp: Date.now() });
 }
 
 /**
