@@ -189,15 +189,36 @@ function Install-Application {
         Invoke-Checked 'node' @('node_modules/playwright/cli.js', 'install', 'chromium')
         Invoke-Checked $python @('scripts/setup-capcut.py')
         if ($LocalTts) {
-            $device = Read-Host 'PyTorch: 1 = NVIDIA CUDA 12.8, 2 = CPU (nhap 1 hoac 2)'
-            if ($device -notin @('1', '2')) { throw 'Hay chon dung 1 hoac 2; khong tu thay doi cau hinh thiet bi.' }
-            $torchIndex = if ($device -eq '1') { 'https://download.pytorch.org/whl/cu128' } else { 'https://download.pytorch.org/whl/cpu' }
-            Invoke-Checked 'uv' @('pip', 'install', '--python', $python, 'torch==2.11.0', 'torchaudio==2.11.0', '--reinstall-package', 'torch', '--reinstall-package', 'torchaudio', '--index-url', $torchIndex)
+            $device = Read-Host 'PyTorch: 1 = NVIDIA CUDA 12.6 (moi), 2 = NVIDIA CUDA 12.8 (tuong thich cu), 3 = CPU (nhap 1, 2 hoac 3)'
+            switch ($device) {
+                '1' {
+                    $torchVersion = '2.14.1'
+                    $torchAudioVersion = '2.11.0'
+                    $torchIndex = 'https://download.pytorch.org/whl/cu126'
+                    $deviceLabel = 'NVIDIA CUDA 12.6'
+                }
+                '2' {
+                    $torchVersion = '2.11.0'
+                    $torchAudioVersion = '2.11.0'
+                    $torchIndex = 'https://download.pytorch.org/whl/cu128'
+                    $deviceLabel = 'NVIDIA CUDA 12.8 compatibility'
+                }
+                '3' {
+                    $torchVersion = '2.14.1'
+                    $torchAudioVersion = '2.11.0'
+                    $torchIndex = 'https://download.pytorch.org/whl/cpu'
+                    $deviceLabel = 'CPU'
+                }
+                default { throw 'Hay chon dung 1, 2 hoac 3; khong tu thay doi cau hinh thiet bi.' }
+            }
+            Write-Host "Cai PyTorch $torchVersion va TorchAudio $torchAudioVersion ($deviceLabel)."
+            Invoke-Checked 'uv' @('pip', 'install', '--python', $python, "torch==$torchVersion", "torchaudio==$torchAudioVersion", '--reinstall-package', 'torch', '--reinstall-package', 'torchaudio', '--index-url', $torchIndex)
             Invoke-Checked 'uv' @('pip', 'install', '--python', $python, '-r', 'server/tts_service/requirements.txt')
-            Invoke-Checked $python @('-c', "import vieneu, omnivoice, torch, torchaudio; print('TTS imports OK; torch=' + torch.__version__ + '; CUDA=' + str(torch.cuda.is_available()))")
+            $torchVersionCheck = "import vieneu,omnivoice,torch,torchaudio; assert torch.__version__.split('+')[0] == '$torchVersion','Unexpected torch version: '+torch.__version__; assert torchaudio.__version__.split('+')[0] == '$torchAudioVersion','Unexpected torchaudio version: '+torchaudio.__version__; print('TTS imports and versions OK; torch=' + torch.__version__ + '; torchaudio=' + torchaudio.__version__ + '; CUDA=' + str(torch.cuda.is_available()))"
+            Invoke-Checked $python @('-c', $torchVersionCheck)
             $languageCatalogCheck = "import importlib.util,pathlib; package=importlib.util.find_spec('omnivoice'); root=next(iter(package.submodule_search_locations)); path=pathlib.Path(root)/'utils'/'lang_map.py'; spec=importlib.util.spec_from_file_location('_one_sub_omnivoice_lang_map',path); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); languages=getattr(module,'LANG_NAME_TO_ID',{}); assert len(languages)>3,'OmniVoice language map is incomplete'; assert 'ru' in languages.values(),'Russian language mapping is missing'; print('OmniVoice dynamic language catalog OK; languages='+str(len(languages)))"
             Invoke-Checked $python @('-c', $languageCatalogCheck)
-            if ($device -eq '1') {
+            if ($device -in @('1', '2')) {
                 Invoke-Checked $python @('-c', "import torch; assert torch.cuda.is_available(), 'CUDA chua san sang: kiem tra driver NVIDIA hoac chon cai CPU'; print(torch.zeros(1, device='cuda'))")
             }
         }
@@ -218,8 +239,13 @@ function Update-Application {
         if ($LASTEXITCODE -ne 0 -or $origin -notmatch '^(https://github\.com/|git@github\.com:)lythuachau/One-sub-tool(\.git)?/?$') {
             throw 'origin khong tro toi lythuachau/One-sub-tool; dung cap nhat de tranh lay nham upstream.'
         }
-        $dirty = & git status --porcelain
-        if ($LASTEXITCODE -ne 0 -or $dirty) { throw 'Co thay doi chua commit. Hay backup/commit truoc; bo cai khong reset, stash hay xoa file.' }
+        $dirty = @(& git status --short --untracked-files=normal)
+        if ($LASTEXITCODE -ne 0) { throw 'Khong doc duoc trang thai Git; bo cai khong thay doi source.' }
+        if ($dirty.Count) {
+            Write-Host 'Cac file thay doi (giu nguyen, bo cai khong tu sua):' -ForegroundColor Yellow
+            $dirty | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+            throw 'Co thay doi chua commit. Hay backup/commit truoc; bo cai khong reset, stash hay xoa file.'
+        }
         $branch = & git symbolic-ref --quiet --short HEAD
         if ($LASTEXITCODE -ne 0 -or !$branch) { throw 'Dang o tag/detached HEAD. Hay chon nhanh cap nhat truoc.' }
         $tracking = & git for-each-ref '--format=%(upstream:short)' "refs/heads/$branch"
