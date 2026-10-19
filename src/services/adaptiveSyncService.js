@@ -70,11 +70,22 @@ export const requireAdaptiveAsset = () => {
   return state.asset;
 };
 export const adaptiveAudioResponse = async () => {
-  const asset = requireAdaptiveAsset();
+  const asset = await validateAdaptiveAsset();
   return asset ? fetch(adaptiveUrl(asset.assets.voice)) : null;
+};
+export const validateAdaptiveAsset = async () => {
+  const asset = requireAdaptiveAsset();
+  if (!asset) return null;
+  const signature = state.signature;
+  const current = await syncRequest(`/plans/${asset.id}`);
+  if (current.status !== 'ready' || state.signature !== signature || state.asset?.id !== asset.id) {
+    invalidateAdaptiveSync(); throw new Error(current.error || 'Kế hoạch đồng bộ đã thay đổi. Hãy áp dụng lại.');
+  }
+  return current;
 };
 export const requestAdaptiveBuild = () => window.dispatchEvent(new Event('adaptive-sync-build-requested'));
 export const downloadSyncArtifact = async (url, filename) => {
+  await validateAdaptiveAsset();
   const response = await fetch(adaptiveUrl(url));
   if (!response.ok) throw new Error('Tệp đồng bộ không còn truy cập được. Hãy áp dụng đồng bộ lại.');
   const objectUrl = URL.createObjectURL(await response.blob());

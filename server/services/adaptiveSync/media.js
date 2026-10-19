@@ -3,16 +3,16 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { getFfmpegPath, getFfprobePath } = require('../shared/ffmpegUtils');
 
-const run = (binary, args, signal) => new Promise((resolve, reject) => {
+const run = (binary, args, signal, timeoutMs = 30 * 60 * 1000) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error('Đã hủy đồng bộ'));
   const child = spawn(binary, args, { windowsHide: true });
   let output = '', errors = '';
   const abort = () => child.kill('SIGKILL');
   signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(abort, 30 * 60 * 1000);
+  const timer = setTimeout(abort, timeoutMs);
   child.stdout.on('data', data => { output = (output + data).slice(-100000); });
   child.stderr.on('data', data => { errors = (errors + data).slice(-8000); });
-  child.on('error', reject);
+  child.on('error', error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(error); });
   child.on('close', code => {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
@@ -23,7 +23,7 @@ const run = (binary, args, signal) => new Promise((resolve, reject) => {
 });
 
 const probe = async filename => {
-  const data = JSON.parse(await run(getFfprobePath(), ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', filename]));
+  const data = JSON.parse(await run(getFfprobePath(), ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', filename], null, 15000));
   const duration = Number(data.format?.duration);
   if (!Number.isFinite(duration) || duration <= 0) throw new Error('Media has no valid duration');
   return { duration, video: data.streams.find(item => item.codec_type === 'video'),

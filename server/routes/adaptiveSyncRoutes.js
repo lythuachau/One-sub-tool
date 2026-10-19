@@ -3,8 +3,8 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { NARRATION_DIR } = require('../config');
-const { resolveOutputAudioPath, validateWavBuffer } = require('../controllers/narration/audioFile/audioArtifactSafety');
+const { NARRATION_DIR, SUBTITLES_DIR } = require('../config');
+const { resolveOutputAudioPath, validateWavBuffer, withAudioFileLock } = require('../controllers/narration/audioFile/audioArtifactSafety');
 const { createWavHeader } = require('../controllers/narration/geminiAudioController');
 const { createSyncPlan, fingerprint } = require('../services/adaptiveSync/planner');
 const { probe, renderPlan } = require('../services/adaptiveSync/media');
@@ -13,6 +13,11 @@ const router = express.Router();
 const root = path.join(NARRATION_DIR, 'sync');
 const sources = path.join(root, 'sources');
 fs.mkdirSync(sources, { recursive: true });
+const migrationFile = path.join(root, 'legacy-projects.json');
+if (!fs.existsSync(migrationFile)) {
+  const ids = fs.existsSync(SUBTITLES_DIR) ? fs.readdirSync(SUBTITLES_DIR).filter(name => name.endsWith('.json')).flatMap(name => [name.slice(0, -5), name.slice(0, -5).replace(/_(asr_.+|whisper)$/, '')]) : [];
+  fs.writeFileSync(migrationFile, JSON.stringify({ ids, migratedAt: Date.now() }));
+}
 const jobs = new Map();
 const uploads = multer({ dest: sources, limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 1 } });
 const validId = id => typeof id === 'string' && /^[a-f0-9]{64}$/.test(id);
@@ -29,9 +34,10 @@ const writePlan = plan => {
   fs.renameSync(temporary, filename);
 };
 const publicPlan = plan => {
-  const { source, placements, ...rest } = plan;
+  const { source, placements, unresolved, ...rest } = plan;
+  const stripPrivate = ({ rawFile, audioHash, originalFilename, ...item }) => item;
   const base = `/api/narration/sync/plans/${plan.id}/artifacts/`;
-  return { ...rest, placements: placements.map(({ rawFile, audioHash, ...item }) => item),
+  return { ...rest, placements: placements.map(stripPrivate), unresolved: unresolved.map(stripPrivate),
     assets: plan.status === 'ready' ? { video: base + 'video.mp4', preview: base + 'preview.mp4',
       voice: base + 'voice.wav', original: base + 'original.wav',
       subtitles: Object.fromEntries(Object.keys(plan.mappedSubtitles).map(key => [key,
@@ -41,6 +47,8 @@ const handle = operation => async (req, res) => {
   try { await operation(req, res); }
   catch (error) { if (!res.headersSent) res.status(error.code === 'ENOENT' ? 404 : error.status || 422).json({ error: error.message, code: error.syncCode || 'SYNC_FAILED' }); }
 };
+
+router.get('/legacy-projects', handle(async (req, res) => res.json(JSON.parse(await fs.promises.readFile(migrationFile, 'utf8')))));
 
 router.post('/source', uploads.single('video'), handle(async (req, res) => {
   if (!req.file) throw new Error('Video source is required');
@@ -61,6 +69,7 @@ router.post('/plans', express.json({ limit: '100mb' }), handle(async (req, res) 
   const sourcePath = path.join(sources, sourceId);
   const metadata = await probe(sourcePath);
   const buffers = [];
+  let totalBytes = 0;
   const segments = [];
   for (const item of narrations) {
     if (!item.success || (!item.filename && !item.audioData)) throw new Error(`Câu ${item.subtitle_id} chưa có audio hợp lệ`);
@@ -74,18 +83,22 @@ router.post('/plans', express.json({ limit: '100mb' }), handle(async (req, res) 
       if (buffer.toString('ascii', 0, 4) !== 'RIFF') buffer = Buffer.concat([createWavHeader(buffer.length, Number(item.sampleRate) || 24000), buffer]);
       validateWavBuffer(buffer);
     }
-    if (Array.isArray(item.original_ids) && item.original_ids.length > 1) {
+    if (Array.isArray(item.original_ids) && item.original_ids.length > 1 && !item.cueAlignments?.length) {
       const error = new Error(`Nhóm ${item.subtitle_id} thiếu audio căn chỉnh theo từng cue. Tắt nhóm và tạo lại các câu thành viên trước khi đồng bộ; hệ thống chưa gọi thêm TTS.`);
       error.syncCode = 'SYNC_GROUP_ALIGNMENT_REQUIRED';
       throw error;
     }
     const rawFile = `raw-${buffers.length}.wav`;
     const audioHash = crypto.createHash('sha256').update(buffer).digest('hex');
+    totalBytes += buffer.length;
+    if (buffer.length > 64 * 1024 * 1024 || totalBytes > 256 * 1024 * 1024) throw new Error('Audio vượt giới hạn xử lý 256MB mỗi kế hoạch hoặc 64MB mỗi câu.');
     buffers.push(buffer);
-    segments.push({ id: item.subtitle_id, start: Number(item.start), end: Number(item.end), text: String(item.text || ''), rawFile, audioHash });
+    segments.push({ id: item.subtitle_id, start: Number(item.start), end: Number(item.end), text: String(item.text || ''), rawFile, audioHash, originalFilename: item.filename || null,
+      ...(item.original_ids?.length > 1 ? { originalIds: item.original_ids, cueAlignments: item.cueAlignments } : {}) });
   }
   const id = fingerprint({ schemaVersion: 1, sourceId, segments, subtitles, subtitleSource, options });
   const directory = directoryFor(id);
+  return withAudioFileLock(path.join(directory, 'plan.json'), async () => {
   if (fs.existsSync(path.join(directory, 'plan.json'))) return res.json(publicPlan(readPlan(id)));
   await fs.promises.mkdir(directory, { recursive: true });
   for (let i = 0; i < buffers.length; i++) {
@@ -95,16 +108,46 @@ router.post('/plans', express.json({ limit: '100mb' }), handle(async (req, res) 
     if (!audio.audio) throw new Error(`No audio stream: ${segments[i].id}`);
     segments[i].duration = audio.duration;
   }
-  const result = createSyncPlan({ segments, duration: metadata.duration, subtitles, options });
+  const expanded = segments.flatMap(segment => {
+    if (!segment.originalIds) return [segment];
+    const cues = segment.cueAlignments;
+    if (cues.length !== segment.originalIds.length) throw new Error('Căn chỉnh nhóm chưa đủ các cue thành viên');
+    let audioEnd = 0;
+    const items = cues.map((cue, index) => {
+      const source = (subtitles[subtitleSource] || []).find(item => String(item.id ?? item.subtitle_id) === String(segment.originalIds[index]));
+      if (!source || String(cue.subtitle_id) !== String(segment.originalIds[index]) || !Number.isFinite(cue.audioStart)
+        || !Number.isFinite(cue.audioEnd) || Math.abs(cue.audioStart - audioEnd) > 0.002 || cue.audioEnd <= cue.audioStart) throw new Error('Mốc căn chỉnh nội bộ nhóm không hợp lệ');
+      audioEnd = cue.audioEnd;
+      return { id: cue.subtitle_id, start: Number(source.start ?? source.startTime), end: Number(source.end ?? source.endTime),
+        text: String(cue.text || source.text || ''), rawFile: segment.rawFile, audioHash: segment.audioHash, originalFilename: segment.originalFilename,
+        duration: cue.audioEnd - cue.audioStart, audioStart: cue.audioStart, audioEnd: cue.audioEnd };
+    });
+    if (Math.abs(audioEnd - segment.duration) > 0.002) throw new Error('Căn chỉnh nhóm chưa bao phủ toàn bộ audio; không tự cắt lời');
+    return items;
+  });
+  const result = createSyncPlan({ segments: expanded, duration: metadata.duration, subtitles, options });
   const plan = { ...result, id, fingerprint: id, sourceId, subtitleSource, status: result.ready ? 'planned' : 'review',
     progress: 0, createdAt: Date.now(), source: { ...metadata, path: sourcePath } };
   writePlan(plan);
   res.json(publicPlan(plan));
+  });
 }));
 
 router.get('/plans/:id', handle(async (req, res) => {
   const plan = readPlan(req.params.id);
   if (plan.status === 'building' && !jobs.has(plan.id)) { plan.status = 'failed'; plan.error = 'Server đã khởi động lại. Hãy tính lại đồng bộ.'; writePlan(plan); }
+  if (plan.status === 'ready') {
+    const hashes = new Map();
+    for (const item of plan.placements) {
+      if (!item.originalFilename) continue;
+      const filename = resolveOutputAudioPath(item.originalFilename);
+      const backup = path.join(path.dirname(filename), `backup_${path.basename(filename)}`);
+      const raw = fs.existsSync(backup) ? backup : filename;
+      if (!hashes.has(raw)) hashes.set(raw, await hashFile(raw).catch(() => null));
+      const current = hashes.get(raw);
+      if (current !== item.audioHash) return res.json(publicPlan({ ...plan, status: 'stale', error: 'Audio đã thay đổi hoặc bị mất. Hãy áp dụng đồng bộ lại.' }));
+    }
+  }
   res.json(publicPlan(plan));
 }));
 

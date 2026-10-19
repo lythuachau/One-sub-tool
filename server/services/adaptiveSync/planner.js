@@ -4,6 +4,7 @@ const DEFAULTS = Object.freeze({ lead: 0.25, softLag: 0.6, hardLag: 1.5, softTem
   hardTempo: 1.45, tempoCap: 1.6, minVideoSpeed: 0.8, gap: 0.05, originalVolume: 0.15, voiceVolume: 1 });
 
 const normalizeOptions = input => {
+  if (Object.keys(input).some(key => !(key in DEFAULTS))) throw new Error('Unknown adaptive sync option');
   const options = { ...DEFAULTS, ...input };
   for (const [key, limit] of Object.entries(DEFAULTS)) {
     const maximum = ['originalVolume', 'voiceVolume', 'minVideoSpeed'].includes(key) ? 1 : limit;
@@ -94,7 +95,7 @@ const createSyncPlan = ({ segments, duration, options: inputOptions = {}, subtit
   const unresolved = placements.filter(item => item.status === 'review');
   return { schemaVersion: 1, options, sourceDuration: duration, outputDuration: mapTime(duration, warps), warps,
     placements, unresolved, ready: unresolved.length === 0,
-    mappedSubtitles: Object.fromEntries(Object.entries(subtitles).map(([key, items]) => [key, mapSubtitles(items, warps)])) };
+    mappedSubtitles: Object.fromEntries(Object.entries(subtitles).filter(([, items]) => items.length > 0).map(([key, items]) => [key, mapSubtitles(items, warps)])) };
 };
 
 const fingerprint = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');

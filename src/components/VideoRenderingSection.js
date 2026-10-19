@@ -6,7 +6,7 @@ import RemotionVideoPreview from './RemotionVideoPreview';
 import QueueManagerPanel from './QueueManagerPanel';
 import { SERVER_URL } from '../config';
 import { getNarrationOptimizationConfig } from '../utils/narrationOptimization';
-import { adaptiveUrl, isAdaptiveSyncEnabled, mapSyncSubtitles, requestAdaptiveBuild, requireAdaptiveAsset, setAdaptiveOptions, useAdaptiveSyncState } from '../services/adaptiveSyncService';
+import { adaptiveUrl, isAdaptiveSyncEnabled, mapSyncSubtitles, requestAdaptiveBuild, requireAdaptiveAsset, setAdaptiveOptions, useAdaptiveSyncState, validateAdaptiveAsset } from '../services/adaptiveSyncService';
 import '../styles/VideoRenderingSection.css';
 
 const VIDEO_RENDERER_URL = 'http://127.0.0.1:3033';
@@ -996,8 +996,8 @@ const VideoRenderingSection = ({
         throw new Error(t('videoRendering.noVideoSelected', 'Please select a video file'));
       }
 
-      const syncPlan = requireAdaptiveAsset();
-      if (queueItem?.syncPlanId && queueItem.syncPlanId !== syncPlan?.id) throw new Error('Kế hoạch đồng bộ đã thay đổi. Hãy thêm lại tác vụ render.');
+      const syncPlan = await validateAdaptiveAsset();
+      if (queueItem && (queueItem.syncPlanId || null) !== (syncPlan?.id || null)) throw new Error('Kế hoạch đồng bộ đã thay đổi. Hãy thêm lại tác vụ render.');
       const currentSubtitles = syncPlan ? mapSyncSubtitles(getCurrentSubtitles(), syncPlan) : getCurrentSubtitles();
       if (!currentSubtitles || currentSubtitles.length === 0) {
         throw new Error(t('videoRendering.noSubtitles', 'No subtitles available'));
@@ -1432,6 +1432,8 @@ const VideoRenderingSection = ({
       </div>
 
       {/* Drag overlay */}
+      {error && <p role="alert" className="adaptive-sync-error">{error}</p>}
+      {adaptiveSync.enabled && <p>Đồng bộ thích ứng: {adaptiveSync.asset ? `đang dùng kế hoạch ${adaptiveSync.asset.id.slice(0, 10)}` : 'chưa áp dụng kế hoạch mới'}. Thay đổi âm lượng cần áp dụng đồng bộ lại.</p>}
       {isDragging && (
         <div className="drag-overlay">
           <div className="drag-content">
@@ -1657,7 +1659,7 @@ const VideoRenderingSection = ({
                   step={1}
                   orientation="Horizontal"
                   size="XSmall"
-                  state={selectedNarration === 'none' ? "Disabled" : "Enabled"}
+                  state={!adaptiveSync.enabled && selectedNarration === 'none' ? "Disabled" : "Enabled"}
                   width="compact"
                   showValueIndicator={false} // Using custom label
                   showIcon={false}

@@ -33,7 +33,7 @@ const AdaptiveSyncPanel = ({ videoPath, videoDuration, generationResults, origin
     });
   }, [generationResults, groupedSubtitles, originalSubtitles, subtitleSource, translatedSubtitles, useGroupedSubtitles]);
   const signature = useMemo(() => narrations.length ? syncInputSignature({ mediaKey, videoDuration,
-    narrations: narrations.map(({ subtitle_id, filename, audioData, start, end, text, original_ids, method, retriedAt }) => ({ subtitle_id, filename, audioData, start, end, text, original_ids, method, retriedAt })),
+    narrations: narrations.map(({ subtitle_id, filename, audioData, start, end, text, original_ids, cueAlignments, method, retriedAt, timestamp }) => ({ subtitle_id, filename, audioData, start, end, text, original_ids, cueAlignments, method, retriedAt, timestamp })),
     originalSubtitles, translatedSubtitles, subtitleSource, useGroupedSubtitles }) : '',
   [mediaKey, videoDuration, narrations, originalSubtitles, translatedSubtitles, subtitleSource, useGroupedSubtitles]);
   useLayoutEffect(() => { detachAdaptiveSync(); setMediaKey(null); }, [videoPath]);
