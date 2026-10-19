@@ -9,7 +9,7 @@ exit /b %INSTALLER_EXIT%
 # ONE_SUB_POWERSHELL
 $ErrorActionPreference = 'Stop'
 $repository = 'https://github.com/lythuachau/One-sub-tool.git'
-$installerVersion = '3.0.0-alpha.12'
+$installerVersion = '3.0.0-alpha.13'
 $installBranch = "release/v$installerVersion"
 $installerDirectory = Split-Path -Parent $env:ONE_SUB_INSTALLER
 $requiredProjectFiles = @(
@@ -37,7 +37,7 @@ $requiredProjectFiles = @(
     'src\services\adaptiveSyncService.js',
     'src\components\narration\components\AdaptiveSyncPanel.js',
     'src\components\previews\AdaptiveSyncPreview.js',
-    'src\styles\narration\adaptiveSync.css'
+    'src\styles\narration\modules\results.css'
 )
 
 function Test-OmniVoiceLanguageCatalog {
