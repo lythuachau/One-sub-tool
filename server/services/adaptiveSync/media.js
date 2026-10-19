@@ -95,7 +95,7 @@ const renderPlan = async (plan, directory, signal, progress) => {
     `[0:a]volume=${plan.options.originalVolume}[bg];[1:a]volume=${plan.options.voiceVolume}[vox];[bg][vox]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95:level=false:latency=1[mix]`, 'mix.filter');
   await writeSubtitles(directory, plan.mappedSubtitles);
   const output = await probe(path.join(directory, 'preview.mp4'));
-  if (Math.abs(output.duration - plan.outputDuration) > 1 / frameRate + 0.03) throw new Error('Output media duration does not match SyncPlan');
+  if (Math.abs(output.duration - plan.outputDuration) > 1 / frameRate + 0.001) throw new Error('Output media duration does not match SyncPlan within one frame');
   if (signal?.aborted) throw new Error('Đã hủy đồng bộ');
   return { frameRate };
 };

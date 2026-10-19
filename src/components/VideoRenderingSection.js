@@ -6,7 +6,7 @@ import RemotionVideoPreview from './RemotionVideoPreview';
 import QueueManagerPanel from './QueueManagerPanel';
 import { SERVER_URL } from '../config';
 import { getNarrationOptimizationConfig } from '../utils/narrationOptimization';
-import { adaptiveUrl, isAdaptiveSyncEnabled, mapSyncSubtitles, requestAdaptiveBuild, requireAdaptiveAsset, setAdaptiveOptions, useAdaptiveSyncState, validateAdaptiveAsset } from '../services/adaptiveSyncService';
+import { adaptiveUrl, isAdaptiveSyncEnabled, requestAdaptiveBuild, requireAdaptiveAsset, setAdaptiveOptions, useAdaptiveSyncState, validateAdaptiveAsset, verifyAdaptiveVideo } from '../services/adaptiveSyncService';
 import '../styles/VideoRenderingSection.css';
 
 const VIDEO_RENDERER_URL = 'http://127.0.0.1:3033';
@@ -998,7 +998,7 @@ const VideoRenderingSection = ({
 
       const syncPlan = await validateAdaptiveAsset();
       if (queueItem && (queueItem.syncPlanId || null) !== (syncPlan?.id || null)) throw new Error('Kế hoạch đồng bộ đã thay đổi. Hãy thêm lại tác vụ render.');
-      const currentSubtitles = syncPlan ? mapSyncSubtitles(getCurrentSubtitles(), syncPlan) : getCurrentSubtitles();
+      const currentSubtitles = syncPlan ? syncPlan.mappedSubtitles[selectedSubtitles] || [] : getCurrentSubtitles();
       if (!currentSubtitles || currentSubtitles.length === 0) {
         throw new Error(t('videoRendering.noSubtitles', 'No subtitles available'));
       }
@@ -1009,6 +1009,7 @@ const VideoRenderingSection = ({
 
       let audioFile;
       if (syncPlan) {
+        await verifyAdaptiveVideo(syncPlan, queueItem?.videoFile || selectedVideoFile, controller.signal);
         const media = await fetch(adaptiveUrl(syncPlan.assets.preview), { signal: controller.signal });
         if (!media.ok) throw new Error('Video đồng bộ không còn tồn tại. Hãy áp dụng đồng bộ lại.');
         audioFile = await uploadFileToRenderer(new File([await media.blob()], `sync-${syncPlan.id}.mp4`, { type: 'video/mp4' }), 'video');
@@ -1525,7 +1526,7 @@ const VideoRenderingSection = ({
                     value="original"
                     checked={selectedSubtitles === 'original'}
                     onChange={(e) => setSelectedSubtitles(e.target.value)}
-                    disabled={!subtitlesData || subtitlesData.length === 0}
+                    disabled={!(adaptiveSync.asset?.mappedSubtitles.original?.length || subtitlesData?.length)}
                   />
                   <label htmlFor="subtitle-original">
                     {t('videoRendering.originalSubtitles', 'Original Subtitles')}
@@ -1541,7 +1542,7 @@ const VideoRenderingSection = ({
                     value="translated"
                     checked={selectedSubtitles === 'translated'}
                     onChange={(e) => setSelectedSubtitles(e.target.value)}
-                    disabled={!translatedSubtitles || translatedSubtitles.length === 0}
+                    disabled={!(adaptiveSync.asset?.mappedSubtitles.translated?.length || translatedSubtitles?.length)}
                   />
                   <label htmlFor="subtitle-translated">
                     {t('videoRendering.translatedSubtitles', 'Translated Subtitles')}
@@ -1689,7 +1690,7 @@ const VideoRenderingSection = ({
             >
               <RemotionVideoPreview
                 videoFile={adaptiveSync.asset ? adaptiveUrl(adaptiveSync.asset.assets.preview) : selectedVideoFile}
-                subtitles={adaptiveSync.asset ? mapSyncSubtitles(getCurrentSubtitles(), adaptiveSync.asset) : getCurrentSubtitles()}
+                subtitles={adaptiveSync.asset ? adaptiveSync.asset.mappedSubtitles[selectedSubtitles] || [] : getCurrentSubtitles()}
                 narrationAudioUrl={adaptiveSync.enabled ? null : isAlignedNarrationAvailable() ? window.alignedNarrationCache?.url : null}
                 subtitleCustomization={{
                   ...subtitleCustomization,
@@ -1762,7 +1763,7 @@ const VideoRenderingSection = ({
               <button
                 className="pill-button primary"
                 onClick={handleRender}
-                disabled={!selectedVideoFile || getCurrentSubtitles().length === 0}
+                disabled={!selectedVideoFile || (adaptiveSync.asset ? (adaptiveSync.asset.mappedSubtitles[selectedSubtitles] || []).length === 0 : getCurrentSubtitles().length === 0)}
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>

@@ -83,6 +83,19 @@ export const validateAdaptiveAsset = async () => {
   }
   return current;
 };
+export const verifyAdaptiveVideo = async (plan, source, signal) => {
+  let blob = source;
+  if (!(source instanceof Blob)) {
+    const url = typeof source === 'string' ? source : source?.url;
+    if (!url) throw new Error('Chưa xác định được video nguồn để đối chiếu SyncPlan.');
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error('Video nguồn không còn truy cập được.');
+    blob = await response.blob();
+  }
+  const body = new FormData(); body.append('video', blob, 'source.mp4');
+  const result = await syncRequest('/source', { method: 'POST', body, signal });
+  if (result.sourceId !== plan.sourceId) throw new Error('Video render khác video nguồn của SyncPlan. Chọn lại video nguồn và áp dụng đồng bộ trước khi xuất.');
+};
 export const requestAdaptiveBuild = () => window.dispatchEvent(new Event('adaptive-sync-build-requested'));
 export const downloadSyncArtifact = async (url, filename) => {
   await validateAdaptiveAsset();
