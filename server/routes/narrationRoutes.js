@@ -4,6 +4,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.use('/sync', require('./adaptiveSyncRoutes'));
 router.use('/capcut', require('./capcutRoutes'));
 router.use('/vibi', require('./vibiRoutes'));
 const multer = require('multer');
