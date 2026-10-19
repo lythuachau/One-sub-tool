@@ -126,7 +126,14 @@ const VideoTopsideButtons = ({
               }}
           aria-label={t('preview.refreshNarration', 'Refresh Narration')}
           onClick={async () => {
-            if (isAdaptiveSyncEnabled()) { requestAdaptiveBuild(); return; }
+            if (isAdaptiveSyncEnabled()) {
+              setIsRefreshingNarration(true);
+              setError('');
+              try { await requestAdaptiveBuild(); }
+              catch (error) { setError(error.message || 'Failed to refresh narration'); }
+              finally { setIsRefreshingNarration(false); }
+              return;
+            }
             refreshSession.current?.controller.abort();
             const video = videoRef.current;
             const session = {

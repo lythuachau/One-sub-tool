@@ -36,16 +36,23 @@ const mergeWarps = intervals => {
 const mapTime = (time, warps) => time + warps.reduce((extra, item) =>
   extra + (item.factor - 1) * Math.max(0, Math.min(time - item.start, item.end - item.start)), 0);
 
-const mapSubtitles = (subtitles, warps) => (subtitles || []).map(item => {
-  const start = Number(item.start ?? item.startTime), end = Number(item.end ?? item.endTime);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
-    throw new Error('Invalid subtitle timestamp');
-  }
-  return { ...item, start: mapTime(start, warps), end: mapTime(end, warps),
-    startTime: mapTime(start, warps), endTime: mapTime(end, warps) };
-});
+const mapSubtitles = (subtitles, warps, placements = []) => {
+  const placementById = new Map(placements.map(item => [String(item.id), item]));
+  return (subtitles || []).map(item => {
+    const start = Number(item.start ?? item.startTime), end = Number(item.end ?? item.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+      throw new Error('Invalid subtitle timestamp');
+    }
+    const mappedStart = mapTime(start, warps), mappedEnd = mapTime(end, warps);
+    const id = item.id ?? item.subtitle_id;
+    const placement = id == null ? null : placementById.get(String(id));
+    const outputStart = placement ? Math.min(mappedStart, placement.outStart) : mappedStart;
+    const outputEnd = placement ? Math.max(mappedEnd, placement.outEnd) : mappedEnd;
+    return { ...item, start: outputStart, end: outputEnd, startTime: outputStart, endTime: outputEnd };
+  });
+};
 
-const createSyncPlan = ({ segments, duration, options: inputOptions = {}, subtitles = {} }) => {
+const createSyncPlan = ({ segments, duration, options: inputOptions = {}, subtitles = {}, subtitleSource = 'original' }) => {
   const options = normalizeOptions(inputOptions);
   if (!Number.isFinite(duration) || duration <= 0 || !segments?.length) throw new Error('Video and narration are required');
   const ordered = [...segments].sort((a, b) => a.start - b.start);
@@ -60,7 +67,7 @@ const createSyncPlan = ({ segments, duration, options: inputOptions = {}, subtit
   let warps = [];
   const windowFor = (item, next, previousEnd, lag) => {
     const start = Math.max(0, mapTime(item.start, warps) - options.lead, previousEnd + options.gap);
-    const end = Math.min(mapTime(duration, warps), mapTime(item.end, warps) + lag,
+    const end = Math.min(mapTime(item.end, warps) + lag,
       next ? mapTime(next.start, warps) - options.gap : Infinity);
     return { start, available: Math.max(0, end - start) };
   };
@@ -90,12 +97,17 @@ const createSyncPlan = ({ segments, duration, options: inputOptions = {}, subtit
     const overflowMs = Math.max(0, Math.round((outEnd - window.start - window.available) * 1000));
     previousEnd = outEnd;
     return { ...item, outStart: window.start, outEnd, tempo, tier, videoSpeed: localWarp ? options.minVideoSpeed : 1,
-      overflowMs, status: overflowMs > 0 ? 'review' : 'ready', trimmed: false };
+      overflowMs, status: overflowMs > 0 ? 'extended' : 'ready', trimmed: false };
   });
-  const unresolved = placements.filter(item => item.status === 'review');
-  return { schemaVersion: 1, options, sourceDuration: duration, outputDuration: mapTime(duration, warps), warps,
-    placements, unresolved, ready: unresolved.length === 0,
-    mappedSubtitles: Object.fromEntries(Object.entries(subtitles).filter(([, items]) => items.length > 0).map(([key, items]) => [key, mapSubtitles(items, warps)])) };
+  const unresolved = [];
+  const retimedVideoDuration = mapTime(duration, warps);
+  const outputDuration = Math.max(retimedVideoDuration, ...placements.map(item => item.outEnd));
+  const mappedSubtitles = Object.fromEntries(Object.entries(subtitles)
+    .filter(([, items]) => items.length > 0)
+    .map(([key, items]) => [key, mapSubtitles(items, warps, key === subtitleSource ? placements : [])]));
+  return { schemaVersion: 2, options, sourceDuration: duration, retimedVideoDuration, outputDuration, warps,
+    placements, unresolved, ready: true,
+    mappedSubtitles };
 };
 
 const fingerprint = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');

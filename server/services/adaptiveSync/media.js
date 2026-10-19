@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { getFfmpegPath, getFfprobePath } = require('../shared/ffmpegUtils');
+const { mapTime } = require('./planner');
 
 const run = (binary, args, signal, timeoutMs = 30 * 60 * 1000) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error('Đã hủy đồng bộ'));
@@ -38,6 +39,19 @@ const stamp = (seconds, kind) => {
   return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}${kind === 'srt' ? ',' : '.'}${decimal}`;
 };
 
+const balancedSum = terms => {
+  if (!terms.length) return '0';
+  if (terms.length === 1) return terms[0];
+  const midpoint = Math.floor(terms.length / 2);
+  return `(${balancedSum(terms.slice(0, midpoint))}+${balancedSum(terms.slice(midpoint))})`;
+};
+
+const buildSetptsExpression = warps => {
+  const terms = (warps || []).filter(warp => warp.end > warp.start && warp.factor > 1)
+    .map(warp => `(${warp.factor - 1}*clip((PTS-STARTPTS)*TB-${warp.start},0,${warp.end - warp.start})/TB)`);
+  return terms.length ? `(PTS-STARTPTS+${balancedSum(terms)})` : '(PTS-STARTPTS)';
+};
+
 const writeSubtitles = async (directory, subtitles) => {
   for (const [source, items] of Object.entries(subtitles)) {
     if (!['original', 'translated'].includes(source)) continue;
@@ -61,10 +75,13 @@ const renderPlan = async (plan, directory, signal, progress) => {
   const fpsParts = (plan.source.video.avg_frame_rate || '30/1').split('/').map(Number);
   const fps = fpsParts[0] / (fpsParts[1] || 1);
   const frameRate = Number.isFinite(fps) && fps >= 1 && fps <= 120 ? fps : 30;
+  const retimedVideoDuration = plan.retimedVideoDuration ?? mapTime(plan.sourceDuration, plan.warps);
+  const tailDuration = Math.max(0, plan.outputDuration - retimedVideoDuration);
   progress(5, 'Đang đổi thời gian hình ảnh');
-  const expression = '(PTS-STARTPTS)' + plan.warps.map(w => `+${w.factor - 1}*clip((PTS-STARTPTS)*TB-${w.start},0,${w.end - w.start})/TB`).join('');
+  const expression = buildSetptsExpression(plan.warps);
+  const tailFilter = tailDuration > 0.000001 ? `,tpad=stop_mode=clone:stop_duration=${tailDuration.toFixed(6)}` : '';
   await ffmpeg(['-i', plan.source.path, '-map', '[v]', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', path.join(directory, 'picture.mp4')],
-    `[0:v]settb=AVTB,setpts='${expression}',fps=${frameRate},pad=ceil(iw/2)*2:ceil(ih/2)*2[v]`, 'picture.filter');
+    `[0:v]settb=AVTB,setpts='${expression}',fps=${frameRate}${tailFilter},pad=ceil(iw/2)*2:ceil(ih/2)*2[v]`, 'picture.filter');
   progress(35, 'Đang đổi thời gian âm thanh gốc');
   const boundaries = [...new Set([0, plan.sourceDuration, ...plan.warps.flatMap(w => [w.start, w.end])])].sort((a, b) => a - b);
   const intervals = boundaries.slice(1).map((end, i) => ({ start: boundaries[i], end,
@@ -72,7 +89,8 @@ const renderPlan = async (plan, directory, signal, progress) => {
   let originalGraph;
   const originalArgs = plan.source.audio ? ['-i', plan.source.path] : ['-f', 'lavfi', '-i', `anullsrc=r=48000:cl=stereo:d=${plan.sourceDuration}`];
   originalGraph = intervals.map((w, i) => `[0:a]aresample=48000,aformat=channel_layouts=stereo,atrim=start=${w.start}:end=${w.end},asetpts=PTS-STARTPTS,atempo=${1 / w.factor},apad,atrim=duration=${(w.end - w.start) * w.factor}[a${i}]`).join(';');
-  originalGraph += ';' + intervals.map((_, i) => `[a${i}]`).join('') + `concat=n=${intervals.length}:v=0:a=1[a]`;
+  originalGraph += ';' + intervals.map((_, i) => `[a${i}]`).join('')
+    + `concat=n=${intervals.length}:v=0:a=1,apad,atrim=duration=${plan.outputDuration}[a]`;
   await ffmpeg([...originalArgs, '-map', '[a]', '-c:a', 'pcm_s16le', path.join(directory, 'original.wav')], originalGraph, 'original.filter');
   progress(55, 'Đang đặt thuyết minh vào timeline mới');
   const parts = [];
@@ -100,4 +118,4 @@ const renderPlan = async (plan, directory, signal, progress) => {
   return { frameRate };
 };
 
-module.exports = { run, probe, renderPlan, writeSubtitles };
+module.exports = { run, probe, renderPlan, writeSubtitles, buildSetptsExpression };

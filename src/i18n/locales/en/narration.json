@@ -237,5 +237,7 @@
   "editNarrationText": "Edit narration text",
   "regenerateEditedText": "Regenerate TTS",
   "overlapped": "Overlapped",
-  "overlappedBy": "Overlapped by audio {{ids}}"
+  "overlappedBy": "Overlapped by audio {{ids}}",
+  "overlapRefreshNotice": "Found {{count}} overlapping narration cue(s) after refresh; review the cues below.",
+  "overlapCueDetail": "Cue {{id}}{{text}} is overlapped by cue audio {{ids}} by {{duration}} ms."
 }

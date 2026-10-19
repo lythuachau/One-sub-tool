@@ -264,5 +264,7 @@
   "editNarrationText": "Chỉnh sửa văn bản thuyết minh",
   "regenerateEditedText": "Tạo lại TTS",
   "overlapped": "Bị chồng",
-  "overlappedBy": "Bị audio {{ids}} đè lên"
+  "overlappedBy": "Bị audio {{ids}} đè lên",
+  "overlapRefreshNotice": "Phát hiện {{count}} câu chồng lấn sau khi làm mới thuyết minh; hãy xử lý các câu bên dưới.",
+  "overlapCueDetail": "Câu {{id}}{{text}} bị audio câu {{ids}} đè lên {{duration}} ms."
 }

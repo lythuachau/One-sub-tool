@@ -250,7 +250,10 @@ const NarrationResults = ({
   const [overlapsById, setOverlapsById] = useState(new Map());
   const [overlapRefreshKey, setOverlapRefreshKey] = useState(0);
   const overlapRequestRef = useRef(null);
+  const overlapContextRef = useRef(null);
+  const overlapScanPendingRef = useRef(false);
   const shorteningControllerRef = useRef(null);
+  overlapContextRef.current = { generationResults, isGenerating, retryingSubtitleId, standaloneTextMode };
 
   // Speed control state
   const [speedValue, setSpeedValue] = useState(1.0);
@@ -347,10 +350,39 @@ const NarrationResults = ({
   }, [editingSubtitleId, overlappedIds]);
 
   useEffect(() => {
-    const refresh = () => setOverlapRefreshKey(value => value + 1);
-    window.addEventListener('narration-audio-files-updated', refresh);
-    return () => window.removeEventListener('narration-audio-files-updated', refresh);
+    const clearOverlaps = () => {
+      overlapRequestRef.current?.abort();
+      setOverlappedIds(new Set());
+      setOverlapsById(new Map());
+    };
+    const refresh = event => {
+      clearOverlaps();
+      overlapScanPendingRef.current = event.detail?.mode !== 'adaptive';
+      if (overlapScanPendingRef.current) setOverlapRefreshKey(value => value + 1);
+    };
+    window.addEventListener('narration-audio-files-updated', clearOverlaps);
+    window.addEventListener('aligned-narration-ready', refresh);
+    window.addEventListener('narration-refresh-completed', refresh);
+    return () => {
+      window.removeEventListener('narration-audio-files-updated', clearOverlaps);
+      window.removeEventListener('aligned-narration-ready', refresh);
+      window.removeEventListener('narration-refresh-completed', refresh);
+    };
   }, []);
+
+  useEffect(() => {
+    const context = overlapContextRef.current || {};
+    if (!overlapScanPendingRef.current || context.isGenerating || context.retryingSubtitleId != null) return;
+    overlapScanPendingRef.current = false;
+    setOverlapRefreshKey(value => value + 1);
+  }, [generationResults, isGenerating, retryingSubtitleId]);
+
+  useEffect(() => {
+    if (!isGenerating && retryingSubtitleId == null) return;
+    overlapRequestRef.current?.abort();
+    setOverlappedIds(new Set());
+    setOverlapsById(new Map());
+  }, [isGenerating, retryingSubtitleId]);
 
   useEffect(() => () => {
     overlapRequestRef.current?.abort();
@@ -359,11 +391,14 @@ const NarrationResults = ({
 
   useEffect(() => {
     overlapRequestRef.current?.abort();
-    setOverlappedIds(new Set());
-    setOverlapsById(new Map());
-    if (standaloneTextMode || isGenerating || retryingSubtitleId !== null || !generationResults?.length) return undefined;
+    if (overlapRefreshKey === 0) return undefined;
+    const { generationResults: currentResults, isGenerating: currentlyGenerating,
+      retryingSubtitleId: currentlyRetrying, standaloneTextMode: currentStandaloneMode } = overlapContextRef.current || {};
+    if (currentlyGenerating || currentlyRetrying != null) return undefined;
+    overlapScanPendingRef.current = false;
+    if (currentStandaloneMode || !currentResults?.length) return undefined;
 
-    const successful = generationResults.filter(result => result.success);
+    const successful = currentResults.filter(result => result.success);
     if (!successful.length || successful.some(result => !result.filename)) return undefined;
 
     const narrations = successful.map(result => {
@@ -396,7 +431,7 @@ const NarrationResults = ({
       });
 
     return () => controller.abort();
-  }, [generationResults, isGenerating, retryingSubtitleId, standaloneTextMode, overlapRefreshKey, resolveTiming]);
+  }, [overlapRefreshKey, resolveTiming]);
 
   // Download audio as WAV file
   const downloadAudio = (result) => {
@@ -817,6 +852,22 @@ const NarrationResults = ({
           <div className="speed-control-error" role="alert">{speedModificationError}</div>
         )}
       </div>
+
+      {overlapsById.size > 0 && (
+        <div className="timing-overlap-summary" role="status" aria-live="polite">
+          <strong>{t('narration.overlapRefreshNotice', 'Phát hiện {{count}} câu chồng lấn sau khi làm mới thuyết minh; hãy xử lý các câu bên dưới.', { count: overlapsById.size })}</strong>
+          <ul>
+            {[...overlapsById.values()].map(overlap => {
+              const result = generationResults?.find(item => String(item.subtitle_id) === String(overlap.id));
+              const fullText = String(result?.text || '').replace(/\s+/g, ' ').trim();
+              const text = fullText ? ` — “${fullText.slice(0, 100)}${fullText.length > 100 ? '…' : ''}”` : '';
+              return <li key={String(overlap.id)}>{t('narration.overlapCueDetail', 'Câu {{id}}{{text}} bị audio câu {{ids}} đè lên {{duration}} ms.', {
+                id: overlap.id, text, ids: (overlap.overlappedBy || []).join(', '), duration: overlap.overlapMs
+              })}</li>;
+            })}
+          </ul>
+        </div>
+      )}
 
       <div className="results-list">
         {(!generationResults || generationResults.length === 0) ? (

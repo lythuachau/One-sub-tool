@@ -243,6 +243,27 @@
   font-weight: 700;
 }
 
+.timing-overlap-summary {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--md-error);
+  border-radius: 12px;
+  background-color: color-mix(in srgb, var(--md-error-container) 24%, var(--md-surface-2));
+  color: var(--md-on-surface);
+  font-size: 0.875rem;
+}
+
+.timing-overlap-summary ul {
+  max-height: 9rem;
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  overflow-y: auto;
+}
+
+.timing-overlap-summary li + li {
+  margin-top: 0.25rem;
+}
+
 .narration-text-editor {
   flex: 1;
   display: grid;

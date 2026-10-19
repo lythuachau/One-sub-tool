@@ -96,7 +96,7 @@ router.post('/plans', express.json({ limit: '100mb' }), handle(async (req, res) 
     segments.push({ id: item.subtitle_id, start: Number(item.start), end: Number(item.end), text: String(item.text || ''), rawFile, audioHash, originalFilename: item.filename || null,
       ...(item.original_ids?.length > 1 ? { originalIds: item.original_ids, cueAlignments: item.cueAlignments } : {}) });
   }
-  const id = fingerprint({ schemaVersion: 1, sourceId, segments, subtitles, subtitleSource, options });
+  const id = fingerprint({ schemaVersion: 2, sourceId, segments, subtitles, subtitleSource, options });
   const directory = directoryFor(id);
   return withAudioFileLock(path.join(directory, 'plan.json'), async () => {
   if (fs.existsSync(path.join(directory, 'plan.json'))) return res.json(publicPlan(readPlan(id)));
@@ -125,7 +125,7 @@ router.post('/plans', express.json({ limit: '100mb' }), handle(async (req, res) 
     if (Math.abs(audioEnd - segment.duration) > 0.002) throw new Error('Căn chỉnh nhóm chưa bao phủ toàn bộ audio; không tự cắt lời');
     return items;
   });
-  const result = createSyncPlan({ segments: expanded, duration: metadata.duration, subtitles, options });
+  const result = createSyncPlan({ segments: expanded, duration: metadata.duration, subtitles, options, subtitleSource });
   const plan = { ...result, id, fingerprint: id, sourceId, subtitleSource, status: result.ready ? 'planned' : 'review',
     progress: 0, createdAt: Date.now(), source: { ...metadata, path: sourcePath } };
   writePlan(plan);
@@ -145,7 +145,7 @@ router.get('/plans/:id', handle(async (req, res) => {
       const raw = fs.existsSync(backup) ? backup : filename;
       if (!hashes.has(raw)) hashes.set(raw, await hashFile(raw).catch(() => null));
       const current = hashes.get(raw);
-      if (current !== item.audioHash) return res.json(publicPlan({ ...plan, status: 'stale', error: 'Audio đã thay đổi hoặc bị mất. Hãy áp dụng đồng bộ lại.' }));
+      if (current !== item.audioHash) return res.json(publicPlan({ ...plan, status: 'stale', error: 'Audio đã thay đổi hoặc bị mất. Hãy bấm “Làm mới thuyết minh” để căn chỉnh lại.' }));
     }
   }
   res.json(publicPlan(plan));
@@ -153,11 +153,21 @@ router.get('/plans/:id', handle(async (req, res) => {
 
 router.post('/plans/:id/build', handle(async (req, res) => {
   const plan = readPlan(req.params.id);
-  if (!plan.ready) throw new Error('Còn câu cần xử lý; chưa thể áp dụng SyncPlan');
+  const directory = directoryFor(plan.id);
+  const hasRenderableTimeline = Array.isArray(plan.placements) && plan.placements.length > 0
+    && plan.placements.every(item => Number.isFinite(item.outStart) && Number.isFinite(item.outEnd)
+      && item.outStart >= 0 && item.outEnd > item.outStart && Number.isFinite(item.tempo)
+      && item.tempo >= 1 && item.tempo <= 1.6 && typeof item.rawFile === 'string'
+      && path.basename(item.rawFile) === item.rawFile && fs.existsSync(path.join(directory, item.rawFile)))
+    && Number.isFinite(plan.outputDuration) && plan.outputDuration > 0;
+  if (!hasRenderableTimeline) throw new Error('Kế hoạch thuyết minh không có timeline hợp lệ để render');
   if (plan.status === 'ready' || jobs.has(plan.id)) return res.json(publicPlan(plan));
   if (jobs.size >= 2) { const error = new Error('Đang xử lý hai kế hoạch. Vui lòng thử lại sau.'); error.status = 429; throw error; }
   const controller = new AbortController();
   jobs.set(plan.id, controller);
+  plan.ready = true;
+  plan.unresolved = [];
+  plan.placements = plan.placements.map(item => ({ ...item, status: item.overflowMs > 0 ? 'extended' : 'ready' }));
   plan.status = 'building'; plan.progress = 1; delete plan.error;
   writePlan(plan);
   renderPlan(plan, directoryFor(plan.id), controller.signal, (progress, message) => {

@@ -602,8 +602,15 @@ const VideoRenderingSection = ({
 
   // Refresh narration function - same logic as the main video player
   const handleRefreshNarration = async () => {
-    if (isAdaptiveSyncEnabled()) { requestAdaptiveBuild(); return; }
     if (isRefreshingNarration) return;
+    if (isAdaptiveSyncEnabled()) {
+      setIsRefreshingNarration(true);
+      setError('');
+      try { await requestAdaptiveBuild(); }
+      catch (error) { setError(error.message || 'Failed to refresh narration'); }
+      finally { setIsRefreshingNarration(false); }
+      return;
+    }
 
     try {
       setIsRefreshingNarration(true);
@@ -1011,7 +1018,7 @@ const VideoRenderingSection = ({
       if (syncPlan) {
         await verifyAdaptiveVideo(syncPlan, queueItem?.videoFile || selectedVideoFile, controller.signal);
         const media = await fetch(adaptiveUrl(syncPlan.assets.preview), { signal: controller.signal });
-        if (!media.ok) throw new Error('Video đồng bộ không còn tồn tại. Hãy áp dụng đồng bộ lại.');
+        if (!media.ok) throw new Error('Video đã căn chỉnh không còn truy cập được. Hãy bấm “Làm mới thuyết minh” rồi render lại.');
         audioFile = await uploadFileToRenderer(new File([await media.blob()], `sync-${syncPlan.id}.mp4`, { type: 'video/mp4' }), 'video');
       } else if (selectedVideoFile instanceof File) {
         setRenderStatus(t('videoRendering.uploadingVideo', 'Uploading video...'));
@@ -1434,7 +1441,6 @@ const VideoRenderingSection = ({
 
       {/* Drag overlay */}
       {error && <p role="alert" className="adaptive-sync-error">{error}</p>}
-      {adaptiveSync.enabled && <p>Đồng bộ thích ứng: {adaptiveSync.asset ? `đang dùng kế hoạch ${adaptiveSync.asset.id.slice(0, 10)}` : 'chưa áp dụng kế hoạch mới'}. Thay đổi âm lượng cần áp dụng đồng bộ lại.</p>}
       {isDragging && (
         <div className="drag-overlay">
           <div className="drag-content">

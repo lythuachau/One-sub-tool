@@ -2,9 +2,11 @@ import { useSyncExternalStore } from 'react';
 import { SERVER_URL } from '../config';
 
 const STORAGE = 'adaptive_sync_projects_v1';
+const SYNC_SCHEMA_VERSION = 2;
 const initialRenderSettings = (() => { try { return JSON.parse(localStorage.getItem('videoRender_renderSettings') || 'null'); } catch { return null; } })();
 const listeners = new Set();
-let state = { enabled: false, mediaKey: null, signature: '', asset: null, plan: null, options: { lead: 0.25, originalVolume: 0.15, voiceVolume: 1 } };
+let state = { enabled: true, mediaKey: null, signature: '', asset: null, plan: null, options: { lead: 0.25, originalVolume: 0.15, voiceVolume: 1 } };
+let adaptiveBuildHandler = null;
 const records = () => { try { return JSON.parse(localStorage.getItem(STORAGE) || '{}'); } catch { return {}; } };
 const emit = next => {
   state = { ...state, ...next };
@@ -32,7 +34,7 @@ export const syncRequest = async (route, init = {}) => {
   if (!response.ok) throw new Error(result.error || `Adaptive sync HTTP ${response.status}`);
   return result;
 };
-export const configureAdaptiveSync = (mediaKey, signature, isLegacy) => {
+export const configureAdaptiveSync = (mediaKey, signature) => {
   if (state.mediaKey === mediaKey && state.signature === signature) return null;
   const saved = records()[mediaKey];
   const sameMedia = state.mediaKey === mediaKey;
@@ -40,8 +42,9 @@ export const configureAdaptiveSync = (mediaKey, signature, isLegacy) => {
   try { const settings = initialRenderSettings;
     if (settings) volumes = { originalVolume: (settings.originalAudioVolume ?? 15) / 100, voiceVolume: (settings.narrationVolume ?? 100) / 100 };
   } catch { /* Keep defaults when old settings are malformed. */ }
-  const options = sameMedia ? state.options : saved?.options || { lead: 0.25, originalVolume: 0.15, voiceVolume: 1, ...volumes };
-  emit({ mediaKey, signature, enabled: sameMedia ? state.enabled : saved?.enabled ?? !isLegacy,
+  const options = { lead: 0.25, originalVolume: 0.15, voiceVolume: 1, ...volumes, ...(sameMedia ? state.options : saved?.options) };
+  options.lead = 0.25;
+  emit({ mediaKey, signature, enabled: true,
     options, asset: null, plan: null });
   return signature && saved?.signature === signature ? saved.planId : null;
 };
@@ -50,7 +53,8 @@ export const setAdaptiveOptions = changes => {
   persist();
 };
 export const acceptAdaptivePlan = (plan, signature) => {
-  if (!state.enabled || state.signature !== signature || Object.entries(state.options).some(([key, value]) => plan.options[key] !== value)) return false;
+  if (plan.schemaVersion !== SYNC_SCHEMA_VERSION || !state.enabled || state.signature !== signature
+    || Object.entries(state.options).some(([key, value]) => plan.options[key] !== value)) return false;
   emit({ plan, asset: plan.status === 'ready' ? plan : null }); persist(); return true;
 };
 export const invalidateAdaptiveSync = () => { emit({ plan: null, asset: null }); persist(); };
@@ -65,7 +69,7 @@ export const mapSyncSubtitles = (items, plan) => {
 export const requireAdaptiveAsset = () => {
   if (!state.enabled || !state.signature) return null;
   if (!state.asset || state.asset.fingerprint !== state.plan?.fingerprint) {
-    throw new Error('Hãy bấm “Áp dụng đồng bộ” và xử lý các câu báo lỗi trước khi làm mới, tải audio hoặc render video.');
+    throw new Error('Thuyết minh chưa được căn chỉnh. Hãy bấm “Làm mới thuyết minh” trước khi tải audio hoặc render video.');
   }
   return state.asset;
 };
@@ -79,7 +83,7 @@ export const validateAdaptiveAsset = async () => {
   const signature = state.signature;
   const current = await syncRequest(`/plans/${asset.id}`);
   if (current.status !== 'ready' || state.signature !== signature || state.asset?.id !== asset.id) {
-    invalidateAdaptiveSync(); throw new Error(current.error || 'Kế hoạch đồng bộ đã thay đổi. Hãy áp dụng lại.');
+    invalidateAdaptiveSync(); throw new Error(current.error || 'Dữ liệu thuyết minh đã thay đổi. Hãy bấm “Làm mới thuyết minh” để căn chỉnh lại.');
   }
   return current;
 };
@@ -87,20 +91,27 @@ export const verifyAdaptiveVideo = async (plan, source, signal) => {
   let blob = source;
   if (!(source instanceof Blob)) {
     const url = typeof source === 'string' ? source : source?.url;
-    if (!url) throw new Error('Chưa xác định được video nguồn để đối chiếu SyncPlan.');
+    if (!url) throw new Error('Chưa xác định được video nguồn để căn chỉnh.');
     const response = await fetch(url, { signal });
     if (!response.ok) throw new Error('Video nguồn không còn truy cập được.');
     blob = await response.blob();
   }
   const body = new FormData(); body.append('video', blob, 'source.mp4');
   const result = await syncRequest('/source', { method: 'POST', body, signal });
-  if (result.sourceId !== plan.sourceId) throw new Error('Video render khác video nguồn của SyncPlan. Chọn lại video nguồn và áp dụng đồng bộ trước khi xuất.');
+  if (result.sourceId !== plan.sourceId) throw new Error('Video render đã đổi. Hãy bấm “Làm mới thuyết minh” rồi thử render lại.');
 };
-export const requestAdaptiveBuild = () => window.dispatchEvent(new Event('adaptive-sync-build-requested'));
+export const registerAdaptiveBuildHandler = handler => {
+  adaptiveBuildHandler = handler;
+  return () => { if (adaptiveBuildHandler === handler) adaptiveBuildHandler = null; };
+};
+export const requestAdaptiveBuild = () => {
+  if (!adaptiveBuildHandler) return Promise.reject(new Error('Chưa sẵn sàng căn chỉnh thuyết minh. Hãy tải lại dự án rồi thử lại.'));
+  return adaptiveBuildHandler();
+};
 export const downloadSyncArtifact = async (url, filename) => {
   await validateAdaptiveAsset();
   const response = await fetch(adaptiveUrl(url));
-  if (!response.ok) throw new Error('Tệp đồng bộ không còn truy cập được. Hãy áp dụng đồng bộ lại.');
+  if (!response.ok) throw new Error('Tệp thuyết minh đã căn chỉnh không còn truy cập được. Hãy bấm “Làm mới thuyết minh” để tạo lại.');
   const objectUrl = URL.createObjectURL(await response.blob());
   const link = document.createElement('a'); link.href = objectUrl; link.download = filename;
   document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
