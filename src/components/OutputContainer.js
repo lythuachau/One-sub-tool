@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import '../styles/OutputContainer.css';
 import '../styles/narration/unifiedNarrationRedesign.css';
 import VideoPreview from './previews/VideoPreview';
+import AdaptiveSyncPreview from './previews/AdaptiveSyncPreview';
+import { useAdaptiveSyncState } from '../services/adaptiveSyncService';
 import LyricsDisplay from './LyricsDisplay';
 import TranslationSection from './translation';
 import { UnifiedNarrationSection } from './narration';
@@ -38,6 +40,7 @@ const OutputContainer = ({
   onActualVideoUrlChange
 }) => {
   const { t } = useTranslation();
+  const adaptiveSync = useAdaptiveSyncState();
   const [currentTabIndex, setCurrentTabIndex] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [editedLyrics, setEditedLyrics] = useState(null);
@@ -253,7 +256,7 @@ const OutputContainer = ({
               const hasActualVideo = uploadedFile || hasValidDownloadedVideo(uploadedFile);
               return !isSrtOnlyMode && hasActualVideo;
             })() && (
-              <VideoPreview
+              adaptiveSync.enabled && adaptiveSync.asset ? <AdaptiveSyncPreview plan={adaptiveSync.asset} onRenderVideo={onRenderVideo} /> : <VideoPreview
                 currentTime={currentTabIndex}
                 setCurrentTime={setCurrentTabIndex}
                 videoSource={videoSource}

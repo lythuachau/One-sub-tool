@@ -1,3 +1,4 @@
+import { adaptiveUrl, isAdaptiveSyncEnabled, requireAdaptiveAsset } from './adaptiveSyncService';
 import { adaptiveTimingFields, assertAdaptiveReady } from '../utils/adaptiveDubbing';
 /**
  * Service for managing aligned narration audio
@@ -23,6 +24,7 @@ let alignedAudioElement = null;
  * @returns {Promise<string>} - URL to the aligned audio
  */
 export const generateAlignedNarration = async (generationResults, onProgress = null) => {
+  if (isAdaptiveSyncEnabled()) { const plan = requireAdaptiveAsset(); if (plan) return adaptiveUrl(plan.assets.voice); }
   if (!generationResults || generationResults.length === 0) {
     console.error('No narration results to generate aligned audio');
     return null;

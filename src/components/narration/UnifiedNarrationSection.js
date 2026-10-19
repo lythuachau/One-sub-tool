@@ -18,6 +18,7 @@ import useWindowStateManager from './hooks/useWindowStateManager';
 
 // Import modular components
 import CapCutNarration from './components/CapCutNarration';
+import AdaptiveSyncPanel from './components/AdaptiveSyncPanel';
 import VibiNarration from './components/VibiNarration';
 import ReferenceAudioSection from './components/ReferenceAudioSection';
 import AudioControls from './components/AudioControls';
@@ -611,6 +612,10 @@ const UnifiedNarrationSection = ({
         </p>
       </div>
 
+      {!standaloneTextMode && <AdaptiveSyncPanel videoPath={videoPath} videoDuration={videoDuration}
+        generationResults={activeGenerationResults} originalSubtitles={activeOriginalSubtitles}
+        translatedSubtitles={activeTranslatedSubtitles} subtitleSource={activeSubtitleSource}
+        groupedSubtitles={activeGroupedSubtitles} useGroupedSubtitles={activeUseGroupedSubtitles} />}
       {/* Narration Method Selection */}
       <NarrationMethodSelection
         narrationMethod={narrationMethod}

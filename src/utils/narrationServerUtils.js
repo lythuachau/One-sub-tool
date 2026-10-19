@@ -1,3 +1,4 @@
+import { adaptiveAudioResponse } from '../services/adaptiveSyncService';
 /**
  * Utility functions for narration server interactions
  */
@@ -230,7 +231,7 @@ export const downloadAlignedAudio = async (generationResults, t) => {
 
     let response;
     try {
-      response = await fetch(downloadUrl, {
+      response = await adaptiveAudioResponse() || await fetch(downloadUrl, {
         method: 'POST',
         mode: 'cors',
         credentials: 'include',

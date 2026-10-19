@@ -6,6 +6,7 @@ import RemotionVideoPreview from './RemotionVideoPreview';
 import QueueManagerPanel from './QueueManagerPanel';
 import { SERVER_URL } from '../config';
 import { getNarrationOptimizationConfig } from '../utils/narrationOptimization';
+import { adaptiveUrl, isAdaptiveSyncEnabled, mapSyncSubtitles, requestAdaptiveBuild, requireAdaptiveAsset, setAdaptiveOptions, useAdaptiveSyncState } from '../services/adaptiveSyncService';
 import '../styles/VideoRenderingSection.css';
 
 const VIDEO_RENDERER_URL = 'http://127.0.0.1:3033';
@@ -20,6 +21,7 @@ const VideoRenderingSection = ({
   autoFillData = null
 }) => {
   const { t } = useTranslation();
+  const adaptiveSync = useAdaptiveSyncState();
   const [isRendering, setIsRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatus, setRenderStatus] = useState('');
@@ -506,6 +508,7 @@ const VideoRenderingSection = ({
 
   // Check if aligned narration is available (same logic as refresh narration button)
   const isAlignedNarrationAvailable = () => {
+    if (adaptiveSync.enabled) return !!adaptiveSync.asset;
     return window.isAlignedNarrationAvailable === true && window.alignedNarrationCache?.url;
   };
 
@@ -533,6 +536,7 @@ const VideoRenderingSection = ({
 
   // Get narration audio URL if available - same as refresh narration button
   const getNarrationAudioUrl = async () => {
+    if (isAdaptiveSyncEnabled()) { const plan = requireAdaptiveAsset(); return plan ? adaptiveUrl(plan.assets.voice) : null; }
     // First check if aligned narration is already available
     if (isAlignedNarrationAvailable()) {
       return window.alignedNarrationCache.url;
@@ -598,6 +602,7 @@ const VideoRenderingSection = ({
 
   // Refresh narration function - same logic as the main video player
   const handleRefreshNarration = async () => {
+    if (isAdaptiveSyncEnabled()) { requestAdaptiveBuild(); return; }
     if (isRefreshingNarration) return;
 
     try {
@@ -907,11 +912,14 @@ const VideoRenderingSection = ({
 
   // Simple render function - allows queueing multiple renders
   const handleRender = async () => {
+    let syncPlan;
+    try { syncPlan = requireAdaptiveAsset(); } catch (error) { setError(error.message); return; }
     const shouldStartImmediately = !isRenderingRef.current;
 
     // Create queue item for display
     const queueItem = {
       id: `render_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      syncPlanId: syncPlan?.id || null,
       videoFile: selectedVideoFile,
       subtitles: selectedSubtitles,
       settings: renderSettings,
@@ -988,7 +996,9 @@ const VideoRenderingSection = ({
         throw new Error(t('videoRendering.noVideoSelected', 'Please select a video file'));
       }
 
-      const currentSubtitles = getCurrentSubtitles();
+      const syncPlan = requireAdaptiveAsset();
+      if (queueItem?.syncPlanId && queueItem.syncPlanId !== syncPlan?.id) throw new Error('Kế hoạch đồng bộ đã thay đổi. Hãy thêm lại tác vụ render.');
+      const currentSubtitles = syncPlan ? mapSyncSubtitles(getCurrentSubtitles(), syncPlan) : getCurrentSubtitles();
       if (!currentSubtitles || currentSubtitles.length === 0) {
         throw new Error(t('videoRendering.noSubtitles', 'No subtitles available'));
       }
@@ -998,7 +1008,11 @@ const VideoRenderingSection = ({
       await ensureVideoRenderer();
 
       let audioFile;
-      if (selectedVideoFile instanceof File) {
+      if (syncPlan) {
+        const media = await fetch(adaptiveUrl(syncPlan.assets.preview), { signal: controller.signal });
+        if (!media.ok) throw new Error('Video đồng bộ không còn tồn tại. Hãy áp dụng đồng bộ lại.');
+        audioFile = await uploadFileToRenderer(new File([await media.blob()], `sync-${syncPlan.id}.mp4`, { type: 'video/mp4' }), 'video');
+      } else if (selectedVideoFile instanceof File) {
         setRenderStatus(t('videoRendering.uploadingVideo', 'Uploading video...'));
         audioFile = await uploadFileToRenderer(selectedVideoFile, 'video');
       } else if (selectedVideoFile && typeof selectedVideoFile === 'object' && selectedVideoFile.url) {
@@ -1024,7 +1038,7 @@ const VideoRenderingSection = ({
 
       // Upload narration audio if selected and get HTTP URL
       let narrationUrl = null;
-      if (selectedNarration === 'generated') {
+      if (!syncPlan && selectedNarration === 'generated') {
         setRenderStatus(t('videoRendering.preparingNarration', 'Preparing narration...'));
         const narrationBlobUrl = await getNarrationAudioUrl();
         if (narrationBlobUrl) {
@@ -1060,6 +1074,7 @@ const VideoRenderingSection = ({
         lyrics: currentSubtitles,
         metadata: {
           ...renderSettings,
+          ...(syncPlan ? { originalAudioVolume: 100, narrationVolume: 0, syncPlanId: syncPlan.id } : {}),
           subtitleCustomization: queueItem.customization // Include subtitle customization in metadata
         },
         narrationUrl: narrationUrl, // Use HTTP URL instead of blob URL
@@ -1072,6 +1087,7 @@ const VideoRenderingSection = ({
       await ensureVideoRenderer();
 
       // Send the POST request for rendering
+      if (syncPlan && requireAdaptiveAsset()?.id !== syncPlan.id) throw new Error('Dữ liệu đồng bộ đã đổi trước khi render.');
       const response = await fetch(`${VIDEO_RENDERER_URL}/render`, {
         method: 'POST',
         headers: {
@@ -1536,10 +1552,10 @@ const VideoRenderingSection = ({
 
               {/* Original Audio Volume Control */}
               <div className="compact-volume-control">
-                <label className="volume-label">{t('videoRendering.originalAudioVolume', 'Original Audio Volume')}: {renderSettings.originalAudioVolume}%</label>
+                <label className="volume-label">{t('videoRendering.originalAudioVolume', 'Original Audio Volume')}: {adaptiveSync.enabled ? Math.round(adaptiveSync.options.originalVolume * 100) : renderSettings.originalAudioVolume}%</label>
                 <StandardSlider
-                  value={renderSettings.originalAudioVolume}
-                  onChange={(value) => setRenderSettings(prev => ({ ...prev, originalAudioVolume: parseInt(value) }))}
+                  value={adaptiveSync.enabled ? adaptiveSync.options.originalVolume * 100 : renderSettings.originalAudioVolume}
+                  onChange={(value) => adaptiveSync.enabled ? setAdaptiveOptions({ options: { originalVolume: Number(value) / 100 } }) : setRenderSettings(prev => ({ ...prev, originalAudioVolume: parseInt(value) }))}
                   min={0}
                   max={100}
                   step={1}
@@ -1632,10 +1648,10 @@ const VideoRenderingSection = ({
 
               {/* Narration Volume Control */}
               <div className="compact-volume-control">
-                <label className="volume-label">{t('videoRendering.narrationVolume', 'Narration Volume')}: {renderSettings.narrationVolume}%</label>
+                <label className="volume-label">{t('videoRendering.narrationVolume', 'Narration Volume')}: {adaptiveSync.enabled ? Math.round(adaptiveSync.options.voiceVolume * 100) : renderSettings.narrationVolume}%</label>
                 <StandardSlider
-                  value={renderSettings.narrationVolume}
-                  onChange={(value) => setRenderSettings(prev => ({ ...prev, narrationVolume: parseInt(value) }))}
+                  value={adaptiveSync.enabled ? adaptiveSync.options.voiceVolume * 100 : renderSettings.narrationVolume}
+                  onChange={(value) => adaptiveSync.enabled ? setAdaptiveOptions({ options: { voiceVolume: Number(value) / 100 } }) : setRenderSettings(prev => ({ ...prev, narrationVolume: parseInt(value) }))}
                   min={0}
                   max={100}
                   step={1}
@@ -1670,16 +1686,16 @@ const VideoRenderingSection = ({
               tabIndex={0}
             >
               <RemotionVideoPreview
-                videoFile={selectedVideoFile}
-                subtitles={getCurrentSubtitles()}
-                narrationAudioUrl={isAlignedNarrationAvailable() ? window.alignedNarrationCache?.url : null}
+                videoFile={adaptiveSync.asset ? adaptiveUrl(adaptiveSync.asset.assets.preview) : selectedVideoFile}
+                subtitles={adaptiveSync.asset ? mapSyncSubtitles(getCurrentSubtitles(), adaptiveSync.asset) : getCurrentSubtitles()}
+                narrationAudioUrl={adaptiveSync.enabled ? null : isAlignedNarrationAvailable() ? window.alignedNarrationCache?.url : null}
                 subtitleCustomization={{
                   ...subtitleCustomization,
                   resolution: renderSettings.resolution,
                   frameRate: renderSettings.frameRate
                 }}
-                originalAudioVolume={renderSettings.originalAudioVolume}
-                narrationVolume={renderSettings.narrationVolume}
+                originalAudioVolume={adaptiveSync.asset ? 100 : renderSettings.originalAudioVolume}
+                narrationVolume={adaptiveSync.asset ? 0 : renderSettings.narrationVolume}
               />
             </div>
 

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import LiquidGlass from '../common/LiquidGlass';
 import { extractAndDownloadAudio } from '../../utils/fileUtils';
 import { getNarrationOptimizationConfig } from '../../utils/narrationOptimization';
+import { isAdaptiveSyncEnabled, requestAdaptiveBuild } from '../../services/adaptiveSyncService';
 
 const VideoTopsideButtons = ({
   showCustomControls,
@@ -125,6 +126,7 @@ const VideoTopsideButtons = ({
               }}
           aria-label={t('preview.refreshNarration', 'Refresh Narration')}
           onClick={async () => {
+            if (isAdaptiveSyncEnabled()) { requestAdaptiveBuild(); return; }
             refreshSession.current?.controller.abort();
             const video = videoRef.current;
             const session = {

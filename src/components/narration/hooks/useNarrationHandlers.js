@@ -1,3 +1,4 @@
+import { adaptiveAudioResponse } from '../../../services/adaptiveSyncService';
 import { adaptiveTimingFields, assertAdaptiveReady } from '../../../utils/adaptiveDubbing';
 import { transcribeAudio } from '../../../services/transcriptionService';
 import {
@@ -853,7 +854,7 @@ const useNarrationHandlers = ({
 
       // Use fetch API to download the file
 
-      const response = await fetch(downloadUrl, {
+      const response = await adaptiveAudioResponse() || await fetch(downloadUrl, {
         method: 'POST',
         mode: 'cors',
         credentials: 'include',
