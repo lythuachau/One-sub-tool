@@ -558,6 +558,12 @@ app.post('/render', async (req, res) => {
       isVideoFile = false
     } = req.body;
 
+    const syncDuration = metadata.syncPlanId ? Number(metadata.syncDuration) : null;
+    if (metadata.syncPlanId && (!/^[a-f0-9]{64}$/.test(metadata.syncPlanId) || !isVideoFile
+      || !Number.isFinite(syncDuration) || syncDuration! <= 0 || syncDuration! > 86400)) {
+      throw new Error('Invalid adaptive SyncPlan render metadata');
+    }
+
     if (!audioFile || !lyrics) {
       return res.status(400).json({ error: 'Missing required parameters' });
     }
@@ -623,11 +629,12 @@ app.post('/render', async (req, res) => {
         const aspectRatio = videoWidth / videoHeight;
 
         // Update duration to match the actual video duration
-        durationInSeconds = actualVideoDuration;
+        if (syncDuration !== null && Math.abs(actualVideoDuration - syncDuration) > 0.1) throw new Error('Video duration does not match SyncPlan');
+        durationInSeconds = syncDuration ?? actualVideoDuration;
 
         // Recalculate frames with the actual video duration
         const finalDuration = durationInSeconds; // No buffer for video files
-        durationInFrames = Math.max(60, Math.ceil(finalDuration * fps));
+        durationInFrames = syncDuration !== null ? Math.max(1, Math.ceil(syncDuration * fps - 0.000001)) : Math.max(60, Math.ceil(finalDuration * fps));
 
         console.log(`[RENDER] Actual video duration: ${actualVideoDuration} seconds`);
         console.log(`[RENDER] Recalculated frames: ${durationInFrames} at ${fps}fps`);
@@ -673,6 +680,7 @@ app.post('/render', async (req, res) => {
         console.log(`[RENDER] Calculated composition dimensions: ${width}x${height} (preserving aspect ratio)`);
 
       } catch (error) {
+        if (syncDuration !== null) throw error;
         console.warn(`[RENDER] Could not get video dimensions, falling back to default 16:9: ${error instanceof Error ? error.message : String(error)}`);
         // Fall back to default 16:9 dimensions
         switch (resolution) {
@@ -1008,6 +1016,27 @@ app.post('/render', async (req, res) => {
       }
     }
 
+    if (syncDuration !== null) {
+      const { run, probe } = require('../../../server/services/adaptiveSync/media');
+      const { getFfmpegPath } = require('../../../server/services/shared/ffmpegUtils');
+      const temporaryOutput = outputPath.replace(/\.mp4$/i, '.sync.mp4');
+      const normalization = new AbortController();
+      const render = activeRenders.get(renderId);
+      if (!render || render.status === 'cancelled') throw new Error('Render cancelled');
+      const cancelRender = render.cancel;
+      render.cancel = () => { cancelRender(); normalization.abort(); };
+      try {
+        await run(getFfmpegPath(), ['-hide_banner', '-loglevel', 'error', '-y', '-i', outputPath,
+          '-i', path.join(__dirname, '../uploads', finalAudioFile), '-map', '0:v:0', '-map', '1:a:0',
+          '-c:v', 'copy', '-af', `atrim=duration=${syncDuration},asetpts=PTS-STARTPTS`, '-c:a', 'aac',
+          '-t', String(syncDuration), '-movflags', '+faststart', temporaryOutput], normalization.signal);
+        const measured = await probe(temporaryOutput);
+        if (Math.abs(measured.duration - syncDuration) > 1 / fps + 0.001) throw new Error('Rendered duration exceeds SyncPlan by more than one frame');
+        await fs.promises.rename(temporaryOutput, outputPath);
+      } finally {
+        await fs.promises.rm(temporaryOutput, { force: true }).catch(() => {});
+      }
+    }
     const videoUrl = `http://localhost:${port}/output/${outputFile}`;
 
     // Update status to completed

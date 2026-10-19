@@ -156,3 +156,4 @@ package-lock.json
 package.json.bak
 .port_processes.json
 .venv-capcut/
+/narration/sync/

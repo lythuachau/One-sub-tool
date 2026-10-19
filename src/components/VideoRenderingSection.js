@@ -1075,7 +1075,7 @@ const VideoRenderingSection = ({
         lyrics: currentSubtitles,
         metadata: {
           ...renderSettings,
-          ...(syncPlan ? { originalAudioVolume: 100, narrationVolume: 0, syncPlanId: syncPlan.id } : {}),
+          ...(syncPlan ? { originalAudioVolume: 100, narrationVolume: 0, syncPlanId: syncPlan.id, syncDuration: syncPlan.outputDuration } : {}),
           subtitleCustomization: queueItem.customization // Include subtitle customization in metadata
         },
         narrationUrl: narrationUrl, // Use HTTP URL instead of blob URL

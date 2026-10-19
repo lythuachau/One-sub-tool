@@ -11,6 +11,8 @@ export type Resolution = '360p' | '480p' | '720p' | '1080p' | '1440p' | '4K' | '
 export type FrameRate = 24 | 25 | 30 | 50 | 60 | 120;
 
 export interface VideoMetadata {
+  syncPlanId?: string;
+  syncDuration?: number;
   videoType: 'Subtitled Video';
   resolution: Resolution; // Video resolution (1080p, 1440p, 4K, etc.)
   frameRate: FrameRate; // Frame rate (30 or 60 fps)
