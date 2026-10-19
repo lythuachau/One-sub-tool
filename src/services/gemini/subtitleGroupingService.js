@@ -6,8 +6,108 @@
 // import { addResponseSchema } from '../../utils/schemaUtils'; // No longer needed if schema is removed
 import { resolveGeminiModel } from './modelDiscovery';
 import { fetchGemini } from './requestManagement';
+import { getSubtitleGroupingModel } from './subtitleGroupingModel';
 
-// createSubtitleGroupingSchema can be removed or commented out if not used.
+const MAX_GROUP_GAP_SECONDS = 0.35;
+const MAX_GROUP_SIZE_BY_INTENSITY = {
+  minimal: 2,
+  light: 3,
+  balanced: 4,
+  moderate: 4,
+  enhanced: 5,
+  aggressive: 7
+};
+
+const getSubtitleId = (subtitle, index) => subtitle.subtitle_id ?? subtitle.id ?? index + 1;
+
+const parseSubtitleTime = (value) => {
+  if (Number.isFinite(value)) return value;
+  if (value === null || value === undefined || value === '') return null;
+
+  const normalized = String(value).trim().replace(',', '.');
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) return Number(normalized);
+
+  const parts = normalized.split(':').map(Number);
+  if (parts.some(part => !Number.isFinite(part))) return null;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return null;
+};
+
+const getSubtitleStart = (subtitle) => parseSubtitleTime(subtitle.start ?? subtitle.startTime ?? subtitle.start_time);
+const getSubtitleEnd = (subtitle) => parseSubtitleTime(subtitle.end ?? subtitle.endTime ?? subtitle.end_time);
+
+const canJoinSubtitleGroup = (previous, next) => {
+  const previousEnd = getSubtitleEnd(previous);
+  const nextStart = getSubtitleStart(next);
+  if (previousEnd === null || nextStart === null) return false;
+  return nextStart - previousEnd <= MAX_GROUP_GAP_SECONDS;
+};
+
+const createFallbackGroupMapping = (subtitles, maxGroupSize) => {
+  const groups = {};
+  let currentGroup = [];
+  let groupId = 1;
+
+  subtitles.forEach((subtitle, index) => {
+    if (currentGroup.length > 0 &&
+        (!canJoinSubtitleGroup(subtitles[index - 1], subtitle) || currentGroup.length >= maxGroupSize)) {
+      groups[String(groupId++)] = currentGroup;
+      currentGroup = [];
+    }
+
+    currentGroup.push(getSubtitleId(subtitle, index));
+  });
+
+  if (currentGroup.length > 0) groups[String(groupId)] = currentGroup;
+  return groups;
+};
+
+const enforceSafeGroupMapping = (subtitles, groupMapping, maxGroupSize) => {
+  const sourceIds = subtitles.map((subtitle, index) => getSubtitleId(subtitle, index));
+  const indexById = new Map(sourceIds.map((id, index) => [String(id), index]));
+  const proposedGroupByIndex = new Map();
+
+  Object.entries(groupMapping || {}).forEach(([groupId, ids]) => {
+    if (!Array.isArray(ids)) return;
+    ids.forEach(id => {
+      const index = indexById.get(String(id));
+      if (index !== undefined && !proposedGroupByIndex.has(index)) {
+        proposedGroupByIndex.set(index, groupId);
+      }
+    });
+  });
+
+  const safeGroups = [];
+  let currentGroup = [];
+  let currentProposal = null;
+
+  const flushGroup = () => {
+    if (currentGroup.length > 0) safeGroups.push(currentGroup);
+    currentGroup = [];
+    currentProposal = null;
+  };
+
+  subtitles.forEach((subtitle, index) => {
+    const proposal = proposedGroupByIndex.get(index);
+    const previousSubtitle = subtitles[index - 1];
+    const isSafeToAppend = currentGroup.length > 0 &&
+      proposal !== undefined && proposal === currentProposal &&
+      indexById.get(String(currentGroup[currentGroup.length - 1])) === index - 1 &&
+      currentGroup.length < maxGroupSize &&
+      canJoinSubtitleGroup(previousSubtitle, subtitle);
+
+    if (!isSafeToAppend) flushGroup();
+    currentGroup.push(sourceIds[index]);
+    currentProposal = proposal;
+  });
+  flushGroup();
+
+  return safeGroups.reduce((mapping, ids, index) => {
+    mapping[String(index + 1)] = ids;
+    return mapping;
+  }, {});
+};
 
 /**
  * Group subtitles into fuller sentences for better narration
@@ -33,13 +133,19 @@ export const groupSubtitlesForNarration = async (subtitles, language = 'en', mod
       throw new Error('Gemini API key not found');
     }
 
-    model = await resolveGeminiModel(model || localStorage.getItem('gemini_model') || '');
+    model = await resolveGeminiModel(model || getSubtitleGroupingModel());
 
-    const subtitleText = subtitles.map((sub, index) =>
-      `ID: ${sub.subtitle_id || sub.id || (index + 1)}, Text: "${sub.text}"`
-    ).join('\n');
+    const subtitleText = subtitles.map((sub, index) => {
+      const start = getSubtitleStart(sub);
+      const end = getSubtitleEnd(sub);
+      const timing = start !== null && end !== null
+        ? `${start.toFixed(3)}-${end.toFixed(3)} seconds`
+        : 'unknown';
+      return `ID: ${JSON.stringify(getSubtitleId(sub, index))}, Time: ${timing}, Text: ${JSON.stringify(sub.text || '')}`;
+    }).join('\n');
 
-    const maxOutputTokens = 8192; // Adjusted from 65536, which is very high.
+    const maxOutputTokens = 8192;
+    const maxGroupSize = MAX_GROUP_SIZE_BY_INTENSITY[intensity] || MAX_GROUP_SIZE_BY_INTENSITY.moderate;
 
     // Define grouping intensity guidelines
     let intensityGuidelines = '';
@@ -105,7 +211,14 @@ Grouping Intensity: AGGRESSIVE
     const groupingPrompt = `
 You are an expert in natural language processing. Your task is to group the following subtitles into fuller, more coherent sentences for narration purposes.
 
-Each subtitle line may only contain a few words, which is suitable for displaying as subtitles but not ideal for generating narration. Please combine these subtitles into logical groups that form complete thoughts or sentences.
+Each subtitle line may only contain a few words, which is suitable for displaying as subtitles but not ideal for generating narration. Combine only consecutive subtitles that form one coherent spoken phrase.
+
+Timing safety rules:
+- Preserve the exact input order. Every group must contain a continuous range of adjacent input rows; never skip an ID and join rows around it.
+- Never combine subtitles across a pause longer than ${MAX_GROUP_GAP_SECONDS} seconds between the previous subtitle's end and the next subtitle's start.
+- Keep any subtitle with unknown timing in its own group.
+- Do not merge a later subtitle into an earlier group just to form a longer sentence; the narration must not speak its text before that subtitle appears in the video.
+- Use no more than ${maxGroupSize} subtitles per group.
 
 ${intensityGuidelines}
 
@@ -120,17 +233,16 @@ ${subtitleText}
 IMPORTANT: You must respond with a JSON object in the following exact format:
 {
   "groups": {
-    "1": [1, 2, 3],
-    "2": [4, 5],
-    "3": [6]
-    // ... and so on, for all groups needed.
+    "1": ["ID from input", "ID from input"],
+    "2": ["ID from input"],
+    "3": ["ID from input"]
   }
 }
 
 Where:
 - The outer object has a single "groups" property.
 - Inside "groups", each key is a new group ID (a string, starting from "1" and incrementing sequentially).
-- Each value is an array of original subtitle IDs (integers) that should be combined. These IDs must match the IDs provided in the input subtitles.
+- Each value is an array of original subtitle IDs that should be combined. These IDs must match the IDs provided in the input subtitles.
 
 DO NOT include any explanations, comments, or any other text in your response. Return ONLY the JSON object.
 `;
@@ -223,29 +335,19 @@ DO NOT include any explanations, comments, or any other text in your response. R
 
       if (!groupMapping || Object.keys(groupMapping).length === 0) {
         console.warn('Could not parse subtitle grouping result from API text or result is empty, using fallback grouping.');
-        groupMapping = {}; // Initialize for fallback
-        let currentGroupId = 1;
-        let currentGroupBuffer = [];
-        const FALLBACK_MAX_GROUP_SIZE = 3;
-        subtitles.forEach((subtitle, index) => {
-          const id = subtitle.subtitle_id || subtitle.id || (index + 1);
-          currentGroupBuffer.push(id);
-          if (currentGroupBuffer.length >= FALLBACK_MAX_GROUP_SIZE || index === subtitles.length - 1) {
-            if (currentGroupBuffer.length > 0) {
-              groupMapping[currentGroupId.toString()] = [...currentGroupBuffer];
-              currentGroupId++;
-              currentGroupBuffer = [];
-            }
-          }
-        });
+        groupMapping = createFallbackGroupMapping(subtitles, maxGroupSize);
         console.log('Created fallback grouping with', Object.keys(groupMapping).length, 'groups:', groupMapping);
       }
     } catch (error) {
       console.error('Error processing API response for subtitle grouping:', error);
     }
 
+    groupMapping = enforceSafeGroupMapping(subtitles, groupMapping, maxGroupSize);
     const groupedSubtitles = createGroupedSubtitles(subtitles, groupMapping);
-    const success = Object.keys(groupMapping).length > 0 && groupedSubtitles.length > 0;
+    const groupedOriginalIds = new Set(groupedSubtitles.flatMap(group => group.original_ids || []).map(String));
+    const success = Object.keys(groupMapping).length > 0 &&
+      groupedSubtitles.length > 0 &&
+      groupedOriginalIds.size === subtitles.length;
 
     if (!success && subtitles.length > 0) {
         console.warn("Grouping failed or resulted in no groups. Original subtitles count:", subtitles.length);
@@ -278,15 +380,16 @@ const createGroupedSubtitles = (originalSubtitles, groupMapping) => {
   console.log('Creating grouped subtitles from mapping with', Object.keys(groupMapping).length, 'groups');
 
   const subtitleMap = originalSubtitles.reduce((map, sub, index) => {
-    const id = sub.subtitle_id || sub.id || (index + 1);
-    map[id] = {
+    const id = getSubtitleId(sub, index);
+    map.set(String(id), {
         ...sub,
-        start: parseFloat(sub.start),
-        end: parseFloat(sub.end),
+        start: getSubtitleStart(sub),
+        end: getSubtitleEnd(sub),
         original_id_for_lookup: id
-    };
+    });
     return map;
-  }, {});
+  }, new Map());
+  const sourceIndexById = new Map(originalSubtitles.map((sub, index) => [String(getSubtitleId(sub, index)), index]));
 
   const groupedSubtitlesResult = Object.entries(groupMapping)
     .map(([groupIdStr, subtitleIdsInGroup]) => {
@@ -299,13 +402,10 @@ const createGroupedSubtitles = (originalSubtitles, groupMapping) => {
         console.warn(`Group ${groupIdStr} has invalid/empty subtitle IDs, skipping.`);
         return null;
       }
-      const normalizedIds = subtitleIdsInGroup.map(id => {
-        const numId = parseInt(id, 10);
-        return isNaN(numId) ? null : numId;
-      }).filter(id => id !== null && id !== undefined);
+      const normalizedIds = subtitleIdsInGroup.map(id => String(id));
 
       const groupSubtitles = normalizedIds
-        .map(id => subtitleMap[id])
+        .map(id => subtitleMap.get(id))
         .filter(Boolean);
 
       if (groupSubtitles.length === 0) {
@@ -313,13 +413,15 @@ const createGroupedSubtitles = (originalSubtitles, groupMapping) => {
         return null;
       }
       groupSubtitles.sort((a, b) => {
-        const aIndex = originalSubtitles.findIndex(sub => (sub.subtitle_id || sub.id || originalSubtitles.indexOf(sub) + 1) === a.original_id_for_lookup);
-        const bIndex = originalSubtitles.findIndex(sub => (sub.subtitle_id || sub.id || originalSubtitles.indexOf(sub) + 1) === b.original_id_for_lookup);
-        return aIndex - bIndex;
-    });
+        return sourceIndexById.get(String(a.original_id_for_lookup)) - sourceIndexById.get(String(b.original_id_for_lookup));
+      });
+      if (groupSubtitles.some(sub => !Number.isFinite(sub.start) || !Number.isFinite(sub.end))) {
+        console.warn(`Group ${groupIdStr} has subtitles without usable timestamps.`);
+        return null;
+      }
       const startTime = Math.min(...groupSubtitles.map(sub => sub.start));
       const endTime = Math.max(...groupSubtitles.map(sub => sub.end));
-      if (isNaN(startTime) || isNaN(endTime)) {
+      if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
           console.warn(`Group ${groupIdStr} has NaN start/end times. Subtitles:`, groupSubtitles.map(s => ({id: s.original_id_for_lookup, start: s.start, end: s.end})));
           return null;
       }

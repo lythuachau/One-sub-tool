@@ -260,14 +260,14 @@ export const downloadAlignedAudio = async (generationResults, t) => {
 
     // Check if the response is successful
     if (!response.ok) {
-      // Try to parse error message if it's JSON
+      let errorMessage = `Failed to download aligned audio: ${response.status} ${response.statusText}`;
       try {
         const errorData = await response.json();
-        throw new Error(errorData.error || `Server error: ${response.status} ${response.statusText}`);
-      } catch (jsonError) {
-        // If it's not JSON, use the status text
-        throw new Error(`Failed to download aligned audio: ${response.status} ${response.statusText}`);
+        if (errorData.error) errorMessage = errorData.error;
+      } catch {
+        // Keep the HTTP status if the server returned a non-JSON response.
       }
+      throw new Error(errorMessage);
     }
 
     // Update loading indicator text

@@ -1,21 +1,87 @@
-const planAdaptiveTiming = segments => {
-  const ordered = [...segments].sort((a,b) => a.start - b.start);
-  const plan = ordered.map((s,i) => {
-    const end = Math.min(s.end, ordered[i+1]?.start ?? Infinity);
-    const target = end - s.start;
-    if (![s.start,end,s.actualDuration].every(Number.isFinite) || s.start < 0 || target <= 0 || s.actualDuration <= 0)
-      throw Object.assign(new Error('Invalid adaptive timing: ' + s.subtitle_id), {status:422});
-    const tempo = Math.min(1.12, Math.max(0.94, s.actualDuration / target));
-    const duration = s.actualDuration / tempo;
-    const delay = Math.min(0.15, Math.max(0,target-duration));
-    const mismatch = Math.abs(target-delay-duration);
-    return { ...s, start:s.start+delay, end, tempo, naturalEnd:s.start+delay+duration,
-      mismatchMs:Math.round(mismatch*1000), timingPlanned:true };
+const MAX_TEMPO = 1.12;
+const MIN_GAP_SECONDS = 0.05;
+const TIMING_TOLERANCE_MS = 20;
+
+const createTimingPlan = segments => {
+  const ordered = [...segments].sort((a, b) => a.start - b.start);
+  const plan = ordered.map((segment, index) => {
+    const next = ordered[index + 1];
+    const { start, end, actualDuration } = segment;
+
+    if (![start, end, actualDuration].every(Number.isFinite)
+      || start < 0 || end <= start || actualDuration <= 0) {
+      const error = new Error(`Mốc thời gian hoặc audio của đoạn ${segment.subtitle_id} không hợp lệ.`);
+      error.status = 422;
+      error.code = 'INVALID_NARRATION_TIMING';
+      error.segments = [{ id: segment.subtitle_id }];
+      throw error;
+    }
+
+    if (next && (!Number.isFinite(next.start) || next.start <= start)) {
+      const error = new Error(`Mốc bắt đầu của đoạn ${next.subtitle_id} không hợp lệ.`);
+      error.status = 422;
+      error.code = 'INVALID_NARRATION_TIMING';
+      error.segments = [{ id: segment.subtitle_id }, { id: next.subtitle_id }];
+      throw error;
+    }
+
+    const boundary = next ? next.start - MIN_GAP_SECONDS : Infinity;
+    const availableDuration = boundary - start;
+    const safeAvailableDuration = Math.max(0.001, availableDuration);
+    const requiredTempo = actualDuration / safeAvailableDuration;
+    const tempo = Math.min(MAX_TEMPO, Math.max(1, requiredTempo));
+    const plannedDuration = actualDuration / tempo;
+    const overflowMs = Number.isFinite(availableDuration)
+      ? Math.max(0, Math.round((plannedDuration - safeAvailableDuration) * 1000))
+      : 0;
+
+    return {
+      ...segment,
+      availableDuration: safeAvailableDuration,
+      requiredTempo,
+      tempo,
+      naturalEnd: start + plannedDuration,
+      overflowMs,
+      mismatchMs: overflowMs,
+      timingPlanned: true
+    };
   });
-  const rejected = plan.filter(s => s.mismatchMs > 20 || s.needsTimingReview);
-  if (rejected.length) throw Object.assign(new Error('Các cụm chưa khớp thời lượng: ' + rejected.map(s => s.subtitle_id + ' (lệch ' + s.mismatchMs + ' ms)').join(', ') + '. Cần tạo lại riêng cụm; audio chưa được ghép để tránh cắt lời.'), {
-    status:422, code:'ADAPTIVE_TIMING_REVIEW_REQUIRED', segments:rejected.map(s=>({id:s.subtitle_id,mismatchMs:s.mismatchMs}))
-  });
+
   return plan;
 };
-module.exports = { planAdaptiveTiming };
+
+const planAdaptiveTiming = (segments) => {
+  return createTimingPlan(segments);
+};
+
+const analyzeNarrationOverlaps = (segments) => {
+  const overlapsById = new Map();
+  const ordered = [...segments]
+    .map(segment => ({
+      ...segment,
+      start: Number(segment.start),
+      actualDuration: Number(segment.actualDuration)
+    }))
+    .sort((a, b) => a.start - b.start);
+
+  ordered.forEach((segment, index) => {
+    if (!Number.isFinite(segment.start) || segment.start < 0
+      || !Number.isFinite(segment.actualDuration) || segment.actualDuration <= 0) return;
+    const audioEnd = segment.start + segment.actualDuration;
+    for (const later of ordered.slice(index + 1)) {
+      if (!Number.isFinite(later.start)) continue;
+      const overlapMs = Math.round((audioEnd - later.start) * 1000);
+      if (overlapMs <= TIMING_TOLERANCE_MS) break;
+      const id = String(segment.subtitle_id);
+      const item = overlapsById.get(id) || { id: segment.subtitle_id, overlappedBy: [], overlapMs: 0 };
+      item.overlappedBy.push(later.subtitle_id);
+      item.overlapMs = Math.max(item.overlapMs, overlapMs);
+      overlapsById.set(id, item);
+    }
+  });
+
+  const overlaps = [...overlapsById.values()];
+  return { overlappedIds: overlaps.map(item => item.id), overlaps };
+};
+
+module.exports = { planAdaptiveTiming, analyzeNarrationOverlaps };

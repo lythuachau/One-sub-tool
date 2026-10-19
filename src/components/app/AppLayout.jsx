@@ -304,10 +304,13 @@ const AppLayout = ({
               subtitlesData={subtitlesData}
               setSubtitlesData={setSubtitlesData}
               status={status}
+              setStatus={setStatus}
               userProvidedSubtitles={userProvidedSubtitles}
               selectedVideo={selectedVideo}
               uploadedFile={uploadedFile}
               isSrtOnlyMode={isSrtOnlyMode}
+              apiKeysSet={apiKeysSet}
+              useUserProvidedSubtitles={useUserProvidedSubtitles}
               t={t}
               onGenerateBackground={handleGenerateBackground}
             />

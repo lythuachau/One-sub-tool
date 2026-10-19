@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { callGeminiApi, setProcessingForceStopped, getProcessingForceStopped } from '../services/geminiService';
 import { preloadYouTubeVideo } from '../utils/videoPreloader';
 import { generateFileCacheId } from '../utils/cacheUtils';
-import { extractYoutubeVideoId } from '../utils/videoDownloader';
+import { generateMediaCacheIdFromUrl } from '../utils/mediaCacheIdentity';
 import { getVideoDuration, processLongVideo, retrySegmentProcessing } from '../utils/videoProcessor';
 import { setCurrentCacheId as setRulesCacheId } from '../utils/transcriptionRulesStore';
 import { setCurrentCacheId as setSubtitlesCacheId } from '../utils/userSubtitlesStore';
@@ -18,35 +18,7 @@ import { getGeminiErrorMessage as getGeminiStatusMessage } from '../services/gem
  * @param {string} url - Video URL
  * @returns {string|null} - Consistent cache ID
  */
-const generateUrlBasedCacheId = async (url) => {
-    if (!url) return null;
-
-    try {
-        // YouTube URLs
-        if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            return extractYoutubeVideoId(url);
-        }
-
-        // Douyin URLs
-        if (url.includes('douyin.com')) {
-            const { extractDouyinVideoId } = await import('../utils/douyinDownloader');
-            return extractDouyinVideoId(url);
-        }
-
-        // All other sites - generate consistent ID from URL structure
-        const urlObj = new URL(url);
-        const domain = urlObj.hostname.replace('www.', '');
-        const path = urlObj.pathname.replace(/\//g, '_');
-        const query = urlObj.search.replace(/[^a-zA-Z0-9]/g, '_');
-        const baseId = `${domain}${path}${query}`.replace(/[^a-zA-Z0-9]/g, '_');
-        const cleanId = baseId.replace(/_+/g, '_').replace(/^_|_$/g, '');
-        return `site_${cleanId}`;
-
-    } catch (error) {
-        console.error('Error generating URL-based cache ID:', error);
-        return null;
-    }
-};
+const generateUrlBasedCacheId = generateMediaCacheIdFromUrl;
 
 export const useSubtitles = (t) => {
     const [subtitlesData, setSubtitlesData] = useState(null);
@@ -137,7 +109,7 @@ export const useSubtitles = (t) => {
 
     const generateSubtitles = useCallback(async (input, inputType, apiKeysSet, options = {}) => {
         // Extract options
-        const { userProvidedSubtitles } = options;
+        const { userProvidedSubtitles, forceVideoAnalysis } = options;
         const subtitleEngine = getSubtitleEngine();
         if (subtitleEngine === 'gemini' && !apiKeysSet.gemini) {
             setStatus({ message: t('errors.apiKeyRequired'), type: 'error' });
@@ -211,7 +183,7 @@ export const useSubtitles = (t) => {
             }
 
             // Check cache with URL validation
-            if (cacheId) {
+            if (cacheId && !forceVideoAnalysis) {
                 const cachedSubtitles = await checkCachedSubtitles(cacheId, currentVideoUrl);
                 if (cachedSubtitles) {
                     setSubtitlesData(cachedSubtitles);
@@ -246,7 +218,7 @@ export const useSubtitles = (t) => {
 
                     // Always use segmentation for media files
                     // Process long media file by splitting it into segments
-                    subtitles = await processLongVideo(input, setStatus, t, { userProvidedSubtitles });
+                    subtitles = await processLongVideo(input, setStatus, t, options);
                 } catch (error) {
                     if (error.name === 'AbortError' || getProcessingForceStopped()) {
                         throw error;
@@ -384,7 +356,7 @@ export const useSubtitles = (t) => {
         setProcessingForceStopped(false);
 
         setIsGenerating(true);
-        setStatus({ message: 'Retrying request to Gemini. This may take a few minutes...', type: 'loading' });
+        setStatus({ message: t('output.regeneratingSubtitles', 'Regenerating subtitles with the selected model...'), type: 'loading' });
 
         try {
             let subtitles;
@@ -406,7 +378,7 @@ export const useSubtitles = (t) => {
 
                     // Always use segmentation for media files to match generateSubtitles behavior
                     // Process long media file by splitting it into segments
-                    subtitles = await processLongVideo(input, setStatus, t, { userProvidedSubtitles });
+                    subtitles = await processLongVideo(input, setStatus, t, options);
                 } catch (error) {
                     if (error.name === 'AbortError' || getProcessingForceStopped()) {
                         throw error;

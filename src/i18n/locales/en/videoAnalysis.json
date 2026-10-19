@@ -19,5 +19,12 @@
   "autoSelectRecommendedCountdown": "Auto-selecting recommended preset in (click anywhere to cancel)",
   "autoSelectDefaultCountdown": "Auto-selecting default preset in (click anywhere to cancel)",
   "seconds": "seconds",
-  "back": "Back"
+  "back": "Back",
+  "addAnalysis": "Add analysis",
+  "analyzeTooltip": "Analyze this video with Gemini and create transcription rules.",
+  "editTooltip": "Edit the transcription rules saved for this video.",
+  "analyzing": "Analyzing video...",
+  "clearAnalysis": "Clear video analysis",
+  "noVideoFile": "Select or download a video before analyzing it.",
+  "error": "Video analysis failed: {{message}}"
 }

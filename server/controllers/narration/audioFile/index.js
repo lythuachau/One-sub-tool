@@ -18,6 +18,7 @@ module.exports = {
 
   // Aligned audio processing
   downloadAlignedAudio: alignAudio.downloadAlignedAudio,
+  analyzeNarrationOverlaps: alignAudio.analyzeNarrationOverlaps,
 
   // Batch processing for large numbers of segments
   processBatch: batchProcessor.processBatch,

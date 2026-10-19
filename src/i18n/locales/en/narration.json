@@ -109,6 +109,7 @@
   "playbackError": "Error playing audio",
   "processingError": "Error processing audio data",
   "downloadError": "Error creating WAV file for download",
+  "downloadAllError": "Error downloading audio files: {{error}}",
   "saveToServer": "Save to Server",
   "saveToServerTooltip": "Save to server for use with video player",
   "savedToServer": "Saved",
@@ -152,6 +153,8 @@
 
   "subtitleGrouping": "Subtitle Grouping",
   "groupingIntensity": "Grouping Intensity",
+  "groupingModel": "Grouping Model",
+  "groupingModelChangeTooltip": "Changing the model requires regrouping subtitles",
   "intensityMinimal": "Minimal",
   "intensityLight": "Light",
   "intensityBalanced": "Balanced",
@@ -226,5 +229,13 @@
   "voicePreviewLoading": "Creating preview...",
   "voicePreviewText": "Hello, this is a preview of the current narration voice.",
   "voicePreviewEmpty": "No preview audio was returned.",
-  "voicePreviewError": "Could not create the voice preview."
+  "voicePreviewError": "Could not create the voice preview.",
+  "shorten": "Shorten",
+  "shortening": "Shortening...",
+  "shortenWithGemini": "Shorten with Gemini",
+  "edit": "Edit text",
+  "editNarrationText": "Edit narration text",
+  "regenerateEditedText": "Regenerate TTS",
+  "overlapped": "Overlapped",
+  "overlappedBy": "Overlapped by audio {{ids}}"
 }

@@ -1,6 +1,8 @@
 /**
  * Utility functions for retrying failed Gemini narrations
  */
+import { getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../../utils/narrationSubtitleSource';
+
 
 /**
  * Retry all failed Gemini narrations
@@ -44,6 +46,11 @@ export const retryFailedGeminiNarrations = async ({
   // Find all failed narrations
   const failedNarrations = generationResults.filter(result => !result.success);
 
+  if (failedNarrations.some(result => result.subtitle_source && result.subtitle_source !== subtitleSource)) {
+    setError(t('narration.retrySourceMismatch', 'Kết quả này thuộc nguồn phụ đề khác. Hãy tạo lại từ nguồn đang chọn.'));
+    return;
+  }
+
   if (failedNarrations.length === 0) {
     setError(t('narration.noFailedNarrationsError', 'No failed narrations to retry'));
     return;
@@ -52,14 +59,13 @@ export const retryFailedGeminiNarrations = async ({
   // Determine which subtitles to use based on whether we're using grouped subtitles
   let selectedSubtitles;
 
-  if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
-    // Use the grouped subtitles if available
+  const sourceSubtitles = getNarrationSubtitlesForSource({
+    subtitleSource, originalSubtitles, translatedSubtitles, subtitles
+  });
+  if (useGroupedSubtitles && groupedSubtitlesMatchSource(groupedSubtitles, sourceSubtitles)) {
     selectedSubtitles = groupedSubtitles;
   } else {
-    // Otherwise use the original or translated subtitles
-    selectedSubtitles = subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0
-      ? translatedSubtitles
-      : originalSubtitles || subtitles;
+    selectedSubtitles = sourceSubtitles;
   }
 
   if (!selectedSubtitles || selectedSubtitles.length === 0) {
@@ -68,8 +74,8 @@ export const retryFailedGeminiNarrations = async ({
   }
 
   // Filter the subtitles to only include those that failed
-  const subtitlesToRetry = selectedSubtitles.filter(subtitle => {
-    const subtitleId = subtitle.id || subtitle.index;
+  const subtitlesToRetry = selectedSubtitles.filter((subtitle, index) => {
+    const subtitleId = subtitle.subtitle_id ?? subtitle.id ?? subtitle.index ?? index + 1;
     return failedNarrations.some(failedNarration =>
       failedNarration.subtitle_id === subtitleId
     );

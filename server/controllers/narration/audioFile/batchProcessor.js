@@ -101,9 +101,8 @@ const processBatch = async (audioSegments, outputPath, batchIndex, totalDuration
       // If there's only one segment, just map it directly to output
       filterComplex += `${amixInputs[0]}asetpts=PTS-STARTPTS[aout]`;
     } else {
-      // For multiple segments, use amix with normalize=0 to prevent volume reduction during overlaps
-      // This is the key setting that ensures overlapping segments maintain their volume
-      filterComplex += `${amixInputs.join('')}amix=inputs=${segmentsToProcess.length}:dropout_transition=0:normalize=0[aout]`;
+      // Keep source levels during overlap and limit peaks to prevent clipping.
+      filterComplex += `${amixInputs.join('')}amix=inputs=${segmentsToProcess.length}:dropout_transition=0:normalize=0,alimiter=limit=0.95:attack=5:release=50:level=false[aout]`;
     }
   } else {
     // If there are no audio segments, the output is just the silent track

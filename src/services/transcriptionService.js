@@ -3,6 +3,7 @@
  */
 
 import { resolveGeminiModel } from './gemini/modelDiscovery';
+import { fetchGemini } from './gemini/requestManagement';
 
 // No need to import API_BASE_URL as it's not used in this file
 
@@ -166,8 +167,8 @@ export const transcribeAudio = async (audioBlob) => {
 
 
     // Call Gemini API
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${requestData.model}:generateContent?key=${geminiApiKey}`,
+    const response = await fetchGemini(
+      `https://generativelanguage.googleapis.com/v1beta/models/${requestData.model}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
       {
         method: 'POST',
         headers: {

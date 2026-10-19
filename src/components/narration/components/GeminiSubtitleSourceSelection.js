@@ -6,6 +6,8 @@ import { detectSubtitleLanguage } from '../../../services/gemini/languageDetecti
 import { FiRefreshCw } from 'react-icons/fi';
 import '../../../styles/narration/subtitleSourceSelectionMaterial.css';
 import SubtitleGroupingModal from './SubtitleGroupingModal';
+import SubtitleGroupingModelSelect from './SubtitleGroupingModelSelect';
+import { getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../../utils/narrationSubtitleSource';
 
 /**
  * Simplified subtitle source selection component for Gemini narration
@@ -44,6 +46,7 @@ const GeminiSubtitleSourceSelection = ({
   setUseGroupedSubtitles = () => {},
   isGroupingSubtitles = false,
   groupedSubtitles = null,
+  setGroupedSubtitles = () => {},
   groupingIntensity = 'moderate',
   setGroupingIntensity = () => {}
 }) => {
@@ -53,17 +56,25 @@ const GeminiSubtitleSourceSelection = ({
   const [isDetectingOriginal, setIsDetectingOriginal] = useState(false);
   const [isDetectingTranslated, setIsDetectingTranslated] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const sourceSubtitles = getNarrationSubtitlesForSource({ subtitleSource, originalSubtitles, translatedSubtitles });
+  const hasMatchingGroupedSubtitles = groupedSubtitlesMatchSource(groupedSubtitles, sourceSubtitles);
+
+  const handleGroupingModelChange = () => {
+    setUseGroupedSubtitles(false);
+    setGroupedSubtitles(null);
+    window.groupedSubtitles = null;
+    window.useGroupedSubtitles = false;
+    setIsModalOpen(false);
+  };
 
   // Function to handle subtitle grouping toggle
   const handleGroupingToggle = (checked) => {
     if (checked) {
       // If turning on, only clear existing grouped subtitles if we want to force re-grouping
       // Check if we already have grouped subtitles - if so, keep them
-      if (!groupedSubtitles || groupedSubtitles.length === 0) {
+      if (!hasMatchingGroupedSubtitles) {
         // No existing grouped subtitles, clear to force re-request to Gemini
-        if (typeof window.setGroupedSubtitles === 'function') {
-          window.setGroupedSubtitles(null);
-        }
+        setGroupedSubtitles(null);
         window.groupedSubtitles = null;
       }
 
@@ -81,9 +92,7 @@ const GeminiSubtitleSourceSelection = ({
       setUseGroupedSubtitles(false);
 
       // Clear the grouped subtitles data
-      if (typeof window.setGroupedSubtitles === 'function') {
-        window.setGroupedSubtitles(null);
-      }
+      setGroupedSubtitles(null);
       window.groupedSubtitles = null;
 
       // Set flag to prevent auto-loading from cache
@@ -349,6 +358,11 @@ const GeminiSubtitleSourceSelection = ({
               </select>
             </div>
 
+            <SubtitleGroupingModelSelect
+              disabled={isGenerating || isGroupingSubtitles || !hasSubtitles}
+              onModelChange={handleGroupingModelChange}
+            />
+
             {/* Material Web Switch */}
             <div className="material-switch-container">
               <MaterialSwitch
@@ -371,7 +385,7 @@ const GeminiSubtitleSourceSelection = ({
             </div>
 
             {/* Show comparison button when grouped subtitles are available */}
-            {useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0 && (
+            {useGroupedSubtitles && hasMatchingGroupedSubtitles && (
               <div className="grouping-info-container">
                 <button
                   className="pill-button view-grouping-button"

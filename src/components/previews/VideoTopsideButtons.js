@@ -39,7 +39,8 @@ const VideoTopsideButtons = ({
     let active = true;
     const isCurrent = () => active && videoRef.current === video;
     const syncTime = () => {
-      if (isCurrent()) audio.currentTime = video.currentTime;
+      if (!isCurrent() || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      audio.currentTime = Math.min(video.currentTime, Math.max(0, audio.duration - 0.01));
     };
     const play = () => {
       if (!isCurrent()) return;
@@ -60,13 +61,22 @@ const VideoTopsideButtons = ({
     };
     const listeners = { play, pause, seeked: syncTime, timeupdate, ratechange };
     Object.entries(listeners).forEach(([type, handler]) => video.addEventListener(type, handler));
+    audio.addEventListener('loadedmetadata', syncTime);
     window.addEventListener('narration-volume-change', volumechange);
     audio.volume = Math.min(1, Math.max(0, window.narrationVolume ?? 1));
     ratechange();
-    if (!video.paused) play();
+    syncTime();
+    if (syncSession.resumePlayback && video.paused) {
+      video.play().catch(error => {
+        if (isCurrent()) console.warn('Could not resume video after narration refresh:', error);
+      });
+    } else if (!video.paused) {
+      play();
+    }
     return () => {
       active = false;
       Object.entries(listeners).forEach(([type, handler]) => video.removeEventListener(type, handler));
+      audio.removeEventListener('loadedmetadata', syncTime);
       window.removeEventListener('narration-volume-change', volumechange);
       audio.pause();
     };
@@ -116,7 +126,14 @@ const VideoTopsideButtons = ({
           aria-label={t('preview.refreshNarration', 'Refresh Narration')}
           onClick={async () => {
             refreshSession.current?.controller.abort();
-            const session = { controller: new AbortController(), video: videoRef.current, url: videoUrl };
+            const video = videoRef.current;
+            const session = {
+              controller: new AbortController(),
+              video,
+              url: videoUrl,
+              currentTime: Number.isFinite(video?.currentTime) ? video.currentTime : 0,
+              resumePlayback: Boolean(video && !video.paused && !video.ended)
+            };
             refreshSession.current = session;
             const isCurrentRefresh = () => refreshSession.current === session && !session.controller.signal.aborted && videoRef.current === session.video;
             try {
@@ -136,35 +153,36 @@ const VideoTopsideButtons = ({
               const groupedNarrations = window.groupedNarrations || [];
               const originalNarrations = window.originalNarrations || [];
               const translatedNarrations = window.translatedNarrations || [];
+              const activeSubtitleSource = window.narrationSubtitleSource ||
+                localStorage.getItem('subtitle_source') ||
+                (translatedNarrations.length > 0 && originalNarrations.length === 0 ? 'translated' : 'original');
 
-              let generationResults = [];
-
-              // Use grouped narrations if available and enabled, otherwise use original/translated narrations
+              let generationResults;
               if (isUsingGroupedSubtitles && groupedNarrations.length > 0) {
                 generationResults = groupedNarrations;
                 console.log(`Using grouped narrations for refresh. Found ${generationResults.length} grouped narrations.`);
-              } else if (translatedNarrations.length > 0) {
+              } else if (activeSubtitleSource === 'translated') {
                 generationResults = translatedNarrations;
                 console.log(`Using translated narrations for refresh. Found ${generationResults.length} narrations.`);
-              } else if (originalNarrations.length > 0) {
+              } else {
                 generationResults = originalNarrations;
                 console.log(`Using original narrations for refresh. Found ${generationResults.length} narrations.`);
               }
 
-              if (generationResults.length === 0) {
-                throw new Error('No narration results to generate aligned audio');
+              if (!generationResults.length) {
+                throw new Error(`No ${activeSubtitleSource} narration results to generate aligned audio`);
               }
 
               // EXACT same subtitle timing lookup as VideoRenderingSection.js
               // Get all subtitles from the window object, prioritizing grouped subtitles if using them
-              const allSubtitles = isUsingGroupedSubtitles && window.groupedSubtitles ?
-                window.groupedSubtitles :
-                (window.subtitlesData || window.originalSubtitles || window.subtitles || []);
-
-              // Also try translated subtitles if no other subtitles found
-              if (allSubtitles.length === 0 && window.translatedSubtitles && Array.isArray(window.translatedSubtitles)) {
-                allSubtitles.push(...window.translatedSubtitles);
-              }
+              const originalSubtitles = window.subtitlesData || window.originalSubtitles || window.subtitles || [];
+              const translatedSubtitles = Array.isArray(window.translatedSubtitles) ? window.translatedSubtitles : [];
+              const sourceSubtitles = activeSubtitleSource === 'translated' && translatedSubtitles.length > 0
+                ? translatedSubtitles
+                : originalSubtitles;
+              const allSubtitles = isUsingGroupedSubtitles && Array.isArray(window.groupedSubtitles)
+                ? window.groupedSubtitles
+                : sourceSubtitles;
 
               // Create a map for faster lookup
               const subtitleMap = {};
@@ -369,7 +387,15 @@ const VideoTopsideButtons = ({
                 }
               }));
 
-              setSyncSession({ video: session.video, url: session.url, audio: audioElement });
+              if (session.video && Number.isFinite(session.currentTime)) {
+                session.video.currentTime = session.currentTime;
+              }
+              setSyncSession({
+                video: session.video,
+                url: session.url,
+                audio: audioElement,
+                resumePlayback: session.resumePlayback
+              });
 
               console.log('✅ Aligned narration regenerated successfully and integrated with service');
 

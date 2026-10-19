@@ -4,10 +4,15 @@
 
 const path = require('path');
 const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
 
 // Import directory paths and functions
-const { OUTPUT_AUDIO_DIR, ensureSubtitleDirectory } = require('./directoryManager');
+const {
+  resolveOutputAudioPath,
+  withAudioFileLock,
+  validateWavBuffer,
+  validateAudioFile,
+  writeBufferAtomically
+} = require('./audioFile/audioArtifactSafety');
 const { isGenerationCancelled } = require('../../services/omnivoiceCancellation');
 
 /**
@@ -22,144 +27,66 @@ const { isGenerationCancelled } = require('../../services/omnivoiceCancellation'
  * @returns {Promise<Object>} - Result object with filename and success status
  */
 const saveAudioToFile = async (options) => {
-  const { audioData, subtitle_id, sampleRate = 24000, mimeType, prefix = '', generationId = '', isCancelled } = options;
+  const { audioData, subtitle_id, sampleRate = 24000, prefix = '', generationId = '', isCancelled } = options;
 
   if (!audioData || subtitle_id === undefined || subtitle_id === null || subtitle_id === '') {
     throw new Error('Missing required data (audioData or subtitle_id)');
   }
 
-  // Ensure the subtitle directory exists
-  const subtitleDir = ensureSubtitleDirectory(subtitle_id, generationId);
-
-  // Always use 1.wav to override existing narrations for the same video/subtitle set
-  // This ensures align-narration always finds the latest narration
-  const fileNumber = 1;
-
-  // Generate a filename with optional prefix (but always use 1 as the number)
-  const filename = prefix ? `${prefix}_${fileNumber}.wav` : `${fileNumber}.wav`;
-
-  // Full path includes the subtitle directory - use forward slashes for URLs
-  const scope = generationId ? `${String(generationId).replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^[-_.]+|[-_.]+$/g, '')}/` : '';
-  const fullFilename = `${scope}subtitle_${subtitle_id}/${filename}`;
-  const filepath = path.join(subtitleDir, filename);
-  const writePath = isCancelled ? `${filepath}.${uuidv4()}.tmp` : filepath;
-
-  // Log if we're overriding an existing file
-  if (fs.existsSync(filepath)) {
-    console.log(`Overriding existing narration: ${filepath}`);
+  const subtitleId = String(subtitle_id).trim();
+  if (!subtitleId || subtitleId === '.' || subtitleId === '..' || /[\\/]/.test(subtitleId)) {
+    throw new Error('Invalid subtitle_id');
   }
 
-  // Decode the base64 audio data
-  const audioBuffer = Buffer.from(audioData, 'base64');
+  const base64Data = typeof audioData === 'string' && audioData.includes(',')
+    ? audioData.slice(audioData.indexOf(',') + 1)
+    : audioData;
+  const audioBuffer = Buffer.isBuffer(base64Data) ? base64Data : Buffer.from(base64Data, 'base64');
+  if (audioBuffer.length === 0) throw new Error('TTS returned empty audio data');
 
-  // Create file stream
-  const fileStream = fs.createWriteStream(writePath);
-
-  // Ensure we're using the correct sample rate
-  const actualSampleRate = sampleRate || 24000;
-
-  // Check if the data is already in WAV format
-  if (mimeType === 'audio/wav') {
-    console.log(`[DEBUG] Writing WAV data directly for subtitle ${subtitle_id}, length: ${audioBuffer.length} bytes`);
-
-    // Check if the WAV header is valid
-    if (audioBuffer.length >= 44) {
-      const headerStr = audioBuffer.slice(0, 4).toString('utf8');
-      console.log(`[DEBUG] WAV header check: ${headerStr}`);
-
-      if (headerStr !== 'RIFF') {
-        console.warn(`[DEBUG] WAV data does not start with RIFF header for subtitle ${subtitle_id}`);
-
-        // If the header is invalid, add a proper WAV header
-        const wavHeader = createWavHeader(audioBuffer.length, actualSampleRate);
-        fileStream.write(wavHeader);
-        fileStream.write(audioBuffer);
-      } else {
-        // Write the WAV file directly
-        fileStream.write(audioBuffer);
-      }
-    } else {
-      console.warn(`[DEBUG] WAV data too short for subtitle ${subtitle_id}: ${audioBuffer.length} bytes`);
-
-      // Add a proper WAV header
-      const wavHeader = createWavHeader(audioBuffer.length, actualSampleRate);
-      fileStream.write(wavHeader);
-      fileStream.write(audioBuffer);
-    }
-  } else {
-    // If not in WAV format, assume it's PCM and add WAV header
-    console.log(`[DEBUG] Adding WAV header to PCM data for subtitle ${subtitle_id}, length: ${audioBuffer.length} bytes, sample rate: ${actualSampleRate}`);
-
-    // Create WAV header with the correct format
-    const wavHeader = createWavHeader(audioBuffer.length, actualSampleRate);
-
-    // Write the WAV file with header
-    fileStream.write(wavHeader);
-    fileStream.write(audioBuffer);
+  const actualSampleRate = Number(sampleRate) > 0 ? Math.round(Number(sampleRate)) : 24000;
+  if (audioBuffer.length > 0xffffffff - 44) throw new Error('TTS audio data exceeds the supported WAV size');
+  const hasWavContainer = audioBuffer.toString('ascii', 0, 4) === 'RIFF'
+    && audioBuffer.toString('ascii', 8, 12) === 'WAVE';
+  if (audioBuffer.toString('ascii', 0, 4) === 'RIFF' && !hasWavContainer) {
+    throw new Error('TTS returned a malformed WAV container');
   }
 
-  // End the file stream
-  fileStream.end();
+  const wavBuffer = hasWavContainer
+    ? audioBuffer
+    : Buffer.concat([createWavHeader(audioBuffer.length, actualSampleRate), audioBuffer]);
+  validateWavBuffer(wavBuffer);
 
-  // Return a promise that resolves when the file is fully written
-  return new Promise((resolve, reject) => {
-    fileStream.on('finish', () => {
-      // Verify the file exists and has content
-      try {
-        const stats = fs.statSync(writePath);
+  const generationScope = String(generationId || '')
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/^[-_.]+|[-_.]+$/g, '');
+  const filename = prefix ? `${prefix}_1.wav` : '1.wav';
+  const relativeFilename = `${generationScope ? `${generationScope}/` : ''}subtitle_${subtitleId}/${filename}`;
+  const outputPath = resolveOutputAudioPath(relativeFilename);
+  const backupPath = path.join(path.dirname(outputPath), `backup_${path.basename(outputPath)}`);
+  await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
 
-        // Check if the file is a valid WAV file
-        if (stats.size >= 44) { // WAV header is 44 bytes
-          const header = Buffer.alloc(12);
-          const fd = fs.openSync(writePath, 'r');
-          fs.readSync(fd, header, 0, 12, 0);
-          fs.closeSync(fd);
+  return withAudioFileLock(outputPath, async () => {
+    if (isCancelled?.()) throw new Error('Narration generation cancelled before saving audio');
+    if (fs.existsSync(outputPath)) console.log(`Replacing narration atomically: ${outputPath}`);
 
-          const headerStr = header.toString('utf8', 0, 4);
-          console.log(`[DEBUG] WAV header check for saved file: ${headerStr}`);
-
-          if (headerStr !== 'RIFF') {
-            console.warn(`[DEBUG] WARNING: Saved file does not have a valid RIFF header: ${filepath}`);
-
-            // Try to fix the file by adding a proper WAV header
-            try {
-              const fileData = fs.readFileSync(writePath);
-              const wavHeader = createWavHeader(fileData.length, actualSampleRate);
-              const fixedData = Buffer.concat([wavHeader, fileData]);
-              fs.writeFileSync(writePath, fixedData);
-              console.log(`[DEBUG] Fixed WAV header for file: ${filepath}`);
-            } catch (fixError) {
-              console.error(`[DEBUG] Error fixing WAV header: ${fixError.message}`);
-            }
-          }
-        } else {
-          console.warn(`[DEBUG] WARNING: Saved file is too small to be a valid WAV file: ${filepath}, size: ${stats.size} bytes`);
-        }
-
-        if (isCancelled?.()) {
-          fs.unlinkSync(writePath);
-          return reject(new Error('OmniVoice generation cancelled before saving audio'));
-        }
-        if (writePath !== filepath) fs.renameSync(writePath, filepath);
-        console.log(`[DEBUG] Verified file saved: ${filepath}, size: ${stats.size} bytes`);
-
-        // Return success with the filename
-        resolve({
-          success: true,
-          filename: fullFilename, // Return the path relative to OUTPUT_AUDIO_DIR
-          subtitle_id: subtitle_id,
-          sampleRate: actualSampleRate
-        });
-      } catch (statError) {
-        console.error(`Error verifying file: ${statError.message}`);
-        reject(new Error(`Error verifying audio file: ${statError.message}`));
-      }
+    const stats = await writeBufferAtomically(outputPath, wavBuffer, async temporaryPath => {
+      validateWavBuffer(await fs.promises.readFile(temporaryPath));
+      await validateAudioFile(temporaryPath);
+      if (isCancelled?.()) throw new Error('Narration generation cancelled before saving audio');
     });
 
-    fileStream.on('error', (writeError) => {
-      console.error(`Error writing file: ${writeError.message}`);
-      reject(new Error(`Error writing audio file: ${writeError.message}`));
+    await fs.promises.rm(backupPath, { force: true }).catch(error => {
+      console.warn(`[NarrationAudio] Could not clear stale speed backup ${backupPath}: ${error.message}`);
     });
+
+    return {
+      success: true,
+      filename: relativeFilename,
+      subtitle_id,
+      sampleRate: actualSampleRate,
+      size: stats.size
+    };
   });
 };
 

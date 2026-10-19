@@ -12,7 +12,8 @@ const {
 } = require('./audioFile/serveAudio');
 
 const {
-  downloadAlignedAudio
+  downloadAlignedAudio,
+  analyzeNarrationOverlaps
 } = require('./audioFile/alignAudio');
 
 const {
@@ -32,6 +33,7 @@ const {
 module.exports = {
   serveAudioFile,
   downloadAlignedAudio,
+  analyzeNarrationOverlaps,
   downloadAllAudio,
   enhanceF5TTSNarrations,
   modifyAudioSpeed,

@@ -9,7 +9,7 @@ import { processSegment } from '../../services/segmentProcessingService';
 import { getCacheIdForMedia } from './cacheUtils';
 import { createSegmentStatusUpdater, formatTime } from './segmentUtils';
 import { analyzeVideoAndWaitForUserChoice } from './analysisUtils';
-import { setCurrentCacheId as setRulesCacheId, setTranscriptionRules } from '../transcriptionRulesStore';
+import { getTranscriptionRules, setCurrentCacheId as setRulesCacheId, setTranscriptionRules } from '../transcriptionRulesStore';
 import { setCurrentCacheId as setSubtitlesCacheId } from '../userSubtitlesStore';
 import { API_BASE_URL } from '../../config';
 import { getGeminiErrorMessage } from '../../services/gemini/errorUtils';
@@ -54,14 +54,14 @@ const applyDefaultSettings = () => {
  * @returns {Promise<Array>} - Array of subtitle objects
  */
 export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = {}) => {
-  const { userProvidedSubtitles } = options;
+  const { userProvidedSubtitles, skipVideoAnalysis = false, forceVideoAnalysis = false } = options;
   const isAudio = mediaFile.type.startsWith('audio/');
 
   if (isLocalSubtitleEngine(getSubtitleEngine())) {
     return transcribeWithSelectedAsr(mediaFile, {}, onStatusUpdate);
   }
 
-  const useVideoAnalysis = !isAudio && localStorage.getItem('use_video_analysis') !== 'false';
+  const useVideoAnalysis = !isAudio && (forceVideoAnalysis || (!skipVideoAnalysis && localStorage.getItem('use_video_analysis') !== 'false'));
   const skipAnalysis = !!userProvidedSubtitles || !useVideoAnalysis;
 
   if (skipAnalysis) {
@@ -71,7 +71,8 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
         type: 'loading'
       });
     } else {
-      applyDefaultSettings();
+      const hasStoredRules = skipVideoAnalysis && !!(await getTranscriptionRules());
+      if (!hasStoredRules) applyDefaultSettings();
       onStatusUpdate({
         message: t('output.processingWithoutAnalysis', 'Processing with the original media...'),
         type: 'loading'
@@ -108,7 +109,7 @@ export const processShortMedia = async (mediaFile, onStatusUpdate, t, options = 
  */
 export const processLongVideo = async (mediaFile, onStatusUpdate, t, options = {}) => {
   // Extract options
-  const { userProvidedSubtitles } = options;
+  const { userProvidedSubtitles, skipVideoAnalysis = false, forceVideoAnalysis = false } = options;
 
   if (isLocalSubtitleEngine(getSubtitleEngine())) {
     localStorage.setItem('video_processing_in_progress', 'true');
@@ -185,7 +186,9 @@ export const processLongVideo = async (mediaFile, onStatusUpdate, t, options = {
       type: 'loading'
     });
 
-    const useVideoAnalysis = !userProvidedSubtitles && !isAudio && localStorage.getItem('use_video_analysis') !== 'false';
+    const useVideoAnalysis = !userProvidedSubtitles && !isAudio && (
+      forceVideoAnalysis || (!skipVideoAnalysis && localStorage.getItem('use_video_analysis') !== 'false')
+    );
     if (useVideoAnalysis) {
       try {
         await analyzeVideoAndWaitForUserChoice(mediaFile, onStatusUpdate, t);
@@ -210,7 +213,8 @@ export const processLongVideo = async (mediaFile, onStatusUpdate, t, options = {
         type: 'loading'
       });
     } else {
-      applyDefaultSettings();
+      const hasStoredRules = skipVideoAnalysis && !!(await getTranscriptionRules());
+      if (!hasStoredRules) applyDefaultSettings();
       onStatusUpdate({
         message: t('output.processingWithoutAnalysis', 'Processing with the original media...'),
         type: 'loading'

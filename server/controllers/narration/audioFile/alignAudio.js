@@ -1,7 +1,7 @@
 /**
  * Module for aligning audio segments with precise timing
  * Includes batch processing to handle large numbers of segments
- * Uses version 1 narration timing and overlap rules
+ * Applies one measured-duration timing policy to all narration engines
  */
 
 const path = require('path');
@@ -12,6 +12,7 @@ const { OUTPUT_AUDIO_DIR, TEMP_AUDIO_DIR } = require('../directoryManager');
 
 // Import batch processing functions
 const { processBatch, concatenateAudioFiles, analyzeAndAdjustSegments } = require('./batchProcessor');
+const { validateAudioFile } = require('./audioArtifactSafety');
 
 // Import duration utility
 const { getMediaDuration } = require('../../../services/videoProcessing/durationUtils');
@@ -129,12 +130,11 @@ const resolveNarrationPath = (filename) => {
 /**
  * Download aligned narration audio (one file)
  *
- * This function handles both F5-TTS and Gemini narrations in the same way,
- * ensuring consistent alignment and playback in the video player.
+ * This function aligns generated narration files and encoded audio consistently
+ * for preview playback, export, and video rendering.
  *
- * Audio processing detects overflow, optionally regenerates compact VieNeu text,
- * applies safe speed adjustments, preserves speech content, then mixes without
- * a per-segment volume boost.
+ * Each clip starts at its subtitle time. A bounded tempo adjustment is applied,
+ * and any remaining audio tail is preserved so overlaps can be heard in the mix.
  *
  * For large numbers of segments, the function splits them into batches to avoid
  * ENAMETOOLONG errors when the FFmpeg command becomes too long.
@@ -180,9 +180,7 @@ const downloadAlignedAudio = async (req, res) => {
     // Narrations will be processed below
 
     for (const narration of narrations) {
-      // Handle both F5-TTS and Gemini narrations
-      // F5-TTS narrations have a filename property
-      // Gemini narrations might have audioData property (base64 encoded audio)
+      // Narrations may be saved files or base64-encoded audio.
       if (narration.filename) {
         // First, try the filename as provided
         let filePath = resolveNarrationPath(narration.filename);
@@ -220,7 +218,7 @@ const downloadAlignedAudio = async (req, res) => {
           console.error(`Audio file not found: ${filePath}`);
 
           // Try to find the file with a different naming pattern
-          // Sometimes F5-TTS files might be named differently
+          // Some legacy audio files use a different naming pattern.
           const subtitleDir = path.dirname(filePath);
 
           if (fs.existsSync(subtitleDir)) {
@@ -254,9 +252,10 @@ const downloadAlignedAudio = async (req, res) => {
               original_ids: narration.original_ids,
               type: 'file',
               method: narration.method,
-          speaker: narration.speaker,
+              speaker: narration.speaker,
               text: narration.text || '',
-              isGrouped: isGrouped
+              isGrouped: isGrouped,
+              needsTimingReview: narration.needsTimingReview === true
               });
 
               // Skip the error and continue processing
@@ -307,7 +306,7 @@ const downloadAlignedAudio = async (req, res) => {
         console.log(`Processing grouped subtitle ${narration.subtitle_id} with ${narration.original_ids.length} original subtitles`);
       }
 
-      // For file-based narrations (F5-TTS or Gemini)
+      // For file-based narration audio
       if (narration.filename) {
         const filePath = resolveNarrationPath(narration.filename);
         audioSegments.push({
@@ -320,7 +319,8 @@ const downloadAlignedAudio = async (req, res) => {
           method: narration.method,
           speaker: narration.speaker,
           text: narration.text || '',
-          isGrouped: isGrouped
+          isGrouped: isGrouped,
+          needsTimingReview: narration.needsTimingReview === true
         });
       }
       // For base64-encoded narrations (Gemini)
@@ -354,9 +354,10 @@ const downloadAlignedAudio = async (req, res) => {
             original_ids: narration.original_ids, // Include original_ids for grouped subtitles
             type: 'temp',
             method: narration.method,
-          speaker: narration.speaker,
+            speaker: narration.speaker,
             text: narration.text || '',
             isGrouped: isGrouped,
+            needsTimingReview: narration.needsTimingReview === true,
             tempFile: tempFilePath // Track for cleanup later
           });
         } catch (error) {
@@ -389,15 +390,42 @@ const downloadAlignedAudio = async (req, res) => {
       console.log(`[SERVER] Auto TTS optimization: inspected=${optimizationStats.inspected}, optimized=${optimizationStats.optimized}, attempts=${optimizationStats.attempts}`);
     }
 
-    if (narrations.some(n => n.timingVersion === 1)) {
-      if (audioSegments.length !== narrations.length) throw Object.assign(new Error('Thiếu audio trong kế hoạch thuyết minh.'), { status: 422 });
-      for (const segment of audioSegments) {
-        segment.actualDuration = await getMediaDuration(segment.path);
-        segment.needsTimingReview = narrations.find(n => n.subtitle_id === segment.subtitle_id)?.needsTimingReview === true;
-      }
-      audioSegments = require('./adaptiveTimingPlanner').planAdaptiveTiming(audioSegments);
-      console.log('[ADAPTIVE TIMING]', JSON.stringify(audioSegments.map(s => ({id:s.subtitle_id, start:s.start, end:s.naturalEnd, tempo:s.tempo}))));
+    const expectedSegmentCount = narrations.filter(narration => narration.filename || narration.audioData).length;
+    if (audioSegments.length !== expectedSegmentCount) {
+      const error = new Error('Thiếu một hoặc nhiều tệp thuyết minh. Hãy tạo lại các đoạn bị thiếu trước khi ghép.');
+      error.status = 422;
+      error.code = 'NARRATION_AUDIO_INCOMPLETE';
+      throw error;
     }
+    for (let index = 0; index < audioSegments.length; index += 4) {
+      const batch = audioSegments.slice(index, index + 4);
+      const validations = await Promise.allSettled(batch.map(segment => validateAudioFile(segment.path)));
+      const failedIndex = validations.findIndex(result => result.status === 'rejected');
+      if (failedIndex !== -1) {
+        const segment = batch[failedIndex];
+        const validationError = validations[failedIndex].reason;
+        const error = new Error(
+          `Audio validation failed for subtitle ${segment.subtitle_id} (${path.basename(segment.path)}): ${validationError.message}`
+        );
+        error.status = 422;
+        error.code = 'NARRATION_AUDIO_INVALID';
+        throw error;
+      }
+      validations.forEach((result, batchIndex) => {
+        batch[batchIndex].actualDuration = result.value.duration;
+      });
+    }
+    audioSegments = require('./adaptiveTimingPlanner').planAdaptiveTiming(audioSegments);
+    console.log('[NARRATION TIMING]', JSON.stringify(audioSegments.map(s => ({
+      id: s.subtitle_id,
+      method: s.method,
+      start: s.start,
+      end: s.naturalEnd,
+      actualDuration: s.actualDuration,
+      availableDuration: Number.isFinite(s.availableDuration) ? s.availableDuration : null,
+      tempo: s.tempo,
+      overflowMs: s.overflowMs
+    }))));
 
     // Find the total duration needed (end time of the last adjusted segment)
     // Use the adjusted segments to get the actual final duration
@@ -585,6 +613,49 @@ const downloadAlignedAudio = async (req, res) => {
   }
 };
 
+const analyzeNarrationOverlaps = async (req, res) => {
+  try {
+    const narrations = Array.isArray(req.body?.narrations) ? req.body.narrations.slice(0, 1000) : [];
+    const available = [];
+    const unavailableIds = [];
+
+    for (let index = 0; index < narrations.length; index += 4) {
+      const batch = narrations.slice(index, index + 4);
+      const measured = await Promise.all(batch.map(async narration => {
+        const id = narration?.subtitle_id;
+        try {
+          const filePath = resolveNarrationPath(narration?.filename);
+            if (!fs.existsSync(filePath)) {
+            unavailableIds.push(id);
+            return null;
+          }
+            const stats = fs.statSync(filePath);
+            const start = Number(narration.start);
+            if (!stats.isFile() || stats.size < 1000 || !Number.isFinite(start) || start < 0) {
+              unavailableIds.push(id);
+              return null;
+            }
+          return {
+            subtitle_id: id,
+              start,
+            actualDuration: await getMediaDuration(filePath)
+          };
+        } catch (error) {
+          unavailableIds.push(id);
+          return null;
+        }
+      }));
+      available.push(...measured.filter(Boolean));
+    }
+
+    const report = require('./adaptiveTimingPlanner').analyzeNarrationOverlaps(available);
+    return res.json({ success: true, ...report, unavailableIds });
+  } catch (error) {
+    return res.status(422).json({ success: false, error: error.message });
+  }
+};
+
 module.exports = {
-  downloadAlignedAudio
+  downloadAlignedAudio,
+  analyzeNarrationOverlaps
 };

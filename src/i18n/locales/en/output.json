@@ -95,5 +95,15 @@
   "ready": "Ready",
   "segmentReady": "Ready for processing",
   "subtitleUploadSuccess": "Subtitle file uploaded successfully!",
-  "downloadAndViewWithSrt": "Download + View with Uploaded SRT"
+  "downloadAndViewWithSrt": "Download + View with Uploaded SRT",
+  "semiAutoGenerate": "Generate subtitles (semi-auto)",
+  "downloadAndGenerateSemiAuto": "Download + Generate subtitles (semi-auto)",
+  "autoGenerate": "Generate subtitles (auto)",
+  "downloadAndGenerateAuto": "Download + Generate subtitles (auto)",
+  "semiAutoTooltip": "Generate with the selected engine without analyzing the video first.",
+  "autoGenerateTooltip": "Analyze the video, apply recommended settings, then generate subtitles.",
+  "generationInProgress": "Generating subtitles...",
+  "autoGenerateInProgress": "Analyzing and generating...",
+  "regeneratingSubtitles": "Regenerating subtitles with the selected model...",
+  "videoAnalysisReady": "Video analysis saved. Choose a subtitle generation mode when ready."
 }

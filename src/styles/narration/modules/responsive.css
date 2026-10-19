@@ -95,6 +95,23 @@
     justify-content: flex-end;
   }
 
+  .result-item.standalone-text-result {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .standalone-text-result .result-controls,
+  .standalone-text-result .result-text {
+    grid-column: 1;
+  }
+
+  .standalone-text-result .result-controls {
+    grid-row: 1;
+  }
+
+  .standalone-text-result .result-text {
+    grid-row: 2;
+  }
+
   /* Responsive containers */
   .reference-text-container,
   .audio-player-container {

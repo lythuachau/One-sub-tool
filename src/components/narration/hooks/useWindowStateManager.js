@@ -1,9 +1,12 @@
 import { useEffect } from 'react';
 import { enhanceF5TTSNarrations } from '../../../utils/narrationEnhancer';
+import { createSubtitleSourceFingerprint, getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../../utils/narrationSubtitleSource';
 import { NARRATION_METHODS } from '../narrationMethods';
+import { getSubtitleGroupingModel } from '../../../services/gemini/subtitleGroupingModel';
 
 // Constants for localStorage keys
 const GROUPED_SUBTITLES_CACHE_KEY = 'grouped_subtitles_cache';
+const GROUPING_ALGORITHM_VERSION = 4;
 const CURRENT_VIDEO_ID_KEY = 'current_video_url';
 const CURRENT_FILE_ID_KEY = 'current_file_cache_id';
 const USER_DISABLED_GROUPING_KEY = 'user_disabled_grouping';
@@ -26,22 +29,6 @@ const getCurrentMediaId = () => {
   }
 
   return null;
-};
-
-/**
- * Generate a hash of subtitles for cache validation
- * @param {Array} subtitles - Subtitles array
- * @returns {string} - Hash string
- */
-const generateSubtitleHash = (subtitles) => {
-  if (!subtitles || subtitles.length === 0) return '';
-
-  // Create a simple hash based on subtitle count and first/last subtitle text
-  const firstText = subtitles[0]?.text || '';
-  const lastText = subtitles[subtitles.length - 1]?.text || '';
-  const count = subtitles.length;
-
-  return `${count}-${firstText.slice(0, 20)}-${lastText.slice(0, 20)}`;
 };
 
 /**
@@ -74,6 +61,8 @@ const useWindowStateManager = ({
   setUseGroupedSubtitles,
   groupingIntensity
 }) => {
+  const groupingModel = getSubtitleGroupingModel();
+
   // Update global window objects when generation results change
   useEffect(() => {
     // Ensure the global window objects have the latest narration results
@@ -118,21 +107,23 @@ const useWindowStateManager = ({
         if (!mediaId) return;
 
         // Get the source subtitles for hash generation
-        const sourceSubtitles = subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0
-          ? translatedSubtitles
-          : originalSubtitles || subtitles;
+        const sourceSubtitles = getNarrationSubtitlesForSource({
+          subtitleSource, originalSubtitles, translatedSubtitles, subtitles
+        });
 
         if (!sourceSubtitles || sourceSubtitles.length === 0) return;
+        if (!groupedSubtitlesMatchSource(groupedSubtitles, sourceSubtitles)) return;
 
-        // Generate a hash of the source subtitles
-        const subtitleHash = generateSubtitleHash(sourceSubtitles);
+        const subtitleHash = createSubtitleSourceFingerprint(subtitleSource, groupingIntensity, sourceSubtitles, groupingModel);
 
         // Create cache entry
         const cacheEntry = {
+          groupingAlgorithmVersion: GROUPING_ALGORITHM_VERSION,
           mediaId,
           subtitleHash,
           subtitleSource,
           groupingIntensity,
+          groupingModel,
           timestamp: Date.now(),
           groupedSubtitles: groupedSubtitles
         };
@@ -145,7 +136,7 @@ const useWindowStateManager = ({
         console.error('Error saving grouped subtitles to cache:', error);
       }
     }
-  }, [groupedSubtitles, subtitleSource, originalSubtitles, translatedSubtitles, subtitles, groupingIntensity]);
+  }, [groupedSubtitles, subtitleSource, originalSubtitles, translatedSubtitles, subtitles, groupingIntensity, groupingModel]);
 
   // Load grouped subtitles from cache on component mount
   useEffect(() => {
@@ -170,9 +161,9 @@ const useWindowStateManager = ({
     }
 
     // Get the source subtitles
-    const sourceSubtitles = subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0
-      ? translatedSubtitles
-      : originalSubtitles || subtitles;
+    const sourceSubtitles = getNarrationSubtitlesForSource({
+      subtitleSource, originalSubtitles, translatedSubtitles, subtitles
+    });
 
     if (!sourceSubtitles || sourceSubtitles.length === 0) return;
 
@@ -187,15 +178,20 @@ const useWindowStateManager = ({
 
       const cacheEntry = JSON.parse(cacheEntryJson);
 
+      if (cacheEntry.groupingAlgorithmVersion !== GROUPING_ALGORITHM_VERSION) return;
+
       // Check if cache entry is for the current media and subtitle source
       if (cacheEntry.mediaId !== mediaId || cacheEntry.subtitleSource !== subtitleSource) return;
 
       // Generate hash of current subtitles and compare with cached hash
-      const currentSubtitleHash = generateSubtitleHash(sourceSubtitles);
+      if (cacheEntry.groupingModel !== groupingModel) return;
+
+      const currentSubtitleHash = createSubtitleSourceFingerprint(subtitleSource, groupingIntensity, sourceSubtitles, groupingModel);
       if (cacheEntry.subtitleHash !== currentSubtitleHash) return;
 
       // Check if we have grouped subtitles in cache
       if (!cacheEntry.groupedSubtitles || !cacheEntry.groupedSubtitles.length) return;
+      if (!groupedSubtitlesMatchSource(cacheEntry.groupedSubtitles, sourceSubtitles)) return;
 
       console.log('Loading grouped subtitles from cache:', cacheEntry.groupedSubtitles.length, 'groups');
 
@@ -214,12 +210,13 @@ const useWindowStateManager = ({
     } catch (error) {
       console.error('Error loading grouped subtitles from cache:', error);
     }
-  }, [subtitleSource, originalSubtitles, translatedSubtitles, subtitles, groupedSubtitles, setGroupedSubtitles, setUseGroupedSubtitles, useGroupedSubtitles]);
+  }, [subtitleSource, originalSubtitles, translatedSubtitles, subtitles, groupedSubtitles, setGroupedSubtitles, setUseGroupedSubtitles, useGroupedSubtitles, groupingIntensity, groupingModel]);
 
   // Save subtitle source to localStorage when it changes
   useEffect(() => {
     if (subtitleSource) {
       try {
+        window.narrationSubtitleSource = subtitleSource;
         localStorage.setItem('subtitle_source', subtitleSource);
         console.log('Saved subtitle source to localStorage:', subtitleSource);
       } catch (error) {

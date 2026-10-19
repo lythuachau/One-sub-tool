@@ -10,6 +10,19 @@
   max-width: 300px;
 }
 
+.speed-control-error {
+  flex: 0 0 100%;
+  margin: -0.25rem 0 0 auto;
+  padding: 0.55rem 0.75rem;
+  border-left: 3px solid var(--md-error);
+  border-radius: var(--md-shape-small, 6px);
+  background: rgba(var(--md-error-rgb), 0.1);
+  color: var(--md-error);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .speed-control-label {
   font-size: 0.9rem;
   color: var(--md-on-surface-variant);

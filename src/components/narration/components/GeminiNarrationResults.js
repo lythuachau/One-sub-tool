@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import StandardSlider from '../../common/StandardSlider';
 import '../../../styles/narration/geminiNarrationResults.css';
@@ -8,6 +8,8 @@ import { VariableSizeList as List } from 'react-window';
 // Import utility functions and config
 import { getAudioUrl } from '../../../services/narrationService';
 import { SERVER_URL } from '../../../config';
+import { shortenNarrationText } from '../../../services/gemini/narrationTextShortener';
+import consumeSseJsonStream from '../../../utils/consumeSseJsonStream';
 
 // Constants for localStorage keys
 const NARRATION_CACHE_KEY = 'gemini_narration_cache';
@@ -35,12 +37,26 @@ const GeminiResultRow = ({ index, style, data }) => {
     isPlaying,
     playAudio,
     downloadAudio,
+    editingSubtitleId,
+    draftText,
+    setDraftText,
+    onEditText,
+    onCancelEdit,
+    onRegenerateEditedText,
+    onShortenText,
+    shorteningSubtitleId,
+    editError,
+    overlappedIds,
+    overlapsById,
     t
   } = data;
 
   const item = generationResults[index];
   const subtitle_id = item.subtitle_id;
   const text = item.text;
+  const isEditing = String(editingSubtitleId) === String(subtitle_id);
+  const isOverlapped = overlappedIds.has(String(subtitle_id));
+  const overlap = overlapsById.get(String(subtitle_id));
 
   return (
     <div
@@ -49,11 +65,38 @@ const GeminiResultRow = ({ index, style, data }) => {
         ${item.success ? 'success' : 'failed'}
         ${item.pending ? 'pending' : ''}
         ${currentlyPlaying === subtitle_id ? 'playing' : ''}
+        ${isOverlapped ? 'timing-overlapped' : ''}
+        ${isEditing ? 'narration-editing' : ''}
         ${retryingSubtitleId === subtitle_id ? 'retrying' : ''}`}
+      title={isOverlapped
+        ? t('narration.overlappedBy', 'Bị audio {{ids}} đè lên', { ids: overlap?.overlappedBy?.join(', ') || '' })
+        : undefined}
     >
       <div className="gemini-result-text">
         <span className="gemini-result-id">{subtitle_id}.</span>
-        {text}
+        {isEditing ? (
+          <div className="narration-text-editor">
+            <textarea
+              value={draftText}
+              onChange={event => setDraftText(event.target.value)}
+              aria-label={t('narration.editNarrationText', 'Edit narration text')}
+              disabled={retryingSubtitleId === subtitle_id}
+            />
+            {editError && <span className="narration-text-editor-error" role="alert">{editError}</span>}
+            <div className="narration-text-editor-actions">
+              <button className="pill-button primary" onClick={() => onRegenerateEditedText(item)}
+                disabled={!draftText.trim() || !data.subtitleSource || retryingSubtitleId === subtitle_id}>
+                {retryingSubtitleId === subtitle_id
+                  ? t('narration.generating', 'Đang tạo lại…')
+                  : t('narration.regenerateEditedText', 'Tạo lại TTS')}
+              </button>
+              <button className="pill-button secondary" onClick={onCancelEdit} disabled={retryingSubtitleId === subtitle_id}>
+                {t('common.cancel', 'Hủy')}
+              </button>
+            </div>
+          </div>
+        ) : <span className="result-text-content">{text}</span>}
+        {isOverlapped && !isEditing && <span className="timing-overlap-badge">{t('narration.overlapped', 'Bị chồng')}</span>}
       </div>
 
       <div className="audio-controls">
@@ -81,6 +124,20 @@ const GeminiResultRow = ({ index, style, data }) => {
                 </>
               )}
             </button>
+            {!isEditing && <>
+              <button className="pill-button secondary narration-shorten-button" onClick={() => onShortenText(item)}
+                disabled={shorteningSubtitleId === subtitle_id || retryingSubtitleId === subtitle_id || !data.subtitleSource}
+                title={t('narration.shortenWithGemini', 'Rút gọn câu bằng Gemini')}>
+                {shorteningSubtitleId === subtitle_id
+                  ? t('narration.shortening', 'Đang rút gọn…')
+                  : t('narration.shorten', 'Rút gọn')}
+              </button>
+              <button className="pill-button secondary narration-edit-button" onClick={() => onEditText(item)}
+                disabled={retryingSubtitleId === subtitle_id || shorteningSubtitleId === subtitle_id || !data.subtitleSource}
+                title={t('narration.editNarrationText', 'Chỉnh sửa văn bản')}>
+                {t('narration.edit', 'Sửa')}
+              </button>
+            </>}
             <button
               className="pill-button secondary"
               onClick={() => downloadAudio(item)}
@@ -237,7 +294,9 @@ const GeminiNarrationResults = ({
   retryingSubtitleId,
   onRetryFailed,
   hasGenerationError = false,
-  subtitleSource
+  subtitleSource,
+  isGenerating = false,
+  standaloneTextMode = false
 }) => {
   const { t } = useTranslation();
   const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
@@ -246,12 +305,148 @@ const GeminiNarrationResults = ({
   const listRef = useRef(null);
   const rowHeights = useRef({});
   const [loadedFromCache, setLoadedFromCache] = useState(false);
+  const [editingSubtitleId, setEditingSubtitleId] = useState(null);
+  const [draftText, setDraftText] = useState('');
+  const [shorteningSubtitleId, setShorteningSubtitleId] = useState(null);
+  const [editError, setEditError] = useState('');
+  const [overlappedIds, setOverlappedIds] = useState(new Set());
+  const [overlapsById, setOverlapsById] = useState(new Map());
+  const [overlapRefreshKey, setOverlapRefreshKey] = useState(0);
+  const overlapRequestRef = useRef(null);
+  const shorteningControllerRef = useRef(null);
 
   // Speed control state
   const [speedValue, setSpeedValue] = useState(1.0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 });
   const [currentFile, setCurrentFile] = useState('');
+  const [speedModificationError, setSpeedModificationError] = useState('');
+
+  const startTextEdit = (item, text = item.text || '') => {
+    setEditingSubtitleId(item.subtitle_id);
+    setDraftText(text);
+    setEditError('');
+  };
+
+  const handleShortenText = async item => {
+    shorteningControllerRef.current?.abort();
+    const controller = new AbortController();
+    shorteningControllerRef.current = controller;
+    setShorteningSubtitleId(item.subtitle_id);
+    setEditError('');
+    try {
+      startTextEdit(item, await shortenNarrationText(item.text, controller.signal));
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        setEditingSubtitleId(item.subtitle_id);
+        setDraftText(item.text || '');
+        setEditError(error.message);
+      }
+    } finally {
+      if (shorteningControllerRef.current === controller) shorteningControllerRef.current = null;
+      setShorteningSubtitleId(null);
+    }
+  };
+
+  const cancelTextEdit = () => {
+    setEditingSubtitleId(null);
+    setDraftText('');
+    setEditError('');
+  };
+
+  const regenerateEditedText = async item => {
+    const text = draftText.trim();
+    if (!text || !onRetry) return;
+    setEditError('');
+    try {
+      await onRetry(item.subtitle_id, text);
+    } catch (error) {
+      setEditError(error.message || t('narration.retryError', 'Không tạo lại được TTS.'));
+    }
+  };
+
+  const resolveTiming = useCallback(item => {
+    const directStart = item.start ?? item.start_time;
+    const directEnd = item.end ?? item.end_time;
+    if (directStart !== null && directStart !== undefined && directEnd !== null && directEnd !== undefined
+      && Number.isFinite(Number(directStart)) && Number.isFinite(Number(directEnd))) {
+      return { start: Number(directStart), end: Number(directEnd) };
+    }
+    const subtitles = [
+      ...(Array.isArray(window.groupedSubtitles) ? window.groupedSubtitles : []),
+      ...(Array.isArray(window.translatedSubtitles) ? window.translatedSubtitles : []),
+      ...(Array.isArray(window.originalSubtitles) ? window.originalSubtitles : []),
+      ...(Array.isArray(window.subtitlesData) ? window.subtitlesData : []),
+      ...(Array.isArray(window.subtitles) ? window.subtitles : [])
+    ];
+    const ids = new Set([item.subtitle_id, ...(item.original_ids || [])].map(String));
+    const subtitle = subtitles.find(entry => ids.has(String(entry.id ?? entry.subtitle_id ?? entry.index)));
+    return subtitle?.start !== null && subtitle?.start !== undefined
+      && subtitle?.end !== null && subtitle?.end !== undefined
+      && Number.isFinite(Number(subtitle.start)) && Number.isFinite(Number(subtitle.end))
+      ? { start: Number(subtitle.start), end: Number(subtitle.end) }
+      : null;
+  }, []);
+
+  useEffect(() => {
+    rowHeights.current = {};
+    listRef.current?.resetAfterIndex(0);
+  }, [editingSubtitleId, overlappedIds]);
+
+  useEffect(() => {
+    if (editingSubtitleId === null || retryingSubtitleId !== null) return;
+    const regenerated = generationResults?.find(item =>
+      String(item.subtitle_id) === String(editingSubtitleId)
+      && item.success
+      && item.text === draftText
+    );
+    if (regenerated) {
+      setEditingSubtitleId(null);
+      setDraftText('');
+      setEditError('');
+    }
+  }, [generationResults, editingSubtitleId, retryingSubtitleId, draftText]);
+
+  useEffect(() => {
+    const refresh = () => setOverlapRefreshKey(value => value + 1);
+    window.addEventListener('narration-audio-files-updated', refresh);
+    return () => window.removeEventListener('narration-audio-files-updated', refresh);
+  }, []);
+
+  useEffect(() => () => {
+    overlapRequestRef.current?.abort();
+    shorteningControllerRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    overlapRequestRef.current?.abort();
+    setOverlappedIds(new Set());
+    setOverlapsById(new Map());
+    if (standaloneTextMode || isGenerating || retryingSubtitleId !== null || !generationResults?.length) return undefined;
+    const successful = generationResults.filter(item => item.success);
+    if (successful.length < 2 || successful.some(item => !item.filename)) return undefined;
+    const narrations = successful.map(item => {
+      const timing = resolveTiming(item);
+      return timing ? { subtitle_id: item.subtitle_id, filename: item.filename, start: timing.start } : null;
+    }).filter(Boolean);
+    if (narrations.length < 2) return undefined;
+    const controller = new AbortController();
+    overlapRequestRef.current = controller;
+    fetch(`${SERVER_URL}/api/narration/analyze-overlaps`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ narrations }),
+      signal: controller.signal
+    }).then(async response => {
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success) throw new Error(data?.error || `HTTP ${response.status}`);
+      setOverlappedIds(new Set((data.overlappedIds || []).map(String)));
+      setOverlapsById(new Map((data.overlaps || []).map(item => [String(item.id), item])));
+    }).catch(error => {
+      if (error.name !== 'AbortError') console.warn('Gemini narration overlap analysis failed:', error.message);
+    });
+    return () => controller.abort();
+  }, [generationResults, isGenerating, retryingSubtitleId, standaloneTextMode, overlapRefreshKey, resolveTiming]);
 
   // Check if there are any failed narrations
   const hasFailedNarrations = generationResults && generationResults.some(result => !result.success);
@@ -267,6 +462,7 @@ const GeminiNarrationResults = ({
       setIsProcessing(true);
       setProcessingProgress({ current: 0, total: generationResults.length });
       setCurrentFile('');
+      setSpeedModificationError('');
 
       // Get all successful narrations with filenames
       const successfulNarrations = generationResults.filter(
@@ -301,97 +497,43 @@ const GeminiNarrationResults = ({
         throw new Error(`Server responded with status: ${response.status}`);
       }
 
-      // Set up a reader to read the streaming response
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      // Process the stream
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          // Process any remaining data in the buffer
-          if (buffer) {
-            try {
-              const finalData = JSON.parse(buffer);
-              console.log('Final update:', finalData);
-
-              if (finalData.success && finalData.status === 'complete') {
-                // Update progress with the final count
-                setProcessingProgress({
-                  current: finalData.processed,
-                  total: finalData.total
-                });
-
-                // Reset the aligned narration to use the new speed-modified files
-                if (typeof window.resetAlignedNarration === 'function') {
-                  console.log('Resetting aligned narration to use speed-modified files');
-                  window.resetAlignedNarration();
-
-                  // Dispatch an event to notify that narration should be refreshed
-                  window.dispatchEvent(new CustomEvent('narration-speed-modified', {
-                    detail: {
-                      speed: speedValue,
-                      timestamp: Date.now()
-                    }
-                  }));
-                }
-              }
-            } catch (e) {
-              console.error('Error parsing final JSON chunk:', e);
-            }
-          }
-          break;
+      let completedEvent = null;
+      await consumeSseJsonStream(response, data => {
+        if (data.status === 'progress' || data.status === 'file-error') {
+          setProcessingProgress({ current: data.processed ?? 0, total: data.total ?? successfulNarrations.length });
+          setCurrentFile(data.current ? data.current.split(/[\\/]/).pop() : '');
+        } else if (data.status === 'completed') {
+          completedEvent = data;
+          setProcessingProgress({ current: data.processed ?? data.total ?? 0, total: data.total ?? successfulNarrations.length });
+          setCurrentFile('');
+        } else if (data.status === 'error') {
+          throw new Error(data.error || 'Unknown error occurred');
         }
+      });
 
-        // Decode the chunk and add it to our buffer
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-
-        // Process complete JSON objects in the buffer
-        let startIndex = 0;
-        let endIndex;
-
-        // Find each complete JSON object in the buffer
-        while ((endIndex = buffer.indexOf('}', startIndex)) !== -1) {
-          try {
-            // Extract a complete JSON object
-            const jsonStr = buffer.substring(startIndex, endIndex + 1);
-            const data = JSON.parse(jsonStr);
-
-            // Update progress based on the data
-            if (data.success && data.processed !== undefined) {
-              console.log(`Progress update: ${data.processed}/${data.total}`);
-              setProcessingProgress({
-                current: data.processed,
-                total: data.total
-              });
-
-              // Update current file being processed if available
-              if (data.current) {
-                // Extract just the filename without the path
-                const filename = data.current.split('/').pop();
-                setCurrentFile(filename);
-              }
-            }
-
-            // Move past this JSON object
-            startIndex = endIndex + 1;
-          } catch (e) {
-            // If we can't parse it yet, it might be incomplete
-            // Just move to the next character and try again
-            startIndex++;
-          }
+      if (!completedEvent) throw new Error('The server ended the speed-processing stream before reporting completion');
+      const batchErrors = Array.isArray(completedEvent.errors) ? completedEvent.errors : [];
+      if (Array.isArray(completedEvent.results) && completedEvent.results.length > 0) {
+        window.dispatchEvent(new Event('narration-audio-files-updated'));
+        if (typeof window.resetAlignedNarration === 'function') {
+          window.resetAlignedNarration();
+          window.dispatchEvent(new CustomEvent('narration-speed-modified', {
+            detail: { speed: speedValue, timestamp: Date.now() }
+          }));
         }
-
-        // Keep any remaining incomplete data in the buffer
-        buffer = buffer.substring(startIndex);
+      }
+      if (!completedEvent.success || batchErrors.length > 0) {
+        const details = batchErrors.slice(0, 3)
+          .map(item => `${item.filename || 'Audio'}: ${item.error || 'Processing failed'}`)
+          .join('; ');
+        const remaining = batchErrors.length > 3 ? ` (+${batchErrors.length - 3} more)` : '';
+        throw new Error(`${details || completedEvent.message || 'One or more audio files could not be processed'}${remaining}`);
       }
 
       console.log(`Successfully modified narration speed to ${speedValue}x`);
     } catch (error) {
       console.error('Error calling audio speed modification API:', error);
+      setSpeedModificationError(t('narration.speedModifyError', { error: error.message }));
     } finally {
       // End processing
       setIsProcessing(false);
@@ -414,9 +556,11 @@ const GeminiNarrationResults = ({
     const lineCount = text.split('\n').length; // Count actual line breaks
     const estimatedLines = Math.ceil(text.length / 40); // Estimate based on characters per line
     const lines = Math.max(lineCount, estimatedLines);
+    const controlsHeight = window.innerWidth <= 768 ? 108 : 60;
 
     // Base height + additional height per line + space for controls
-    const height = 60 + (lines > 1 ? (lines - 1) * 20 : 0);
+    const editing = String(item.subtitle_id) === String(editingSubtitleId);
+    const height = Math.max(controlsHeight, 60 + (lines > 1 ? (lines - 1) * 20 : 0), editing ? 220 : 0);
 
     // Cache the calculated height
     rowHeights.current[index] = height;
@@ -450,6 +594,7 @@ const GeminiNarrationResults = ({
 
         const cacheEntry = {
           mediaId,
+          subtitleSource,
           subtitleHash,
           timestamp: Date.now(),
           narrations: essentialNarrations
@@ -462,7 +607,7 @@ const GeminiNarrationResults = ({
         console.error('Error saving narrations to cache:', error);
       }
     }
-  }, [generationResults]);
+  }, [generationResults, subtitleSource]);
 
   // Load narrations from cache on component mount
   useEffect(() => {
@@ -481,7 +626,7 @@ const GeminiNarrationResults = ({
       const cacheEntry = JSON.parse(cacheEntryJson);
 
       // Check if cache entry is for the current media
-      if (cacheEntry.mediaId !== mediaId) return;
+      if (cacheEntry.mediaId !== mediaId || cacheEntry.subtitleSource !== subtitleSource) return;
 
       // Check if we have narrations
       if (!cacheEntry.narrations || !cacheEntry.narrations.length) return;
@@ -497,6 +642,7 @@ const GeminiNarrationResults = ({
         const event = new CustomEvent('narrations-loaded-from-cache', {
           detail: {
             narrations: cacheEntry.narrations,
+            subtitleSource: cacheEntry.subtitleSource,
             timestamp: Date.now()
           }
         });
@@ -505,7 +651,7 @@ const GeminiNarrationResults = ({
     } catch (error) {
       console.error('Error loading narrations from cache:', error);
     }
-  }, [generationResults]);
+  }, [generationResults, subtitleSource]);
 
   // Listen for narrations-updated event to update the component
   useEffect(() => {
@@ -817,6 +963,9 @@ const GeminiNarrationResults = ({
             )}
           </div>
         )}
+        {speedModificationError && (
+          <div className="speed-control-error" role="alert">{speedModificationError}</div>
+        )}
 
         {/* Retry Failed Narrations button */}
         {hasFailedNarrations && onRetryFailed && (
@@ -869,6 +1018,17 @@ const GeminiNarrationResults = ({
               isPlaying,
               playAudio,
               downloadAudio,
+              editingSubtitleId,
+              draftText,
+              setDraftText,
+              onEditText: item => startTextEdit(item),
+              onCancelEdit: cancelTextEdit,
+              onRegenerateEditedText: regenerateEditedText,
+              onShortenText: handleShortenText,
+              shorteningSubtitleId,
+              editError,
+              overlappedIds,
+              overlapsById,
               subtitleSource,
               t
             }}

@@ -1,13 +1,46 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_BASE_URL } from '../../../config';
 import { getAudioUrl } from '../../../services/narrationService';
-import { prepareSourceSpeech } from '../../../services/sourceSpeechTiming';
-import { repairNarration } from '../../../services/narrationTimingRepair';
 import { buildDubbingWindows } from '../../../utils/adaptiveDubbing';
+import {
+  generateNarrationInputHash,
+  getCurrentMediaCacheId,
+  readMediaCacheEntries,
+  writeMediaCacheEntry
+} from '../../../utils/mediaCacheIdentity';
 import GenerateButton from './GenerateButton';
 import NarrationResults from './NarrationResults';
 
 const CAPCUT_VOICE_CACHE_KEY = 'capcut_voice_catalog_v1';
+const CAPCUT_NARRATION_CACHE_KEY = 'capcut_narration_cache_v1';
+
+const toStoredNarration = result => ({
+  subtitle_id: result.subtitle_id,
+  filename: result.filename,
+  success: result.success,
+  text: result.text,
+  method: result.method,
+  voice: result.voice,
+  start: result.start,
+  end: result.end,
+  original_ids: result.original_ids,
+  sourceId: result.sourceId,
+  timingVersion: result.timingVersion,
+  standaloneText: result.standaloneText,
+  error: result.error,
+});
+
+const publishNarrations = (results, source, grouped) => {
+  if (grouped) {
+    window.groupedNarrations = [...results];
+    window.useGroupedSubtitles = true;
+    return;
+  }
+
+  if (source === 'translated') window.translatedNarrations = [...results];
+  else window.originalNarrations = [...results];
+  window.useGroupedSubtitles = false;
+};
 
 const readVoiceCatalogCache = () => {
   try {
@@ -40,7 +73,7 @@ const writeVoiceCatalogCache = (voices, catalogRevision, inactiveIds = []) => {
   return true;
 };
 
-export default function CapCutNarration({ children, getSubtitles, getOriginalSubtitles, videoDuration, videoPath, subtitleSource, isGenerating,
+export default function CapCutNarration({ children, getSubtitles, videoDuration, subtitleSource, isGenerating,
   setIsGenerating, generationResults, setGenerationResults, downloadAllAudio, downloadAlignedAudio,
   currentAudio, isPlaying, playAudio, useGroupedSubtitles, audioRef, handleAudioEnded,
   standaloneTextMode = false, isInputValid = true, combinedAudioLabel = '', combinedAudioTooltip = '' }) {
@@ -57,6 +90,66 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
   const controller = useRef(null);
   const previewAudio = useRef(null);
   const mounted = useRef(true);
+  const selectedSubtitlesForCache = standaloneTextMode
+    ? []
+    : buildDubbingWindows(getSubtitles?.() || [], videoDuration);
+  const subtitleInputHash = standaloneTextMode ? '' : generateNarrationInputHash(selectedSubtitlesForCache);
+
+  useEffect(() => {
+    if (standaloneTextMode || !subtitleInputHash || !generationResults?.length) return undefined;
+    if (generationResults.some(result => result.method !== 'capcut')) return undefined;
+
+    let cancelled = false;
+    const saveResults = async () => {
+      const mediaId = await getCurrentMediaCacheId();
+      if (!mediaId || cancelled) return;
+      const cacheId = JSON.stringify([mediaId, 'capcut', subtitleSource, subtitleInputHash]);
+      writeMediaCacheEntry(CAPCUT_NARRATION_CACHE_KEY, {
+        cacheId,
+        mediaId,
+        method: 'capcut',
+        subtitleSource,
+        subtitleHash: subtitleInputHash,
+        timestamp: Date.now(),
+        results: generationResults.map(toStoredNarration),
+      }, 16);
+    };
+
+    saveResults().catch(error => console.error('Error saving CapCut narration cache:', error));
+    return () => { cancelled = true; };
+  }, [generationResults, getSubtitles, standaloneTextMode, subtitleInputHash, subtitleSource]);
+
+  useEffect(() => {
+    const hasCapCutResults = generationResults?.some(result => result.method === 'capcut');
+    if (standaloneTextMode || busy || isGenerating || !subtitleInputHash || hasCapCutResults) return undefined;
+
+    let cancelled = false;
+    const loadResults = async () => {
+      const mediaId = await getCurrentMediaCacheId();
+      if (!mediaId || cancelled) return;
+      const cacheId = JSON.stringify([mediaId, 'capcut', subtitleSource, subtitleInputHash]);
+      const cacheEntry = readMediaCacheEntries(CAPCUT_NARRATION_CACHE_KEY).find(entry =>
+        entry.cacheId === cacheId
+        || (entry.mediaId === mediaId && entry.method === 'capcut'
+          && entry.subtitleSource === subtitleSource && entry.subtitleHash === subtitleInputHash)
+      );
+      if (!cacheEntry?.results?.length || cancelled) return;
+
+      const results = cacheEntry.results.filter(result => result && result.method === 'capcut');
+      if (!results.length || cancelled) return;
+      setGenerationResults(results);
+      const grouped = results.some(result => result.original_ids?.length > 1);
+      publishNarrations(results, subtitleSource, grouped);
+      window.dispatchEvent(new CustomEvent('narrations-updated', {
+        detail: { source: subtitleSource, narrations: results, fromCache: true, isGrouped: grouped }
+      }));
+      setMessage('Đã khôi phục thuyết minh CapCut đã tạo cho dự án này.');
+    };
+
+    loadResults().catch(error => console.error('Error loading CapCut narration cache:', error));
+    return () => { cancelled = true; };
+  }, [busy, generationResults, getSubtitles, isGenerating, setGenerationResults, standaloneTextMode, subtitleInputHash, subtitleSource]);
+
   useEffect(() => {
     mounted.current = true;
     const audioElement = previewAudio.current;
@@ -181,16 +274,17 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
     }
   });
 
-  const generate = (onlyIds) => run(async signal => {
-    const sources = standaloneTextMode
-      ? []
-      : await prepareSourceSpeech(videoPath, getOriginalSubtitles?.() || [], signal, setMessage);
+  const generate = (onlyIds, textOverrides = {}) => run(async signal => {
     const selected = standaloneTextMode
       ? (getSubtitles() || [])
-      : buildDubbingWindows(getSubtitles() || [], sources, videoDuration);
+      : buildDubbingWindows(getSubtitles() || [], videoDuration);
     if (!selected.length) throw new Error('Chưa có phụ đề để tạo thuyết minh.');
     const results = onlyIds ? [...generationResults] : [];
-    const pending = onlyIds ? selected.filter(s => onlyIds.some(id => String(id) === String(s.id))) : selected;
+    const pending = (onlyIds ? selected.filter(s => onlyIds.some(id => String(id) === String(s.id))) : selected)
+      .map(subtitle => {
+        const text = textOverrides[String(subtitle.id)];
+        return typeof text === 'string' ? { ...subtitle, text, translated_text: text } : subtitle;
+      });
     if (!onlyIds) setGenerationResults([]);
     for (let index = 0; index < pending.length; index += 1) {
       signal.throwIfAborted();
@@ -198,17 +292,18 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
       setMessage(`CapCut: ${index + 1}/${pending.length}`);
       let result;
       try {
-        if (!standaloneTextMode && subtitle.alignmentError) throw new Error(subtitle.alignmentError);
-        if (!standaloneTextMode && subtitle.targetDuration < 0.35) throw new Error('Khung đọc dưới 350 ms. Cần căn lại hoặc gộp cụm theo câu gốc; không ép đọc nhanh.');
         const previous = onlyIds && results.find(r => String(r.subtitle_id) === String(subtitle.id));
-        const reusable = previous?.success && previous.filename && previous.voice === voice
+        const reusable = typeof textOverrides[String(subtitle.id)] !== 'string'
+          && previous?.success && previous.filename && previous.voice === voice
           && (previous.originalNarration?.text || previous.text) === (subtitle.text || subtitle.translated_text)
           && (standaloneTextMode || (previous.start === subtitle.start && previous.end === subtitle.end));
         const audio = reusable ? previous : await synthesize(subtitle.text || subtitle.translated_text, signal);
         result = {
           ...audio,
           subtitle_id: subtitle.id,
-          text: audio.text || subtitle.text || subtitle.translated_text,
+          text: typeof textOverrides[String(subtitle.id)] === 'string'
+            ? textOverrides[String(subtitle.id)]
+            : (audio.text || subtitle.text || subtitle.translated_text),
           method: 'capcut',
           voice,
           ...(standaloneTextMode ? { standaloneText: true } : {
@@ -216,16 +311,9 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
             end: subtitle.end,
             original_ids: subtitle.original_ids,
             sourceId: subtitle.sourceId,
-            timingVersion: 1,
-            timingBasis: subtitle.timingBasis
+            timingVersion: 1
           })
         };
-        if (!standaloneTextMode) {
-          setMessage('Đang đo và tự cân chỉnh cụm ' + subtitle.id);
-          result = await repairNarration({ result, target: subtitle.targetDuration,
-            sourceText: subtitle.sourceText, contextText: selected.map(s => s.text || s.translated_text || '').join(' '),
-            synthesize, audioUrl: getAudioUrl, signal });
-        }
       } catch (error) {
         if (signal.aborted) throw error;
         if (error.capcutCode === '40402004') markVoiceInactive(error.capcutVoice || voice);
@@ -235,12 +323,14 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
       const oldIndex = results.findIndex(r => String(r.subtitle_id) === String(subtitle.id));
       if (oldIndex >= 0) results[oldIndex] = result; else results.push(result);
       setGenerationResults([...results]);
-      if (useGroupedSubtitles) { window.groupedNarrations = [...results]; window.useGroupedSubtitles = true; }
+      const grouped = useGroupedSubtitles || results.some(item => item.original_ids?.length > 1);
+      publishNarrations(results, subtitleSource, grouped);
+      window.dispatchEvent(new CustomEvent('narrations-updated', {
+        detail: { source: subtitleSource, narrations: [...results], isGrouped: grouped }
+      }));
     }
     const failed = results.filter(r => !r.success).length;
-
-    const review = results.filter(r => r.needsTimingReview).length;
-    setMessage(review ? review + ' cụm chưa khớp; chưa ghép vào preview. Xem lý do và thử lại riêng cụm.' : failed ? `${failed} câu lỗi. Có thể thử lại từng câu.` : standaloneTextMode ? 'Đã tạo xong audio thuyết minh CapCut từ văn bản.' : 'Đã tạo xong thuyết minh CapCut.');
+    setMessage(failed ? `${failed} câu lỗi. Có thể thử lại từng câu.` : standaloneTextMode ? 'Đã tạo xong audio thuyết minh CapCut từ văn bản.' : 'Đã tạo xong thuyết minh CapCut.');
   }, true);
 
   const availableVoices = voices.filter(item => item.capcut_supported !== false);
@@ -278,11 +368,12 @@ export default function CapCutNarration({ children, getSubtitles, getOriginalSub
       standaloneTextMode={standaloneTextMode}
       combinedAudioLabel={combinedAudioLabel} combinedAudioTooltip={combinedAudioTooltip} />
     {message && <p role="status">{message}</p>}
-    {generationResults.some(r => r.needsTimingReview) && <button disabled={busy || isGenerating} onClick={() => generate(generationResults.filter(r => r.needsTimingReview).map(r => r.subtitle_id))}>Thử lại các cụm lệch</button>}
-    {!standaloneTextMode && <p>Căn tự động theo timestamp từ nếu có; nếu chưa có thì dùng mốc phụ đề ước lượng. Chỉ câu lệch mới được gửi Gemini để chỉnh lời.</p>}
-    {generationResults.filter(r => r.needsTimingReview).map(r => <p key={r.subtitle_id} role="alert">Cụm {r.subtitle_id}: {r.repairError || 'Thời lượng vẫn lệch khung đọc'} — {r.duration?.toFixed(2)}s / {r.timingTarget?.toFixed(2)}s</p>)}
-    <NarrationResults generationResults={generationResults} retryingSubtitleId={retrying}
-      onRetry={id => { if (!controller.current) { setRetrying(id); generate([id]); } }}
+    <NarrationResults generationResults={generationResults} retryingSubtitleId={retrying} isGenerating={isGenerating || busy}
+      onRetry={(id, text) => {
+        if (controller.current) return;
+        setRetrying(id);
+        return generate([id], typeof text === 'string' ? { [String(id)]: text } : {});
+      }}
       onRetryFailed={() => generate(generationResults.filter(r => !r.success).map(r => r.subtitle_id))}
       hasGenerationError={generationResults.some(r => !r.success)} currentAudio={currentAudio}
       isPlaying={isPlaying} playAudio={playAudio} getAudioUrl={getAudioUrl} subtitleSource={subtitleSource}

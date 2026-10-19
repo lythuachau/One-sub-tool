@@ -1,147 +1,98 @@
-/**
- * Module for creating zip files of audio files
- */
-
-const path = require('path');
+const AdmZip = require('adm-zip');
 const fs = require('fs');
-const { spawn } = require('child_process');
-
-// Import directory paths
+const path = require('path');
 const { OUTPUT_AUDIO_DIR, TEMP_AUDIO_DIR } = require('../directoryManager');
+const { resolveOutputAudioPath } = require('./audioArtifactSafety');
 
-/**
- * Download all narration audio files as a zip
- */
 const downloadAllAudio = async (req, res) => {
-
+  let zipPath;
 
   try {
-    // Get the filenames from the request body
-    const { filenames } = req.body;
-
-
-    if (!filenames || filenames.length === 0) {
-
-      return res.status(400).json({ error: 'No filenames provided' });
+    const { filenames } = req.body || {};
+    if (!Array.isArray(filenames) || filenames.length === 0 ||
+        filenames.some(filename => typeof filename !== 'string' || !filename.trim())) {
+      return res.status(400).json({ error: 'A non-empty filenames array is required' });
     }
 
-    // Create a temporary directory for the zip file
-    const tempDir = path.join(TEMP_AUDIO_DIR);
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    const uniqueFilenames = [...new Set(filenames)];
+    const audioFiles = [];
+    const unavailableFiles = [];
+    const outputRoot = path.resolve(OUTPUT_AUDIO_DIR);
 
-    // Create the output zip file path
-    const timestamp = Date.now();
-    const zipFilename = `narration_audio_${timestamp}.zip`;
-    const zipPath = path.join(tempDir, zipFilename);
-
-    // Check if all files exist
-    const validFiles = [];
-    for (const filename of filenames) {
-      // Handle both legacy and new directory structure
-      const filePath = path.join(OUTPUT_AUDIO_DIR, filename);
-      if (fs.existsSync(filePath)) {
-        validFiles.push(filePath);
-      } else {
-        // Log that file wasn't found
-        console.log(`Audio file not found: ${filePath}`);
+    for (const filename of uniqueFilenames) {
+      let filePath;
+      try {
+        filePath = resolveOutputAudioPath(filename);
+      } catch {
+        return res.status(400).json({ error: `Invalid narration filename: ${filename}` });
       }
+
+      const stats = await fs.promises.stat(filePath).catch(() => null);
+      if (!stats?.isFile() || stats.size === 0) {
+        unavailableFiles.push(filename);
+        continue;
+      }
+
+      audioFiles.push({
+        filePath,
+        archivePath: path.relative(outputRoot, filePath).split(path.sep).join('/')
+      });
     }
 
-    if (validFiles.length === 0) {
+    if (unavailableFiles.length > 0) {
+      const listedFiles = unavailableFiles.slice(0, 5).join(', ');
+      const remainingFiles = unavailableFiles.length > 5 ? ` (+${unavailableFiles.length - 5} more)` : '';
+      return res.status(404).json({
+        error: `Audio files are missing or empty: ${listedFiles}${remainingFiles}`,
+        unavailableFiles
+      });
+    }
 
+    if (audioFiles.length === 0) {
       return res.status(404).json({ error: 'No valid audio files found' });
     }
 
+    await fs.promises.mkdir(TEMP_AUDIO_DIR, { recursive: true });
+    zipPath = path.join(TEMP_AUDIO_DIR, `narration_audio_${Date.now()}_${process.pid}.zip`);
 
-
-    // Create a zip file using the zip command with spawn
-
-
-    // Prepare arguments for zip command
-    const zipArgs = ['-j', zipPath, ...validFiles];
-
-    await new Promise((resolve, reject) => {
-      const zipProcess = spawn('zip', zipArgs);
-
-      let stdoutData = '';
-      let stderrData = '';
-
-      zipProcess.stdout.on('data', (data) => {
-        stdoutData += data.toString();
-      });
-
-      zipProcess.stderr.on('data', (data) => {
-        stderrData += data.toString();
-      });
-
-      zipProcess.on('close', (code) => {
-        if (code !== 0) {
-          console.error(`zip process exited with code ${code}`);
-          console.error(`stderr: ${stderrData}`);
-          reject(new Error(`zip process failed with code ${code}`));
-          return;
-        }
-
-
-        resolve();
-      });
-
-      zipProcess.on('error', (err) => {
-        console.error(`Error spawning zip process: ${err.message}`);
-        reject(err);
-      });
+    const archive = new AdmZip();
+    audioFiles.forEach(({ filePath, archivePath }) => {
+      const directory = path.posix.dirname(archivePath);
+      archive.addLocalFile(
+        filePath,
+        directory === '.' ? '' : directory,
+        path.posix.basename(archivePath)
+      );
     });
 
-    // Check if the zip file was created
-    if (!fs.existsSync(zipPath)) {
-      console.error(`Zip file was not created: ${zipPath}`);
-      return res.status(500).json({ error: 'Failed to create zip file' });
-    }
+    await archive.writeZipPromise(zipPath);
+    const zipStats = await fs.promises.stat(zipPath);
+    if (zipStats.size === 0) throw new Error('Created ZIP archive is empty');
 
-    // Check if the zip file has content
-    const zipStats = fs.statSync(zipPath);
-    if (zipStats.size === 0) {
-      console.error(`Zip file is empty: ${zipPath}`);
-      try { if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath); } catch (e) { console.error('Error cleaning up empty zip file:', e); }
-      return res.status(500).json({ error: 'Created zip file is empty' });
-    }
-
-
-
-    // Set the appropriate headers
+    const zipFilename = path.basename(zipPath);
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename=${zipFilename}`);
+    res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`);
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
 
-    // Send the file
-    res.sendFile(zipPath, (err) => {
-      if (err) {
-        console.error(`Error sending file: ${err.message}`);
-        // Don't send another response if headers are already sent
+    res.sendFile(zipPath, error => {
+      fs.promises.unlink(zipPath).catch(cleanupError => {
+        console.error(`Could not remove temporary ZIP: ${cleanupError.message}`);
+      });
+
+      if (error) {
+        console.error(`Failed to send narration ZIP: ${error.message}`);
         if (!res.headersSent) {
-          res.status(500).json({ error: `Failed to send zip file: ${err.message}` });
+          res.status(500).json({ error: `Failed to send ZIP archive: ${error.message}` });
         }
-      } else {
-
-      }
-
-      // Clean up the temporary zip file AFTER sending is complete or failed
-      try {
-        if (fs.existsSync(zipPath)) {
-          fs.unlinkSync(zipPath);
-
-        }
-      } catch (cleanupError) {
-        console.error(`Error cleaning up temporary zip file: ${cleanupError.message}`);
       }
     });
   } catch (error) {
-    console.error('Error creating zip file:', error);
-    // Ensure response is sent even if error happens before sending file
+    console.error('Error creating narration ZIP:', error);
+    if (zipPath) {
+      await fs.promises.unlink(zipPath).catch(() => {});
+    }
     if (!res.headersSent) {
-      res.status(500).json({ error: `Failed to create zip file: ${error.message}` });
+      res.status(500).json({ error: `Failed to create ZIP archive: ${error.message}` });
     }
   }
 };

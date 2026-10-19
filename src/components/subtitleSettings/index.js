@@ -39,6 +39,7 @@ const SubtitleSettings = ({
     isOpen,
     setIsOpen,
     subtitleLanguage,
+    setSubtitleLanguage,
     handleSettingChange,
     handleSubtitleLanguageChange,
     resetToDefaults
@@ -64,10 +65,11 @@ const SubtitleSettings = ({
 
   // Update subtitle language when translation becomes available
   useEffect(() => {
-    if (hasTranslation && settings.showTranslatedSubtitles) {
-      handleSubtitleLanguageChange({ target: { value: 'translated' } });
+    if (hasTranslation && settings.showTranslatedSubtitles && subtitleLanguage !== 'translated') {
+      setSubtitleLanguage('translated');
+      localStorage.setItem('subtitle_language', 'translated');
     }
-  }, [hasTranslation, settings.showTranslatedSubtitles, handleSubtitleLanguageChange]);
+  }, [hasTranslation, settings.showTranslatedSubtitles, subtitleLanguage, setSubtitleLanguage]);
 
   // No need for individual narration playback code anymore
   // Aligned narration is handled by the useAlignedNarration hook

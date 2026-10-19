@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SERVER_URL } from '../../../config';
 import {
   generateGeminiNarrations,
@@ -7,6 +7,7 @@ import {
 } from '../../../services/gemini/geminiNarrationService';
 import { groupSubtitlesForNarration } from '../../../services/gemini/subtitleGroupingService';
 import { retryFailedGeminiNarrations as retryFailedGeminiNarrationsUtil } from '../utils/geminiRetryUtils';
+import { getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../../utils/narrationSubtitleSource';
 
 // Cleanup function for grouped subtitles
 const cleanupOldSubtitleDirectories = async (groupedSubtitles) => {
@@ -78,6 +79,16 @@ const useGeminiNarration = ({
 }) => {
   // Track error state locally
   const [localError, setLocalError] = useState('');
+  const updateError = useCallback((message) => {
+    setLocalError(message);
+    setError(message);
+  }, [setError]);
+  const getSourceSubtitles = useCallback(() => getNarrationSubtitlesForSource({
+    subtitleSource, originalSubtitles, translatedSubtitles, subtitles
+  }), [subtitleSource, originalSubtitles, translatedSubtitles, subtitles]);
+  const hasMatchingGroupedSubtitles = useCallback(() =>
+    useGroupedSubtitles && groupedSubtitlesMatchSource(groupedSubtitles, getSourceSubtitles()),
+  [getSourceSubtitles, groupedSubtitles, useGroupedSubtitles]);
   // Listen for the gemini-narration events (started and cancelled)
   useEffect(() => {
     const handleNarrationStarted = (event) => {
@@ -129,9 +140,7 @@ const useGeminiNarration = ({
     }
 
     // Get the appropriate subtitles based on the selected source
-    const selectedSubtitles = subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0
-      ? translatedSubtitles
-      : originalSubtitles || subtitles;
+    const selectedSubtitles = getSourceSubtitles();
 
     if (!selectedSubtitles || selectedSubtitles.length === 0) {
       // If translated subtitles are selected but not available, show a specific error
@@ -163,7 +172,7 @@ const useGeminiNarration = ({
       // Determine which subtitles to use based on whether we're using grouped subtitles
       let subtitlesToUse = selectedSubtitles;
 
-      if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+      if (hasMatchingGroupedSubtitles()) {
         // Use the grouped subtitles if available
         subtitlesToUse = groupedSubtitles;
 
@@ -186,6 +195,7 @@ const useGeminiNarration = ({
         filename: null,
         // If this is a grouped subtitle, include the original IDs
         original_ids: subtitle.original_ids || [subtitle.id],
+        subtitle_source: subtitleSource,
         // Add start and end times for proper audio alignment
         start: subtitle.start,
         end: subtitle.end
@@ -193,7 +203,7 @@ const useGeminiNarration = ({
       setGenerationResults(initialResults);
 
       // Update state immediately if we're generating grouped subtitles
-      if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+      if (hasMatchingGroupedSubtitles()) {
         // Store the initial results as grouped narrations in window object
         window.groupedNarrations = [...initialResults];
         window.useGroupedSubtitles = true;
@@ -228,7 +238,7 @@ const useGeminiNarration = ({
             );
 
             // Update window.groupedNarrations incrementally if we're generating grouped subtitles
-            if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+            if (hasMatchingGroupedSubtitles()) {
               window.groupedNarrations = [...updatedResults];
             }
 
@@ -279,7 +289,7 @@ const useGeminiNarration = ({
             });
 
             // Store the results in the window object
-            if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+            if (hasMatchingGroupedSubtitles()) {
               // Store as grouped narrations
               window.groupedNarrations = [...updatedResults];
               // Also store the flag to indicate we're using grouped subtitles
@@ -401,7 +411,7 @@ const useGeminiNarration = ({
   };
 
   // Retry Gemini narration generation for a specific subtitle
-  const retryGeminiNarration = async (subtitleId) => {
+  const retryGeminiNarration = async (subtitleId, textOverride) => {
     if (!subtitleSource) {
       setError(t('narration.noSourceSelectedError', 'Please select a subtitle source (Original or Translated)'));
       return;
@@ -410,14 +420,12 @@ const useGeminiNarration = ({
     // Determine which subtitles to use based on whether we're using grouped subtitles
     let selectedSubtitles;
 
-    if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+    if (hasMatchingGroupedSubtitles()) {
       // Use the grouped subtitles if available
       selectedSubtitles = groupedSubtitles;
     } else {
       // Otherwise use the original or translated subtitles
-      selectedSubtitles = subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0
-        ? translatedSubtitles
-        : originalSubtitles || subtitles;
+      selectedSubtitles = getSourceSubtitles();
     }
 
     if (!selectedSubtitles || selectedSubtitles.length === 0) {
@@ -425,9 +433,15 @@ const useGeminiNarration = ({
       return;
     }
 
+    const existingResult = generationResults.find(result => String(result.subtitle_id) === String(subtitleId));
+    if (existingResult?.subtitle_source && existingResult.subtitle_source !== subtitleSource) {
+      setError(t('narration.retrySourceMismatch', 'Kết quả này thuộc nguồn phụ đề khác. Hãy tạo lại từ nguồn đang chọn.'));
+      return;
+    }
+
     // Find the subtitle with the given ID
-    const subtitleToRetry = selectedSubtitles.find(subtitle =>
-      (subtitle.id || subtitle.index) === subtitleId
+    const subtitleToRetry = selectedSubtitles.find((subtitle, index) =>
+      String(subtitle.subtitle_id ?? subtitle.id ?? subtitle.index ?? index + 1) === String(subtitleId)
     );
 
     if (!subtitleToRetry) {
@@ -458,7 +472,8 @@ const useGeminiNarration = ({
       // Prepare subtitle with ID for tracking
       const subtitleWithId = {
         ...subtitleToRetry,
-        id: subtitleToRetry.id || subtitleToRetry.index || subtitleId
+        id: subtitleToRetry.id || subtitleToRetry.index || subtitleId,
+        ...(typeof textOverride === 'string' ? { text: textOverride, translated_text: textOverride } : {})
       };
 
       // Generate narration with Gemini for this single subtitle
@@ -511,6 +526,7 @@ const useGeminiNarration = ({
 
       // Wait for the narration to complete
       result = await completionPromise;
+      if (result && typeof textOverride === 'string') result.text = textOverride;
 
       // If the result has audio data, save it to the server to get a filename
       if (result && result.success && result.audioData) {
@@ -557,7 +573,9 @@ const useGeminiNarration = ({
       // Update the results array by replacing the old result with the new one
       setGenerationResults(prevResults => {
         const updatedResults = prevResults.map(prevResult =>
-          prevResult.subtitle_id === subtitleId ? result : prevResult
+          String(prevResult.subtitle_id) === String(subtitleId)
+            ? { ...prevResult, ...result }
+            : prevResult
         );
 
         // Update the global narration references to ensure video player uses the latest version
@@ -657,16 +675,14 @@ const useGeminiNarration = ({
   };
 
   // Function to group subtitles
-  const groupSubtitles = async () => {
+  const groupSubtitles = useCallback(async () => {
     if (!subtitleSource) {
       updateError(t('narration.noSourceSelectedError', 'Please select a subtitle source (Original or Translated)'));
       return false;
     }
 
     // Get the appropriate subtitles based on the selected source
-    const selectedSubtitles = subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0
-      ? translatedSubtitles
-      : originalSubtitles || subtitles;
+    const selectedSubtitles = getSourceSubtitles();
 
     if (!selectedSubtitles || selectedSubtitles.length === 0) {
       // If translated subtitles are selected but not available, show a specific error
@@ -748,10 +764,11 @@ const useGeminiNarration = ({
     } finally {
       setIsGroupingSubtitles(false);
     }
-  };
+  }, [subtitleSource, getSourceSubtitles, translatedSubtitles, originalLanguage, translatedLanguage, groupingIntensity,
+    setIsGroupingSubtitles, updateError, setGroupedSubtitles, setUseGroupedSubtitles, setGenerationStatus, t]);
 
   // Create a ref to track initial render
-  const isInitialGroupingRender = React.useRef(true);
+  const isInitialGroupingRender = useRef(true);
 
   // Effect to handle subtitle grouping when useGroupedSubtitles changes
   useEffect(() => {
@@ -766,7 +783,7 @@ const useGeminiNarration = ({
       window.useGroupedSubtitles = useGroupedSubtitles;
 
       // Only attempt to group if we don't already have grouped subtitles
-      if (useGroupedSubtitles && !groupedSubtitles && subtitleSource) {
+      if (useGroupedSubtitles && !hasMatchingGroupedSubtitles() && subtitleSource) {
         // If grouping is enabled but we don't have grouped subtitles yet, group them
         // Set loading state immediately
         setIsGroupingSubtitles(true);
@@ -799,13 +816,8 @@ const useGeminiNarration = ({
     };
 
     handleGroupingChange();
-  }, [useGroupedSubtitles, subtitleSource, groupedSubtitles]);
-
-  // Update local error when we call setError
-  const updateError = (message) => {
-    setLocalError(message);
-    setError(message);
-  };
+  }, [useGroupedSubtitles, subtitleSource, groupedSubtitles, hasMatchingGroupedSubtitles, groupSubtitles,
+    setIsGroupingSubtitles, setUseGroupedSubtitles]);
 
   // Effect to clear error when user toggles the switch off
   useEffect(() => {
@@ -815,21 +827,19 @@ const useGeminiNarration = ({
         updateError('');
       }
     }
-  }, [useGroupedSubtitles, localError]);
+  }, [useGroupedSubtitles, localError, updateError]);
 
   // Effect to clear grouped subtitles when subtitle source or grouping intensity changes
+  const groupingContextRef = useRef({ subtitleSource, groupingIntensity });
   useEffect(() => {
-    // Store the current state to avoid race conditions
-    let wasUsingGroupedSubtitles = useGroupedSubtitles;
+    const hasContextChanged = groupingContextRef.current.subtitleSource !== subtitleSource ||
+      groupingContextRef.current.groupingIntensity !== groupingIntensity;
+    if (!hasContextChanged) return;
 
-    // If subtitle source or grouping intensity changes, clear the grouped subtitles
+    groupingContextRef.current = { subtitleSource, groupingIntensity };
     setGroupedSubtitles(null);
-
-    // If we were using grouped subtitles, turn off the switch
-    if (wasUsingGroupedSubtitles) {
-      setUseGroupedSubtitles(false);
-    }
-  }, [subtitleSource, groupingIntensity]);
+    setUseGroupedSubtitles(false);
+  }, [subtitleSource, groupingIntensity, setGroupedSubtitles, setUseGroupedSubtitles]);
 
   // Wrapper function for retrying failed Gemini narrations
   const retryFailedGeminiNarrations = async () => {

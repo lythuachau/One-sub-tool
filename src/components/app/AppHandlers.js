@@ -9,6 +9,7 @@ import { hasValidTokens } from '../../services/youtubeApiService';
 import { hasValidDownloadedVideo } from '../../utils/videoUtils';
 import { getSubtitleEngine } from '../../services/subtitleEngineService';
 import { clearVideoIdentity, persistVideoIdentity } from '../../utils/videoIdentity';
+import { analyzeVideoAndWaitForUserChoice } from '../../utils/videoProcessing/analysisUtils';
 
 /**
  * Hook for application event handlers
@@ -185,7 +186,7 @@ export const useAppHandlers = (appState) => {
   /**
    * Handle generating subtitles
    */
-  const handleGenerateSubtitles = async () => {
+  const handleGenerateSubtitles = async (generationOptions = {}) => {
     if (!validateInput()) {
       setStatus({ message: t('errors.invalidInput'), type: 'error' });
       return;
@@ -254,7 +255,7 @@ export const useAppHandlers = (appState) => {
         inputType = 'file-upload';
 
         // Prepare options for subtitle generation
-        const subtitleOptions = {};
+        const subtitleOptions = { ...generationOptions };
 
         // Add user-provided subtitles if available and enabled
         if (useUserProvidedSubtitles && userProvidedSubtitles) {
@@ -272,8 +273,11 @@ export const useAppHandlers = (appState) => {
           return;
         }
 
+        if (generationOptions.analysisOnly) {
+          await analyzeVideoAndWaitForUserChoice(input, setStatus, t);
+          setStatus({ message: t('output.videoAnalysisReady', 'Video analysis saved. Choose a subtitle generation mode when ready.'), type: 'success' });
         // If we already have subtitles data (from an uploaded SRT file), don't generate new subtitles
-        if (subtitlesData && subtitlesData.length > 0) {
+        } else if (subtitlesData && subtitlesData.length > 0) {
           // Just update the status to show that the video is ready
           setStatus({ message: t('output.videoPreparedForPreview', 'Video and subtitles prepared. Loading preview...'), type: 'success' });
         } else {
@@ -285,7 +289,12 @@ export const useAppHandlers = (appState) => {
         // Reset downloading state
         setIsDownloading(false);
         setDownloadProgress(0);
-        setStatus({ message: `${t('errors.videoDownloadFailed', 'Video download failed')}: ${error.message}`, type: 'error' });
+        setStatus({
+          message: generationOptions.analysisOnly
+            ? t('videoAnalysis.error', 'Video analysis failed: {{message}}', { message: error.message })
+            : `${t('errors.videoDownloadFailed', 'Video download failed')}: ${error.message}`,
+          type: 'error'
+        });
         return;
       }
     } else if (activeTab === 'file-upload' && uploadedFile) {
@@ -293,7 +302,7 @@ export const useAppHandlers = (appState) => {
       inputType = 'file-upload';
 
       // Prepare options for subtitle generation
-      const subtitleOptions = {};
+      const subtitleOptions = { ...generationOptions };
 
       // Add user-provided subtitles if available and enabled
       if (useUserProvidedSubtitles && userProvidedSubtitles) {
@@ -311,8 +320,11 @@ export const useAppHandlers = (appState) => {
         return;
       }
 
+      if (generationOptions.analysisOnly) {
+        await analyzeVideoAndWaitForUserChoice(input, setStatus, t);
+        setStatus({ message: t('output.videoAnalysisReady', 'Video analysis saved. Choose a subtitle generation mode when ready.'), type: 'success' });
       // If we already have subtitles data (from an uploaded SRT file), don't generate new subtitles
-      if (subtitlesData && subtitlesData.length > 0) {
+      } else if (subtitlesData && subtitlesData.length > 0) {
         // Just update the status to show that the video is ready
         setStatus({ message: t('output.videoPreparedForPreview', 'Video and subtitles prepared. Loading preview...'), type: 'success' });
       } else {
@@ -328,7 +340,7 @@ export const useAppHandlers = (appState) => {
   /**
    * Handle retrying subtitle generation - FORCE RETRY that ignores validation
    */
-  const handleRetryGeneration = async () => {
+  const handleRetryGeneration = async (generationOptions = {}) => {
     console.log('FORCE RETRY: handleRetryGeneration called');
 
     // Prevent multiple simultaneous retries
@@ -434,7 +446,7 @@ export const useAppHandlers = (appState) => {
         inputType = 'file-upload';
 
         // Prepare options for subtitle generation
-        const subtitleOptions = {};
+        const subtitleOptions = { ...generationOptions };
 
         // Add user-provided subtitles if available and enabled
         if (useUserProvidedSubtitles && userProvidedSubtitles) {
@@ -473,7 +485,7 @@ export const useAppHandlers = (appState) => {
 
       try {
         // Prepare options for subtitle generation
-        const subtitleOptions = {};
+        const subtitleOptions = { ...generationOptions };
 
         // Add user-provided subtitles if available and enabled
         if (useUserProvidedSubtitles && userProvidedSubtitles) {
@@ -545,7 +557,7 @@ export const useAppHandlers = (appState) => {
         setStatus({ message: t('output.retrying', 'Retrying subtitle generation...'), type: 'loading' });
 
         // Prepare options for subtitle generation
-        const subtitleOptions = {};
+        const subtitleOptions = { ...generationOptions };
 
         // Add user-provided subtitles if available and enabled
         if (useUserProvidedSubtitles && userProvidedSubtitles) {

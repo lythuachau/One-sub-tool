@@ -70,6 +70,8 @@
   "narrationModel": "Mô hình thuyết minh",
   "subtitleGrouping": "Nhóm phụ đề",
   "groupingIntensity": "Mức độ nhóm",
+  "groupingModel": "Model nhóm",
+  "groupingModelChangeTooltip": "Đổi model sẽ cần nhóm lại phụ đề",
   "intensityMinimal": "Tối thiểu",
   "intensityLight": "Nhẹ",
   "intensityBalanced": "Cân bằng",
@@ -135,6 +137,7 @@
   "playbackError": "Lỗi khi phát âm thanh",
   "processingError": "Lỗi khi xử lý dữ liệu âm thanh",
   "downloadError": "Lỗi khi tạo tập tin WAV để tải xuống",
+  "downloadAllError": "Lỗi khi tải xuống hàng loạt: {{error}}",
   "saveToServer": "Lưu vào máy chủ",
   "saveToServerTooltip": "Lưu vào máy chủ để sử dụng với trình phát video",
   "savedToServer": "Đã lưu",
@@ -253,5 +256,13 @@
   "voicePreviewLoading": "Đang tạo nghe thử...",
   "voicePreviewText": "Xin chào, đây là bản nghe thử của giọng đọc hiện tại.",
   "voicePreviewEmpty": "Không nhận được âm thanh nghe thử.",
-  "voicePreviewError": "Không tạo được âm thanh nghe thử."
+  "voicePreviewError": "Không tạo được âm thanh nghe thử.",
+  "shorten": "Rút gọn",
+  "shortening": "Đang rút gọn...",
+  "shortenWithGemini": "Rút gọn bằng Gemini",
+  "edit": "Sửa văn bản",
+  "editNarrationText": "Chỉnh sửa văn bản thuyết minh",
+  "regenerateEditedText": "Tạo lại TTS",
+  "overlapped": "Bị chồng",
+  "overlappedBy": "Bị audio {{ids}} đè lên"
 }

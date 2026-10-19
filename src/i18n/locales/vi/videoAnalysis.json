@@ -19,5 +19,12 @@
   "autoSelectRecommendedCountdown": "Tự động chọn mẫu đề xuất trong (nhấp bất kỳ đâu để hủy)",
   "autoSelectDefaultCountdown": "Tự động chọn mẫu mặc định trong (nhấp bất kỳ đâu để hủy)",
   "seconds": "giây",
-  "back": "Quay lại"
+  "back": "Quay lại",
+  "addAnalysis": "Thêm phân tích",
+  "analyzeTooltip": "Phân tích video bằng Gemini để tạo quy tắc phiên âm.",
+  "editTooltip": "Chỉnh sửa quy tắc phiên âm đã lưu cho video này.",
+  "analyzing": "Đang phân tích video...",
+  "clearAnalysis": "Xóa phân tích video",
+  "noVideoFile": "Hãy chọn hoặc tải video xuống trước khi phân tích.",
+  "error": "Lỗi khi phân tích video: {{message}}"
 }

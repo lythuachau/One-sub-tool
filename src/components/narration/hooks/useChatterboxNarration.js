@@ -7,6 +7,7 @@ import {
 } from '../../../services/chatterboxService';
 import { SERVER_URL } from '../../../config';
 import { clearBrowserCaches } from '../utils/cacheManager';
+import { getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../../utils/narrationSubtitleSource';
 
 const createGenerationId = () => `generation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const cancellationError = () => new DOMException('OmniVoice generation cancelled', 'AbortError');
@@ -86,11 +87,16 @@ const useChatterboxNarration = ({
     }
   }, [narrationMethod]);
 
+  const getSourceSubtitles = useCallback(() => getNarrationSubtitlesForSource({
+    subtitleSource, originalSubtitles, translatedSubtitles, subtitles
+  }), [subtitleSource, originalSubtitles, translatedSubtitles, subtitles]);
+  const hasMatchingGroupedSubtitles = useCallback(() =>
+    useGroupedSubtitles && groupedSubtitlesMatchSource(groupedSubtitles, getSourceSubtitles()),
+  [getSourceSubtitles, groupedSubtitles, useGroupedSubtitles]);
   const getSelectedSubtitles = useCallback(() => {
-    if (useGroupedSubtitles && groupedSubtitles) return groupedSubtitles;
-    if (subtitleSource === 'translated' && translatedSubtitles) return translatedSubtitles;
-    return originalSubtitles || subtitles || [];
-  }, [useGroupedSubtitles, groupedSubtitles, subtitleSource, translatedSubtitles, originalSubtitles, subtitles]);
+    if (hasMatchingGroupedSubtitles()) return groupedSubtitles;
+    return getSourceSubtitles();
+  }, [getSourceSubtitles, groupedSubtitles, hasMatchingGroupedSubtitles]);
 
   const getReferenceAudioFile = useCallback(async signal => {
     if (referenceAudio?.file) return referenceAudio.file;
@@ -130,13 +136,21 @@ const useChatterboxNarration = ({
     window.useGroupedSubtitles = run.grouped;
   }, [assertActive, isActive, setGenerationResults]);
 
-  const runNarration = useCallback(async (retryIds = null) => {
+  const runNarration = useCallback(async (retryIds = null, textOverrides = {}) => {
     if (activeRun.current && !activeRun.current.finished && !activeRun.current.controller.signal.aborted) return;
+    if (omnivoiceMode === 'design' && !String(omnivoiceInstruct || '').trim()) {
+      setIsGenerating(false);
+      setRetryingSubtitleId(null);
+      setError(t('narration.voiceDesignInstructionsRequired', 'Chọn ít nhất một thuộc tính giọng hoặc chuyển sang chế độ Tự sinh giọng.'));
+      setGenerationStatus('');
+      return;
+    }
+
     const run = {
       id: createGenerationId(),
       controller: new AbortController(),
       finished: false,
-      grouped: !standaloneTextMode && Boolean(useGroupedSubtitles && groupedSubtitles?.length),
+      grouped: !standaloneTextMode && hasMatchingGroupedSubtitles(),
       source: standaloneTextMode ? 'standalone' : subtitleSource
     };
     activeRun.current = run;
@@ -169,18 +183,20 @@ const useChatterboxNarration = ({
       const voiceFile = needsReference && !voiceFilePath ? await getReferenceAudioFile(run.controller.signal) : null;
       assertActive(run);
       if (needsReference && !voiceFilePath && !voiceFile) throw new Error('Reference audio is required for OmniVoice');
-      if (omnivoiceMode === 'design' && !omnivoiceInstruct?.trim()) throw new Error('Voice design instructions are required');
-
       let errors = 0;
       for (let index = 0; index < jobs.length; index++) {
         assertActive(run);
-        const { subtitle, id } = jobs[index];
+        const { subtitle: sourceSubtitle, id } = jobs[index];
+        const textOverride = textOverrides[String(id)];
+        const subtitle = typeof textOverride === 'string'
+          ? { ...sourceSubtitle, text: textOverride, translated_text: textOverride }
+          : sourceSubtitle;
         setGenerationStatus(t('narration.omnivoiceGeneratingProgress', 'OmniVoice: {{progress}}/{{total}}', {
           progress: index + 1, total: jobs.length
         }));
         let result = {
           subtitle_id: id, text: subtitle.text, start_time: subtitle.start, end_time: subtitle.end,
-          method: 'omnivoice', generation_id: run.id
+          method: 'omnivoice', generation_id: run.id, subtitle_source: run.source, grouped: run.grouped
         };
         try {
           const audio = await generateChatterboxSpeech(
@@ -213,7 +229,7 @@ const useChatterboxNarration = ({
       if (mediaId) {
         try {
           localStorage.setItem('chatterbox_narrations_cache', JSON.stringify({
-            mediaId, timestamp: Date.now(), narrations: results,
+            mediaId, timestamp: Date.now(), subtitleSource: run.source, narrations: results,
             referenceAudio: referenceAudio ? {
               filename: referenceAudio.filename, text: referenceAudio.text || '', url: referenceAudio.url
             } : null
@@ -237,6 +253,8 @@ const useChatterboxNarration = ({
             run.controller.abort();
             setGenerationStatus(t('narration.omnivoiceGenerationTimeout', 'Đã dừng lượt OmniVoice do quá thời gian chờ.'));
             void requestCancellation(run).catch(cancelError => console.warn(cancelError.message));
+          } else {
+            setGenerationStatus('');
           }
         }
       }
@@ -247,10 +265,10 @@ const useChatterboxNarration = ({
         setRetryingSubtitleId(null);
       }
     }
-  }, [useGroupedSubtitles, groupedSubtitles, subtitleSource, standaloneTextMode, setIsGenerating, setError, setGenerationStatus,
+  }, [subtitleSource, standaloneTextMode, setIsGenerating, setError, setGenerationStatus,
     setRetryingSubtitleId, t, getSelectedSubtitles, generationResults, publishResults, setUseGroupedSubtitles,
     assertActive, omnivoiceMode, referenceAudio, getReferenceAudioFile, omnivoiceInstruct, exaggeration,
-    cfgWeight, referenceText, translatedLanguage, originalLanguage, saveAudioBlobToServer, isActive]);
+    cfgWeight, referenceText, translatedLanguage, originalLanguage, saveAudioBlobToServer, isActive, hasMatchingGroupedSubtitles]);
 
   const cancelChatterboxGeneration = useCallback(() => {
     const run = activeRun.current;
@@ -268,11 +286,24 @@ const useChatterboxNarration = ({
   }, [setIsGenerating, setRetryingSubtitleId, setError, setGenerationStatus, t]);
 
   const handleChatterboxNarration = useCallback(() => runNarration(), [runNarration]);
-  const retryChatterboxNarration = useCallback(id => runNarration([id]), [runNarration]);
+  const retryChatterboxNarration = useCallback((id, text) => {
+    const result = generationResults.find(item => String(item.subtitle_id) === String(id));
+    const expectedSource = standaloneTextMode ? 'standalone' : subtitleSource;
+    if (result?.subtitle_source && result.subtitle_source !== expectedSource) {
+      setError(t('narration.retrySourceMismatch', 'Kết quả này thuộc nguồn phụ đề khác. Hãy tạo lại từ nguồn đang chọn.'));
+      return;
+    }
+    return runNarration([id], typeof text === 'string' ? { [String(id)]: text } : {});
+  }, [generationResults, runNarration, setError, standaloneTextMode, subtitleSource, t]);
   const retryFailedChatterboxNarrations = useCallback(() => {
+    const expectedSource = standaloneTextMode ? 'standalone' : subtitleSource;
+    if (generationResults.some(result => result.subtitle_source && result.subtitle_source !== expectedSource)) {
+      setError(t('narration.retrySourceMismatch', 'Kết quả này thuộc nguồn phụ đề khác. Hãy tạo lại từ nguồn đang chọn.'));
+      return;
+    }
     const ids = generationResults.filter(result => result.success === false).map(result => result.subtitle_id);
     if (ids.length) return runNarration(ids);
-  }, [generationResults, runNarration]);
+  }, [generationResults, runNarration, setError, standaloneTextMode, subtitleSource, t]);
 
   return { handleChatterboxNarration, cancelChatterboxGeneration, retryChatterboxNarration, retryFailedChatterboxNarrations };
 };

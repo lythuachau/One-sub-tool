@@ -39,6 +39,7 @@ import StatusMessage from './components/StatusMessage';
 import NarrationMethodSelection from './components/NarrationMethodSelection';
 import NarrationInputSource, { buildStandaloneNarrationSegments } from './components/NarrationInputSource';
 import { NARRATION_METHODS } from './narrationMethods';
+import { getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../utils/narrationSubtitleSource';
 
 // Import styles
 import '../../styles/narration/unifiedNarrationRedesign.css';
@@ -172,7 +173,11 @@ const UnifiedNarrationSection = ({
   const activeGenerationResults = useMemo(() => standaloneTextMode
     ? (standaloneResultsByMethod[narrationMethod]?.text === standaloneText ? standaloneResultsByMethod[narrationMethod].results : [])
     : generationResults, [generationResults, narrationMethod, standaloneResultsByMethod, standaloneText, standaloneTextMode]);
-  const activeSubtitleSource = standaloneTextMode ? 'original' : subtitleSource;
+  const activeSubtitleSource = standaloneTextMode
+    ? 'original'
+    : subtitleSource === 'translated' && !(Array.isArray(translatedSubtitles) && translatedSubtitles.length > 0)
+      ? 'original'
+      : subtitleSource;
   const activeOriginalSubtitles = useMemo(() => standaloneTextMode
     ? standaloneSegments
     : (originalSubtitles || subtitles || []), [originalSubtitles, standaloneSegments, standaloneTextMode, subtitles]);
@@ -180,14 +185,22 @@ const UnifiedNarrationSection = ({
   const activeSubtitleFallback = standaloneTextMode ? standaloneSegments : subtitles;
   const activeOriginalLanguage = standaloneTextMode ? standaloneTextLanguage : originalLanguage;
   const activeTranslatedLanguage = standaloneTextMode ? standaloneTextLanguage : translatedLanguage;
-  const activeUseGroupedSubtitles = standaloneTextMode ? false : useGroupedSubtitles;
-  const activeGroupedSubtitles = standaloneTextMode ? null : groupedSubtitles;
+  const activeSourceSubtitles = useMemo(() => standaloneTextMode
+    ? standaloneSegments
+    : getNarrationSubtitlesForSource({
+      subtitleSource: activeSubtitleSource,
+      originalSubtitles: activeOriginalSubtitles,
+      translatedSubtitles: activeTranslatedSubtitles,
+      subtitles: activeSubtitleFallback
+    }), [activeOriginalSubtitles, activeSubtitleFallback, activeTranslatedSubtitles, activeSubtitleSource, standaloneSegments, standaloneTextMode]);
+  const activeUseGroupedSubtitles = !standaloneTextMode && useGroupedSubtitles &&
+    groupedSubtitlesMatchSource(groupedSubtitles, activeSourceSubtitles);
+  const activeGroupedSubtitles = activeUseGroupedSubtitles ? groupedSubtitles : null;
   const getActiveSubtitles = useCallback(() => {
     if (standaloneTextMode) return standaloneSegments;
     if (activeUseGroupedSubtitles && activeGroupedSubtitles?.length) return activeGroupedSubtitles;
-    if (activeSubtitleSource === 'translated' && activeTranslatedSubtitles?.length) return activeTranslatedSubtitles;
-    return activeOriginalSubtitles;
-  }, [activeGroupedSubtitles, activeOriginalSubtitles, activeSubtitleSource, activeTranslatedSubtitles, activeUseGroupedSubtitles, standaloneSegments, standaloneTextMode]);
+    return activeSourceSubtitles;
+  }, [activeGroupedSubtitles, activeSourceSubtitles, activeUseGroupedSubtitles, standaloneSegments, standaloneTextMode]);
   const setActiveGenerationResults = useCallback((update) => {
     if (!standaloneTextMode) {
       setGenerationResults(update);
@@ -202,6 +215,27 @@ const UnifiedNarrationSection = ({
   }, [narrationMethod, setGenerationResults, standaloneText, standaloneTextMode]);
 
   const hasStandaloneText = standaloneSegments.length > 0;
+  const handleSubtitleSourceChange = useCallback((source) => {
+    if (source !== subtitleSource) {
+      setGenerationResults([]);
+      setError('');
+      setGenerationStatus('');
+      setCurrentAudio(null);
+      setIsPlaying(false);
+      setGroupedSubtitles(null);
+      setUseGroupedSubtitles(false);
+      window.groupedSubtitles = null;
+      window.groupedNarrations = [];
+      window.useGroupedSubtitles = false;
+    }
+    setSubtitleSource(source);
+  }, [setCurrentAudio, setError, setGenerationResults, setGenerationStatus, setIsPlaying, setGroupedSubtitles, setSubtitleSource, setUseGroupedSubtitles, subtitleSource]);
+
+  useEffect(() => {
+    if (!standaloneTextMode && subtitleSource !== activeSubtitleSource) {
+      handleSubtitleSourceChange(activeSubtitleSource);
+    }
+  }, [activeSubtitleSource, handleSubtitleSourceChange, standaloneTextMode, subtitleSource]);
   const downloadStandaloneAudio = useCallback(async () => {
     try {
       const result = activeGenerationResults.find(item => item.success && item.filename);
@@ -258,17 +292,17 @@ const UnifiedNarrationSection = ({
     setError,
     setGenerationResults,
     generationResults,
-    subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    subtitleSource: activeSubtitleSource,
+    originalSubtitles: activeOriginalSubtitles,
+    translatedSubtitles: activeTranslatedSubtitles,
+    subtitles: activeSubtitleFallback,
     originalLanguage,
     translatedLanguage,
     selectedVoice,
     concurrentClients,
-    useGroupedSubtitles,
+    useGroupedSubtitles: activeUseGroupedSubtitles,
     setUseGroupedSubtitles,
-    groupedSubtitles,
+    groupedSubtitles: activeGroupedSubtitles,
     setGroupedSubtitles,
     isGroupingSubtitles,
     setIsGroupingSubtitles,
@@ -326,10 +360,10 @@ const UnifiedNarrationSection = ({
     setError,
     setGenerationResults,
     generationResults,
-    subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    subtitleSource: activeSubtitleSource,
+    originalSubtitles: activeOriginalSubtitles,
+    translatedSubtitles: activeTranslatedSubtitles,
+    subtitles: activeSubtitleFallback,
     originalLanguage,
     translatedLanguage,
     selectedVoice: edgeTTSVoice,
@@ -342,8 +376,8 @@ const UnifiedNarrationSection = ({
     setPitch: setEdgeTTSPitch,
     t,
     setRetryingSubtitleId,
-    useGroupedSubtitles,
-    groupedSubtitles,
+    useGroupedSubtitles: activeUseGroupedSubtitles,
+    groupedSubtitles: activeGroupedSubtitles,
     setUseGroupedSubtitles
   });
 
@@ -359,10 +393,10 @@ const UnifiedNarrationSection = ({
     setError,
     setGenerationResults,
     generationResults,
-    subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    subtitleSource: activeSubtitleSource,
+    originalSubtitles: activeOriginalSubtitles,
+    translatedSubtitles: activeTranslatedSubtitles,
+    subtitles: activeSubtitleFallback,
     originalLanguage,
     translatedLanguage,
     selectedLanguage: gttsLanguage,
@@ -373,8 +407,8 @@ const UnifiedNarrationSection = ({
     setSlow: setGttsSlow,
     t,
     setRetryingSubtitleId,
-    useGroupedSubtitles,
-    groupedSubtitles,
+    useGroupedSubtitles: activeUseGroupedSubtitles,
+    groupedSubtitles: activeGroupedSubtitles,
     setUseGroupedSubtitles
   });
 
@@ -396,7 +430,7 @@ const UnifiedNarrationSection = ({
   // Use narration storage hook
   useNarrationStorage({
     generationResults,
-    subtitleSource
+    subtitleSource: activeSubtitleSource
   });
 
   // Use UI effects hook
@@ -416,10 +450,10 @@ const UnifiedNarrationSection = ({
     generationResults,
     setGenerationResults,
     setGenerationStatus,
-    subtitleSource,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
+    subtitleSource: activeSubtitleSource,
+    originalSubtitles: activeOriginalSubtitles,
+    translatedSubtitles: activeTranslatedSubtitles,
+    subtitles: activeSubtitleFallback,
     t,
     setReferenceAudio,
     setReferenceText
@@ -428,13 +462,13 @@ const UnifiedNarrationSection = ({
   // Use window state manager hook
   useWindowStateManager({
     generationResults,
-    subtitleSource,
+    subtitleSource: activeSubtitleSource,
     narrationMethod,
-    originalSubtitles,
-    translatedSubtitles,
-    subtitles,
-    useGroupedSubtitles,
-    groupedSubtitles,
+    originalSubtitles: activeOriginalSubtitles,
+    translatedSubtitles: activeTranslatedSubtitles,
+    subtitles: activeSubtitleFallback,
+    useGroupedSubtitles: activeUseGroupedSubtitles,
+    groupedSubtitles: activeGroupedSubtitles,
     setGroupedSubtitles,
     setIsGroupingSubtitles,
     setUseGroupedSubtitles,
@@ -540,17 +574,7 @@ const UnifiedNarrationSection = ({
     segmentEndTime,
     videoPath,
     onReferenceAudioChange,
-    getSelectedSubtitles: () => {
-      if (standaloneTextMode) return standaloneSegments;
-      // Check if we should use grouped subtitles
-      if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
-        return groupedSubtitles;
-      }
-      if (subtitleSource === 'translated' && translatedSubtitles && translatedSubtitles.length > 0) {
-        return translatedSubtitles;
-      }
-      return originalSubtitles || subtitles;
-    },
+    getSelectedSubtitles: getActiveSubtitles,
     advancedSettings,
     setIsGenerating,
     isGenerating,
@@ -627,19 +651,20 @@ const UnifiedNarrationSection = ({
           combinedAudioLabel={standaloneTextMode ? 'Tải audio' : ''}
           combinedAudioTooltip={standaloneTextMode ? 'Tải audio duy nhất được tạo từ toàn bộ văn bản.' : ''}>
           {!standaloneTextMode && <SubtitleSourceSelection
-            subtitleSource={subtitleSource}
-            setSubtitleSource={setSubtitleSource}
+            subtitleSource={activeSubtitleSource}
+            setSubtitleSource={handleSubtitleSourceChange}
             isGenerating={isGenerating}
-            translatedSubtitles={translatedSubtitles}
-            originalSubtitles={originalSubtitles || subtitles}
+            translatedSubtitles={activeTranslatedSubtitles}
+            originalSubtitles={activeOriginalSubtitles} subtitles={activeSubtitleFallback}
             originalLanguage={originalLanguage}
             translatedLanguage={translatedLanguage}
             setOriginalLanguage={setOriginalLanguage}
             setTranslatedLanguage={setTranslatedLanguage}
-            useGroupedSubtitles={useGroupedSubtitles}
+            useGroupedSubtitles={activeUseGroupedSubtitles}
             setUseGroupedSubtitles={setUseGroupedSubtitles}
             isGroupingSubtitles={isGroupingSubtitles}
-            groupedSubtitles={groupedSubtitles}
+            groupedSubtitles={activeGroupedSubtitles}
+            setGroupedSubtitles={setGroupedSubtitles}
             groupingIntensity={groupingIntensity}
             setGroupingIntensity={setGroupingIntensity}
             onGroupedSubtitlesGenerated={setGroupedSubtitles}
@@ -661,19 +686,20 @@ const UnifiedNarrationSection = ({
           combinedAudioLabel={standaloneTextMode ? 'Tải audio' : ''}
           combinedAudioTooltip={standaloneTextMode ? 'Tải audio duy nhất được tạo từ toàn bộ văn bản.' : ''}>
           {!standaloneTextMode && <SubtitleSourceSelection
-            subtitleSource={subtitleSource}
-            setSubtitleSource={setSubtitleSource}
+            subtitleSource={activeSubtitleSource}
+            setSubtitleSource={handleSubtitleSourceChange}
             isGenerating={isGenerating}
-            translatedSubtitles={translatedSubtitles}
-            originalSubtitles={originalSubtitles || subtitles}
+            translatedSubtitles={activeTranslatedSubtitles}
+            originalSubtitles={activeOriginalSubtitles} subtitles={activeSubtitleFallback}
             originalLanguage={originalLanguage}
             translatedLanguage={translatedLanguage}
             setOriginalLanguage={setOriginalLanguage}
             setTranslatedLanguage={setTranslatedLanguage}
-            useGroupedSubtitles={useGroupedSubtitles}
+            useGroupedSubtitles={activeUseGroupedSubtitles}
             setUseGroupedSubtitles={setUseGroupedSubtitles}
             isGroupingSubtitles={isGroupingSubtitles}
-            groupedSubtitles={groupedSubtitles}
+            groupedSubtitles={activeGroupedSubtitles}
+            setGroupedSubtitles={setGroupedSubtitles}
             groupingIntensity={groupingIntensity}
             setGroupingIntensity={setGroupingIntensity}
             onGroupedSubtitlesGenerated={setGroupedSubtitles}
@@ -732,19 +758,20 @@ const UnifiedNarrationSection = ({
 
           {/* Subtitle Source Selection */}
           {!standaloneTextMode && <SubtitleSourceSelection
-            subtitleSource={subtitleSource}
-            setSubtitleSource={setSubtitleSource}
+            subtitleSource={activeSubtitleSource}
+            setSubtitleSource={handleSubtitleSourceChange}
             isGenerating={isGenerating}
-            translatedSubtitles={translatedSubtitles}
-            originalSubtitles={originalSubtitles || subtitles}
+            translatedSubtitles={activeTranslatedSubtitles}
+            originalSubtitles={activeOriginalSubtitles} subtitles={activeSubtitleFallback}
             originalLanguage={originalLanguage}
             translatedLanguage={translatedLanguage}
             setOriginalLanguage={setOriginalLanguage}
             setTranslatedLanguage={setTranslatedLanguage}
-            useGroupedSubtitles={useGroupedSubtitles}
+            useGroupedSubtitles={activeUseGroupedSubtitles}
             setUseGroupedSubtitles={setUseGroupedSubtitles}
             isGroupingSubtitles={isGroupingSubtitles}
-            groupedSubtitles={groupedSubtitles}
+            groupedSubtitles={activeGroupedSubtitles}
+            setGroupedSubtitles={setGroupedSubtitles}
             groupingIntensity={groupingIntensity}
             setGroupingIntensity={setGroupingIntensity}
             narrationMethod={narrationMethod}
@@ -800,8 +827,11 @@ const UnifiedNarrationSection = ({
             subtitleSource={activeSubtitleSource}
             isServiceAvailable={isAvailable}
             requiresReferenceAudio={vieneuVoiceMode === 'reference'}
-            isInputValid={!standaloneTextMode || hasStandaloneText}
-            inputValidationMessage="Nhập văn bản cần đọc trước khi tạo audio."
+            isInputValid={(!standaloneTextMode || hasStandaloneText) &&
+              (omnivoiceMode !== 'design' || Boolean(String(omnivoiceInstruct || '').trim()))}
+            inputValidationMessage={omnivoiceMode === 'design' && !String(omnivoiceInstruct || '').trim()
+              ? 'Chọn ít nhất một thuộc tính giọng hoặc chuyển sang chế độ Tự sinh giọng.'
+              : 'Nhập văn bản cần đọc trước khi tạo audio.'}
             standaloneTextMode={standaloneTextMode}
             combinedAudioLabel={standaloneTextMode ? 'Tải audio' : ''}
             combinedAudioTooltip={standaloneTextMode ? 'Tải audio duy nhất được tạo từ toàn bộ văn bản.' : ''}
@@ -829,6 +859,7 @@ const UnifiedNarrationSection = ({
             onRetryFailed={retryFailedNarrations}
             title={standaloneTextMode ? 'Thuyết minh từ văn bản' : undefined}
             standaloneTextMode={standaloneTextMode}
+            isGenerating={isGenerating}
           />
 
           {/* Hidden audio player for playback */}
@@ -872,19 +903,20 @@ const UnifiedNarrationSection = ({
 
           {/* Subtitle Source Selection - reuse from F5-TTS */}
           {!standaloneTextMode && <SubtitleSourceSelection
-            subtitleSource={subtitleSource}
-            setSubtitleSource={setSubtitleSource}
+            subtitleSource={activeSubtitleSource}
+            setSubtitleSource={handleSubtitleSourceChange}
             isGenerating={isGenerating}
-            translatedSubtitles={translatedSubtitles}
-            originalSubtitles={originalSubtitles || subtitles}
+            translatedSubtitles={activeTranslatedSubtitles}
+            originalSubtitles={activeOriginalSubtitles} subtitles={activeSubtitleFallback}
             originalLanguage={originalLanguage}
             translatedLanguage={translatedLanguage}
             setOriginalLanguage={setOriginalLanguage}
             setTranslatedLanguage={setTranslatedLanguage}
-            useGroupedSubtitles={useGroupedSubtitles}
+            useGroupedSubtitles={activeUseGroupedSubtitles}
             setUseGroupedSubtitles={setUseGroupedSubtitles}
             isGroupingSubtitles={isGroupingSubtitles}
-            groupedSubtitles={groupedSubtitles}
+            groupedSubtitles={activeGroupedSubtitles}
+            setGroupedSubtitles={setGroupedSubtitles}
             groupingIntensity={groupingIntensity}
             setGroupingIntensity={setGroupingIntensity}
             onGroupedSubtitlesGenerated={setGroupedSubtitles}
@@ -929,7 +961,7 @@ const UnifiedNarrationSection = ({
 
           {/* Generation Status */}
           <StatusMessage
-            message={generationStatus}
+            message={(isGenerating || retryingSubtitleId) ? generationStatus : ''}
             type="info"
             statusRef={statusRef}
             showProgress={isGenerating && Boolean(generationStatus)}
@@ -950,6 +982,7 @@ const UnifiedNarrationSection = ({
             subtitleSource={activeSubtitleSource}
             title={standaloneTextMode ? 'Thuyết minh từ văn bản' : undefined}
             standaloneTextMode={standaloneTextMode}
+            isGenerating={isGenerating}
           />
 
           {/* Hidden audio player for playback */}
@@ -965,19 +998,20 @@ const UnifiedNarrationSection = ({
         <div className="edge-tts-content">
           {/* Subtitle Source Selection */}
           <SubtitleSourceSelection
-            subtitleSource={subtitleSource}
-            setSubtitleSource={setSubtitleSource}
+            subtitleSource={activeSubtitleSource}
+            setSubtitleSource={handleSubtitleSourceChange}
             isGenerating={isGenerating}
-            translatedSubtitles={translatedSubtitles}
-            originalSubtitles={originalSubtitles || subtitles}
+            translatedSubtitles={activeTranslatedSubtitles}
+            originalSubtitles={activeOriginalSubtitles} subtitles={activeSubtitleFallback}
             originalLanguage={originalLanguage}
             translatedLanguage={translatedLanguage}
             setOriginalLanguage={setOriginalLanguage}
             setTranslatedLanguage={setTranslatedLanguage}
-            useGroupedSubtitles={useGroupedSubtitles}
+            useGroupedSubtitles={activeUseGroupedSubtitles}
             setUseGroupedSubtitles={setUseGroupedSubtitles}
             isGroupingSubtitles={isGroupingSubtitles}
-            groupedSubtitles={groupedSubtitles}
+            groupedSubtitles={activeGroupedSubtitles}
+            setGroupedSubtitles={setGroupedSubtitles}
             groupingIntensity={groupingIntensity}
             setGroupingIntensity={setGroupingIntensity}
             onGroupedSubtitlesGenerated={setGroupedSubtitles}
@@ -1002,7 +1036,7 @@ const UnifiedNarrationSection = ({
             pitch={edgeTTSPitch}
             setPitch={setEdgeTTSPitch}
             isGenerating={isGenerating}
-            detectedLanguage={subtitleSource === 'original' ? originalLanguage : translatedLanguage}
+            detectedLanguage={activeSubtitleSource === 'original' ? activeOriginalLanguage : activeTranslatedLanguage}
           />
 
           {/* Generate Button */}
@@ -1010,7 +1044,7 @@ const UnifiedNarrationSection = ({
             handleGenerateNarration={handleEdgeTTSNarration}
             isGenerating={isGenerating}
             referenceAudio={null}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
             cancelGeneration={cancelEdgeTTSGeneration}
             downloadAllAudio={downloadAllAudio}
             downloadAlignedAudio={downloadAlignedAudio}
@@ -1039,7 +1073,8 @@ const UnifiedNarrationSection = ({
             isPlaying={isPlaying}
             playAudio={playAudio}
             getAudioUrl={getAudioUrl}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
+            isGenerating={isGenerating}
           />
 
           {/* Hidden audio player for playback */}
@@ -1055,19 +1090,20 @@ const UnifiedNarrationSection = ({
         <div className="gtts-content">
           {/* Subtitle Source Selection */}
           <SubtitleSourceSelection
-            subtitleSource={subtitleSource}
-            setSubtitleSource={setSubtitleSource}
+            subtitleSource={activeSubtitleSource}
+            setSubtitleSource={handleSubtitleSourceChange}
             isGenerating={isGenerating}
-            translatedSubtitles={translatedSubtitles}
-            originalSubtitles={originalSubtitles || subtitles}
+            translatedSubtitles={activeTranslatedSubtitles}
+            originalSubtitles={activeOriginalSubtitles} subtitles={activeSubtitleFallback}
             originalLanguage={originalLanguage}
             translatedLanguage={translatedLanguage}
             setOriginalLanguage={setOriginalLanguage}
             setTranslatedLanguage={setTranslatedLanguage}
-            useGroupedSubtitles={useGroupedSubtitles}
+            useGroupedSubtitles={activeUseGroupedSubtitles}
             setUseGroupedSubtitles={setUseGroupedSubtitles}
             isGroupingSubtitles={isGroupingSubtitles}
-            groupedSubtitles={groupedSubtitles}
+            groupedSubtitles={activeGroupedSubtitles}
+            setGroupedSubtitles={setGroupedSubtitles}
             groupingIntensity={groupingIntensity}
             setGroupingIntensity={setGroupingIntensity}
             onGroupedSubtitlesGenerated={setGroupedSubtitles}
@@ -1090,7 +1126,7 @@ const UnifiedNarrationSection = ({
             slow={gttsSlow}
             setSlow={setGttsSlow}
             isGenerating={isGenerating}
-            detectedLanguage={subtitleSource === 'original' ? originalLanguage : translatedLanguage}
+            detectedLanguage={activeSubtitleSource === 'original' ? activeOriginalLanguage : activeTranslatedLanguage}
           />
 
           {/* Generate Button */}
@@ -1098,7 +1134,7 @@ const UnifiedNarrationSection = ({
             handleGenerateNarration={handleGTTSNarration}
             isGenerating={isGenerating}
             referenceAudio={null}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
             cancelGeneration={cancelGTTSGeneration}
             downloadAllAudio={downloadAllAudio}
             downloadAlignedAudio={downloadAlignedAudio}
@@ -1127,7 +1163,8 @@ const UnifiedNarrationSection = ({
             isPlaying={isPlaying}
             playAudio={playAudio}
             getAudioUrl={getAudioUrl}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
+            isGenerating={isGenerating}
           />
 
           {/* Hidden audio player for playback */}
@@ -1143,19 +1180,20 @@ const UnifiedNarrationSection = ({
         <div className="gemini-content">
           {/* Simplified Subtitle Source Selection for Gemini */}
           <GeminiSubtitleSourceSelection
-            subtitleSource={subtitleSource}
-            setSubtitleSource={setSubtitleSource}
+            subtitleSource={activeSubtitleSource}
+            setSubtitleSource={handleSubtitleSourceChange}
             isGenerating={isGenerating}
-            translatedSubtitles={translatedSubtitles}
-            originalSubtitles={originalSubtitles || subtitles}
+            translatedSubtitles={activeTranslatedSubtitles}
+            originalSubtitles={activeOriginalSubtitles} subtitles={activeSubtitleFallback}
             originalLanguage={originalLanguage}
             translatedLanguage={translatedLanguage}
             setOriginalLanguage={setOriginalLanguage}
             setTranslatedLanguage={setTranslatedLanguage}
-            useGroupedSubtitles={useGroupedSubtitles}
+            useGroupedSubtitles={activeUseGroupedSubtitles}
             setUseGroupedSubtitles={setUseGroupedSubtitles}
             isGroupingSubtitles={isGroupingSubtitles}
-            groupedSubtitles={groupedSubtitles}
+            groupedSubtitles={activeGroupedSubtitles}
+            setGroupedSubtitles={setGroupedSubtitles}
             groupingIntensity={groupingIntensity}
             setGroupingIntensity={setGroupingIntensity}
             onGroupedSubtitlesGenerated={setGroupedSubtitles}
@@ -1188,7 +1226,7 @@ const UnifiedNarrationSection = ({
             handleGenerateNarration={handleGeminiNarration}
             isGenerating={isGenerating}
             referenceAudio={null}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
             cancelGeneration={cancelGeminiGeneration}
             downloadAllAudio={downloadAllAudio}
             downloadAlignedAudio={downloadAlignedAudio}
@@ -1213,7 +1251,9 @@ const UnifiedNarrationSection = ({
             retryingSubtitleId={retryingSubtitleId}
             onRetryFailed={retryFailedGeminiNarrations}
             hasGenerationError={!!error && error.includes('Gemini')}
-            subtitleSource={subtitleSource}
+            subtitleSource={activeSubtitleSource}
+            isGenerating={isGenerating}
+            standaloneTextMode={standaloneTextMode}
           />
 
           {/* No need for a separate audio element here as it's included in the GeminiNarrationResults component */}

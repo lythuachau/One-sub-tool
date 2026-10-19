@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { enhanceF5TTSNarrations } from '../../../utils/narrationEnhancer';
+import { getNarrationSubtitlesForSource } from '../../../utils/narrationSubtitleSource';
 
 /**
  * Custom hook for managing narration cache operations
@@ -28,7 +29,7 @@ const useNarrationCache = ({
   // Listen for narrations loaded from cache event
   useEffect(() => {
     const handleNarrationsLoadedFromCache = (event) => {
-      if (event.detail && event.detail.narrations) {
+      if (event.detail?.subtitleSource === subtitleSource && event.detail.narrations) {
         // Only update if we don't already have results
         if (!generationResults || generationResults.length === 0) {
           // Get the narrations from the event
@@ -80,14 +81,16 @@ const useNarrationCache = ({
 
     // Handle F5-TTS narrations loaded from cache
     const handleF5TTSNarrationsLoadedFromCache = (event) => {
-      if (event.detail && event.detail.narrations) {
+      if (event.detail?.subtitleSource === subtitleSource && event.detail.narrations) {
         // Only update if we don't already have results
         if (!generationResults || generationResults.length === 0) {
           // Get the narrations from the event (reference audio is handled globally)
           const cachedNarrations = event.detail.narrations;
 
           // Get subtitles for enhancing narrations with timing information
-          const subtitlesForEnhancement = originalSubtitles || subtitles || [];
+          const subtitlesForEnhancement = getNarrationSubtitlesForSource({
+            subtitleSource, originalSubtitles, translatedSubtitles, subtitles
+          });
 
           // Enhance F5-TTS narrations with timing information from subtitles
           const enhancedNarrations = enhanceF5TTSNarrations(cachedNarrations, subtitlesForEnhancement);
@@ -141,7 +144,7 @@ const useNarrationCache = ({
 
     // Handle Edge TTS narrations loaded from cache
     const handleEdgeTTSNarrationsLoadedFromCache = (event) => {
-      if (event.detail && event.detail.narrations) {
+      if (event.detail?.subtitleSource === subtitleSource && event.detail.narrations) {
         // Only update if we don't already have results
         if (!generationResults || generationResults.length === 0) {
           // Get the narrations from the event
@@ -193,7 +196,7 @@ const useNarrationCache = ({
 
     // Handle gTTS narrations loaded from cache
     const handleGTTSNarrationsLoadedFromCache = (event) => {
-      if (event.detail && event.detail.narrations) {
+      if (event.detail?.subtitleSource === subtitleSource && event.detail.narrations) {
         // Only update if we don't already have results
         if (!generationResults || generationResults.length === 0) {
           // Get the narrations from the event
@@ -245,7 +248,7 @@ const useNarrationCache = ({
 
     // Handle Chatterbox narrations loaded from cache
     const handleChatterboxNarrationsLoadedFromCache = (event) => {
-      if (event.detail && event.detail.narrations) {
+      if (event.detail?.subtitleSource === subtitleSource && event.detail.narrations) {
         // Only update if we don't already have results
         if (!generationResults || generationResults.length === 0) {
           // Get the narrations from the event (reference audio is handled globally)
@@ -310,7 +313,7 @@ const useNarrationCache = ({
       window.removeEventListener('gtts-narrations-loaded-from-cache', handleGTTSNarrationsLoadedFromCache);
       window.removeEventListener('chatterbox-narrations-loaded-from-cache', handleChatterboxNarrationsLoadedFromCache);
     };
-  }, [generationResults, setGenerationResults, setGenerationStatus, subtitleSource, originalSubtitles, subtitles, t, setReferenceAudio, setReferenceText]);
+  }, [generationResults, setGenerationResults, setGenerationStatus, subtitleSource, originalSubtitles, translatedSubtitles, subtitles, t, setReferenceAudio, setReferenceText]);
 
   // Global reference audio cache loading - runs once on mount regardless of narration method
   useEffect(() => {
@@ -385,7 +388,7 @@ const useNarrationCache = ({
     } catch (error) {
       console.error('Error loading global reference audio from cache:', error);
     }
-  }, []); // Run only once on mount
+  }, [setReferenceAudio, setReferenceText]);
 
   // Check for cached narrations on mount (separate from reference audio)
   useEffect(() => {
@@ -418,13 +421,14 @@ const useNarrationCache = ({
         const cacheEntry = JSON.parse(cachedChatterboxData);
 
         // Check if cache is for current media
-        if (cacheEntry.mediaId === mediaId && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
+        if (cacheEntry.mediaId === mediaId && cacheEntry.subtitleSource === subtitleSource && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
           console.log('Found cached Chatterbox narrations, dispatching load event');
 
           // Dispatch event to load cached narrations (reference audio already loaded globally)
           window.dispatchEvent(new CustomEvent('chatterbox-narrations-loaded-from-cache', {
             detail: {
-              narrations: cacheEntry.narrations
+              narrations: cacheEntry.narrations,
+              subtitleSource: cacheEntry.subtitleSource
               // Reference audio is handled globally, don't pass it here
             }
           }));
@@ -438,13 +442,14 @@ const useNarrationCache = ({
         const cacheEntry = JSON.parse(cachedEdgeTTSData);
 
         // Check if cache is for current media
-        if (cacheEntry.mediaId === mediaId && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
+        if (cacheEntry.mediaId === mediaId && cacheEntry.subtitleSource === subtitleSource && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
           console.log('Found cached Edge TTS narrations, dispatching load event');
 
           // Dispatch event to load cached narrations
           window.dispatchEvent(new CustomEvent('edge-tts-narrations-loaded-from-cache', {
             detail: {
               narrations: cacheEntry.narrations,
+              subtitleSource: cacheEntry.subtitleSource,
               settings: cacheEntry.settings
             }
           }));
@@ -458,13 +463,14 @@ const useNarrationCache = ({
         const cacheEntry = JSON.parse(cachedGTTSData);
 
         // Check if cache is for current media
-        if (cacheEntry.mediaId === mediaId && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
+        if (cacheEntry.mediaId === mediaId && cacheEntry.subtitleSource === subtitleSource && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
           console.log('Found cached gTTS narrations, dispatching load event');
 
           // Dispatch event to load cached narrations
           window.dispatchEvent(new CustomEvent('gtts-narrations-loaded-from-cache', {
             detail: {
               narrations: cacheEntry.narrations,
+              subtitleSource: cacheEntry.subtitleSource,
               settings: cacheEntry.settings
             }
           }));
@@ -478,13 +484,14 @@ const useNarrationCache = ({
         const cacheEntry = JSON.parse(cachedF5TTSData);
 
         // Check if cache is for current media
-        if (cacheEntry.mediaId === mediaId && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
+        if (cacheEntry.mediaId === mediaId && cacheEntry.subtitleSource === subtitleSource && cacheEntry.narrations && cacheEntry.narrations.length > 0) {
           console.log('Found cached F5-TTS narrations, dispatching load event');
 
           // Dispatch event to load cached narrations (reference audio already loaded globally)
           window.dispatchEvent(new CustomEvent('f5tts-narrations-loaded-from-cache', {
             detail: {
-              narrations: cacheEntry.narrations
+              narrations: cacheEntry.narrations,
+              subtitleSource: cacheEntry.subtitleSource
               // Reference audio is handled globally, don't pass it here
             }
           }));
@@ -497,7 +504,7 @@ const useNarrationCache = ({
 
     // Call the async function
     checkCache();
-  }, [generationResults]);
+  }, [generationResults, subtitleSource]);
 };
 
 export default useNarrationCache;

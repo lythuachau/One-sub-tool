@@ -165,7 +165,14 @@ export const generateAlignedNarration = async (generationResults, onProgress = n
 
       // Check if the response is successful
       if (!response.ok) {
-        console.error(`Failed to download aligned audio: ${response.statusText}`);
+        let errorMessage = `Failed to download aligned audio: ${response.status} ${response.statusText}`;
+        try {
+          const errorData = await response.json();
+          if (errorData.error) errorMessage = errorData.error;
+        } catch {
+          // Keep the HTTP status if the server returned a non-JSON response.
+        }
+        console.error(errorMessage);
 
         // Force reset the cache to ensure we don't use stale data
         alignedNarrationCache = {
@@ -180,7 +187,7 @@ export const generateAlignedNarration = async (generationResults, onProgress = n
           alignedAudioElement = null;
         }
 
-        throw new Error(`Failed to download aligned audio: ${response.statusText}`);
+        throw new Error(errorMessage);
       }
     } catch (fetchError) {
       console.error('Error fetching aligned audio:', fetchError);

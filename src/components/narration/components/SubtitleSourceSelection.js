@@ -7,6 +7,8 @@ import { FiRefreshCw } from 'react-icons/fi';
 import '../../../styles/narration/languageBadges.css';
 import '../../../styles/narration/subtitleSourceSelectionMaterial.css';
 import SubtitleGroupingModal from './SubtitleGroupingModal';
+import SubtitleGroupingModelSelect from './SubtitleGroupingModelSelect';
+import { getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../../utils/narrationSubtitleSource';
 
 /**
  * Subtitle Source Selection component
@@ -16,6 +18,7 @@ import SubtitleGroupingModal from './SubtitleGroupingModal';
  * @param {boolean} props.isGenerating - Whether generation is in progress
  * @param {Array} props.translatedSubtitles - Translated subtitles
  * @param {Array} props.originalSubtitles - Original subtitles
+ * @param {Array} props.subtitles - Fallback subtitle list
  * @param {Object} props.originalLanguage - Original language information
  * @param {Object} props.translatedLanguage - Translated language information
  * @param {Function} props.setOriginalLanguage - Function to set original language
@@ -35,6 +38,7 @@ const SubtitleSourceSelection = ({
   isGenerating,
   translatedSubtitles,
   originalSubtitles,
+  subtitles,
   originalLanguage,
   translatedLanguage,
   setOriginalLanguage,
@@ -44,16 +48,32 @@ const SubtitleSourceSelection = ({
   setUseGroupedSubtitles = () => {},
   isGroupingSubtitles = false,
   groupedSubtitles = null,
+  setGroupedSubtitles = () => {},
   groupingIntensity = 'moderate',
   setGroupingIntensity = () => {}
 }) => {
   const { t } = useTranslation();
   const hasTranslatedSubtitles = translatedSubtitles && translatedSubtitles.length > 0;
-  const hasOriginalSubtitles = originalSubtitles && originalSubtitles.length > 0;
-  const hasSubtitles = hasOriginalSubtitles || hasTranslatedSubtitles;
-
-  // State for subtitle grouping modal
+  const sourceOriginalSubtitles = Array.isArray(originalSubtitles) && originalSubtitles.length > 0
+    ? originalSubtitles
+    : Array.isArray(subtitles) ? subtitles : [];
+  const sourceSubtitles = getNarrationSubtitlesForSource({
+    subtitleSource,
+    originalSubtitles: sourceOriginalSubtitles,
+    translatedSubtitles,
+    subtitles
+  });
+  const hasSubtitles = sourceSubtitles.length > 0;
+  const hasMatchingGroupedSubtitles = groupedSubtitlesMatchSource(groupedSubtitles, sourceSubtitles);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleGroupingModelChange = () => {
+    setUseGroupedSubtitles(false);
+    setGroupedSubtitles(null);
+    window.groupedSubtitles = null;
+    window.useGroupedSubtitles = false;
+    setIsModalOpen(false);
+  };
 
   // Function to handle subtitle grouping toggle
   const handleGroupingToggle = async (checked) => {
@@ -66,10 +86,14 @@ const SubtitleSourceSelection = ({
       }
 
       // If turning on, check if we already have grouped subtitles
-      if (groupedSubtitles && groupedSubtitles.length > 0) {
+      if (hasMatchingGroupedSubtitles) {
         // We already have grouped subtitles, just enable the toggle
         setUseGroupedSubtitles(true);
         return;
+      }
+      if (groupedSubtitles?.length) {
+        setGroupedSubtitles(null);
+        window.groupedSubtitles = null;
       }
 
       // No existing grouped subtitles, we need to group them
@@ -85,10 +109,11 @@ const SubtitleSourceSelection = ({
         // Import the subtitle grouping service
         const { groupSubtitlesForNarration } = await import('../../../services/gemini/subtitleGroupingService');
 
-        // Get the appropriate subtitles based on the selected source
-        const subtitlesToGroup = subtitleSource === 'translated' && hasTranslatedSubtitles
-          ? translatedSubtitles
-          : originalSubtitles;
+        const subtitlesToGroup = sourceSubtitles;
+        if (!subtitlesToGroup.length) {
+          setUseGroupedSubtitles(false);
+          return;
+        }
 
         // Get the language code for the selected subtitles
         const languageCode = subtitleSource === 'translated' && translatedLanguage
@@ -107,10 +132,7 @@ const SubtitleSourceSelection = ({
         if (result && result.success && result.groupedSubtitles) {
           // Update the grouped subtitles state in the parent component
           window.groupedSubtitles = result.groupedSubtitles;
-          // If the parent component provided a function to update grouped subtitles, call it
-          if (typeof window.setGroupedSubtitles === 'function') {
-            window.setGroupedSubtitles(result.groupedSubtitles);
-          }
+          setGroupedSubtitles(result.groupedSubtitles);
           setUseGroupedSubtitles(true);
         } else {
           // If grouping failed, don't enable the toggle
@@ -133,9 +155,7 @@ const SubtitleSourceSelection = ({
 
       // Clear the grouped subtitles data
       window.groupedSubtitles = null;
-      if (typeof window.setGroupedSubtitles === 'function') {
-        window.setGroupedSubtitles(null);
-      }
+      setGroupedSubtitles(null);
 
       // Set flag to prevent auto-loading from cache
       try {
@@ -260,10 +280,10 @@ const SubtitleSourceSelection = ({
       setSubtitleSource(source);
 
       // Detect language for the selected source
-      if (source === 'original' && originalSubtitles && originalSubtitles.length > 0) {
+      if (source === 'original' && sourceOriginalSubtitles.length > 0) {
         if (!originalLanguage) {
           // Only detect if we don't already have the language
-          detectSubtitleLanguage(originalSubtitles, 'original');
+          detectSubtitleLanguage(sourceOriginalSubtitles, 'original');
         } else if (onLanguageDetected) {
           // We already have the language, just call the callback
           onLanguageDetected('original', originalLanguage);
@@ -316,7 +336,7 @@ const SubtitleSourceSelection = ({
       // Trigger language detection for the specific source
       if (source === 'original') {
         setOriginalLanguage(null);
-        detectSubtitleLanguage(originalSubtitles, 'original');
+        detectSubtitleLanguage(sourceOriginalSubtitles, 'original');
       } else if (source === 'translated') {
         setTranslatedLanguage(null);
         detectSubtitleLanguage(translatedSubtitles, 'translated');
@@ -364,7 +384,7 @@ const SubtitleSourceSelection = ({
                     <>
                       {t('narration.originalSubtitles', 'Original Subtitles')}
                       {originalLanguage && renderLanguageBadge(originalLanguage)}
-                      {!originalLanguage && renderRefreshButton('original', originalSubtitles, isDetectingOriginal)}
+                      {!originalLanguage && renderRefreshButton('original', sourceOriginalSubtitles, isDetectingOriginal)}
                     </>
                   )}
                 </label>
@@ -436,6 +456,11 @@ const SubtitleSourceSelection = ({
               </select>
             </div>
 
+            <SubtitleGroupingModelSelect
+              disabled={isGenerating || isGroupingSubtitles || !hasSubtitles}
+              onModelChange={handleGroupingModelChange}
+            />
+
             {/* Material Web Switch */}
             <div className="material-switch-container">
               <MaterialSwitch
@@ -458,7 +483,7 @@ const SubtitleSourceSelection = ({
             </div>
 
             {/* Show comparison button when grouped subtitles are available */}
-            {useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0 && (
+            {useGroupedSubtitles && hasMatchingGroupedSubtitles && (
               <div className="grouping-info-container">
                 <button
                   className="pill-button view-grouping-button"
@@ -473,7 +498,7 @@ const SubtitleSourceSelection = ({
                 </button>
                 <span className="grouping-stats">
                   {t('narration.groupedSubtitlesCount', 'Grouped {{original}} subtitles into {{grouped}} sentences', {
-                    original: originalSubtitles?.length || 0,
+                    original: sourceSubtitles.length,
                     grouped: groupedSubtitles?.length || 0
                   })}
                 </span>
@@ -487,7 +512,7 @@ const SubtitleSourceSelection = ({
       <SubtitleGroupingModal
         open={isModalOpen}
         onClose={closeModal}
-        originalSubtitles={subtitleSource === 'translated' && hasTranslatedSubtitles ? translatedSubtitles : originalSubtitles}
+        originalSubtitles={sourceSubtitles}
         groupedSubtitles={groupedSubtitles}
         subtitleSource={subtitleSource}
       />

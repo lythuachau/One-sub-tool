@@ -9,7 +9,7 @@ exit /b %INSTALLER_EXIT%
 # ONE_SUB_POWERSHELL
 $ErrorActionPreference = 'Stop'
 $repository = 'https://github.com/lythuachau/One-sub-tool.git'
-$installerVersion = '3.0.0-alpha.10'
+$installerVersion = '3.0.0-alpha.11'
 $installBranch = "release/v$installerVersion"
 $installerDirectory = Split-Path -Parent $env:ONE_SUB_INSTALLER
 $requiredProjectFiles = @(
@@ -21,7 +21,16 @@ $requiredProjectFiles = @(
     'src\components\narration\components\NarrationInputSource.js',
     'asr_services\faster_whisper\app.py',
     'asr_services\qwen3_asr\app.py',
-    'parakeet_wrapper\app.py'
+    'parakeet_wrapper\app.py',
+    'server\controllers\narration\audioFile\audioArtifactSafety.js',
+    'src\components\VideoAnalysisButton.js',
+    'src\components\narration\components\SubtitleGroupingModelSelect.js',
+    'src\services\gemini\narrationTextShortener.js',
+    'src\services\gemini\subtitleGroupingModel.js',
+    'src\styles\VideoAnalysisButton.css',
+    'src\utils\consumeSseJsonStream.js',
+    'src\utils\mediaCacheIdentity.js',
+    'src\utils\narrationSubtitleSource.js'
 )
 
 function Test-OmniVoiceLanguageCatalog {

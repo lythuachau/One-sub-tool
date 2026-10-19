@@ -35,7 +35,7 @@ const cleanLyrics = async (req, res) => {
 
     // Call Gemini API to clean the lyrics
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiApiKey}`,
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
       {
         contents: [
           {
@@ -54,6 +54,12 @@ ${lyrics}`
           topK: 40,
           topP: 0.95,
           maxOutputTokens: 8192,
+        }
+      },
+      {
+        headers: {
+          'x-goog-api-key': geminiApiKey,
+          'Content-Type': 'application/json'
         }
       }
     );

@@ -122,12 +122,16 @@ export default function VibiNarration({ children, getSubtitles, subtitleSource, 
     catch { setMessage('Audio đã tạo xong nhưng trình duyệt chặn tự phát. Hãy bấm Nghe thử giọng lại.'); }
   });
 
-  const generate = (onlyIds) => run(async signal => {
+  const generate = (onlyIds, textOverrides = {}) => run(async signal => {
     if (!catalogLoaded || !modelId || !voiceId) throw new Error('Hãy bấm Tải model & giọng để xác thực model và giọng Vibi trước khi tạo thuyết minh.');
     const selected = (getSubtitles() || []).map((subtitle, index) => ({ ...subtitle, id: subtitle.id ?? index + 1 }));
     if (!selected.length) throw new Error('Chưa có phụ đề để tạo thuyết minh.');
     const results = onlyIds ? [...generationResults] : [];
-    const pending = onlyIds ? selected.filter(subtitle => onlyIds.some(id => String(id) === String(subtitle.id))) : selected;
+    const pending = (onlyIds ? selected.filter(subtitle => onlyIds.some(id => String(id) === String(subtitle.id))) : selected)
+      .map(subtitle => {
+        const text = textOverrides[String(subtitle.id)];
+        return typeof text === 'string' ? { ...subtitle, text, translated_text: text } : subtitle;
+      });
     if (!onlyIds) setGenerationResults([]);
     for (let index = 0; index < pending.length; index += 1) {
       signal.throwIfAborted();
@@ -136,7 +140,10 @@ export default function VibiNarration({ children, getSubtitles, subtitleSource, 
       let result;
       try {
         const audio = await synthesize(subtitle.text || subtitle.translated_text || '', signal);
-        result = { ...audio, subtitle_id: subtitle.id, text: subtitle.text || subtitle.translated_text,
+        result = { ...audio, subtitle_id: subtitle.id,
+          text: typeof textOverrides[String(subtitle.id)] === 'string'
+            ? textOverrides[String(subtitle.id)]
+            : subtitle.text || subtitle.translated_text,
           ...(standaloneTextMode ? { standaloneText: true } : { start: subtitle.start, end: subtitle.end }),
           method: 'vibi', voice: voiceId, model: modelId };
       } catch (error) {
@@ -219,8 +226,12 @@ export default function VibiNarration({ children, getSubtitles, subtitleSource, 
       standaloneTextMode={standaloneTextMode}
       combinedAudioLabel={combinedAudioLabel} combinedAudioTooltip={combinedAudioTooltip} />
     {message && <p role="status">{message}</p>}
-    <NarrationResults generationResults={generationResults} retryingSubtitleId={retrying}
-      onRetry={id => { if (!controller.current) { setRetrying(id); generate([id]); } }}
+    <NarrationResults generationResults={generationResults} retryingSubtitleId={retrying} isGenerating={isGenerating || busy}
+      onRetry={(id, text) => {
+        if (controller.current) return;
+        setRetrying(id);
+        return generate([id], typeof text === 'string' ? { [String(id)]: text } : {});
+      }}
       onRetryFailed={() => generate(generationResults.filter(result => !result.success).map(result => result.subtitle_id))}
       hasGenerationError={generationResults.some(result => !result.success)} currentAudio={currentAudio}
       isPlaying={isPlaying} playAudio={playAudio} getAudioUrl={getAudioUrl} subtitleSource={subtitleSource}

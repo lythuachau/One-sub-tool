@@ -44,6 +44,7 @@ router.post('/download-all', express.json(), narrationController.downloadAllAudi
 
 // Download aligned narration audio (one file)
 router.post('/download-aligned', express.json(), narrationController.downloadAlignedAudio);
+router.post('/analyze-overlaps', express.json(), narrationController.analyzeNarrationOverlaps);
 
 // Record reference audio
 router.post('/record-reference', upload.single('audio_data'), narrationController.recordReference);

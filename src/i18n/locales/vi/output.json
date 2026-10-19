@@ -95,5 +95,15 @@
   "ready": "Sẵn sàng",
   "segmentReady": "Sẵn sàng để xử lý",
   "subtitleUploadSuccess": "Tập tin phụ đề đã được tải lên thành công!",
-  "downloadAndViewWithSrt": "Tải xuống + Xem với SRT đã upload"
+  "downloadAndViewWithSrt": "Tải xuống + Xem với SRT đã upload",
+  "semiAutoGenerate": "Tạo phụ đề bán tự động",
+  "downloadAndGenerateSemiAuto": "Tải + Tạo sub bán tự động",
+  "autoGenerate": "Tạo phụ đề tự động",
+  "downloadAndGenerateAuto": "Tải + Tạo sub tự động",
+  "semiAutoTooltip": "Tạo phụ đề bằng bộ máy đang chọn, không phân tích video trước.",
+  "autoGenerateTooltip": "Phân tích video, áp dụng cài đặt đề xuất rồi tạo phụ đề.",
+  "generationInProgress": "Đang tạo phụ đề...",
+  "autoGenerateInProgress": "Đang phân tích và tạo phụ đề...",
+  "regeneratingSubtitles": "Đang tạo lại phụ đề bằng mô hình đã chọn...",
+  "videoAnalysisReady": "Đã lưu phân tích video. Khi sẵn sàng, hãy chọn chế độ tạo phụ đề."
 }

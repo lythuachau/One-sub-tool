@@ -27,9 +27,40 @@ export const enqueueGeminiRequest = (task, signal) => {
     return queuedTask;
 };
 
-export const fetchGemini = (url, options = {}) => (
-    enqueueGeminiRequest(() => fetch(url, options), options.signal)
-);
+const prepareGeminiRequest = (url, options = {}) => {
+    let requestUrl;
+    try {
+        const baseUrl = typeof window === 'undefined' ? 'http://localhost/' : window.location.href;
+        requestUrl = new URL(url, baseUrl);
+    } catch (error) {
+        return { url, options };
+    }
+
+    if (requestUrl.hostname !== 'generativelanguage.googleapis.com') {
+        return { url, options };
+    }
+
+    const apiKey = requestUrl.searchParams.get('key');
+    if (!apiKey) {
+        return { url, options };
+    }
+
+    requestUrl.searchParams.delete('key');
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('x-goog-api-key')) {
+        headers.set('x-goog-api-key', apiKey);
+    }
+
+    return {
+        url: requestUrl.toString(),
+        options: { ...options, headers }
+    };
+};
+
+export const fetchGemini = (url, options = {}) => {
+    const request = prepareGeminiRequest(url, options);
+    return enqueueGeminiRequest(() => fetch(request.url, request.options), options.signal);
+};
 
 const parseRetryDelayMs = (value) => {
     const match = String(value || '').trim().match(/^(\d+(?:\.\d+)?)s$/i);

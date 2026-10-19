@@ -730,6 +730,7 @@ const useNarrationHandlers = ({
             // Create cache entry with narrations and reference audio
             const cacheEntry = {
               mediaId,
+              subtitleSource,
               timestamp: Date.now(),
               narrations: results.map(result => ({
                 subtitle_id: result.subtitle_id,
@@ -866,19 +867,19 @@ const useNarrationHandlers = ({
 
       // Check if the response is successful
       if (!response.ok) {
-        // Try to parse error message if it's JSON
+        let errorMessage = `Failed to download audio files: ${response.status} ${response.statusText}`;
         try {
           const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to download audio files');
-        } catch (jsonError) {
-          // If it's not JSON, use the status text
-          throw new Error(`Failed to download audio files: ${response.statusText}`);
-        }
+          if (errorData?.error) errorMessage = errorData.error;
+        } catch {}
+        throw new Error(errorMessage);
       }
 
       // Get the blob from the response
       const blob = await response.blob();
-
+      if (!blob.size) {
+        throw new Error('The server returned an empty ZIP archive');
+      }
 
       // Create a URL for the blob
       const url = URL.createObjectURL(blob);
@@ -887,19 +888,18 @@ const useNarrationHandlers = ({
       const a = document.createElement('a');
       a.href = url;
       a.download = 'narration_audio.zip';
-      a.target = '_blank'; // Open in a new tab to avoid redirecting
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
 
       // Clean up
       setTimeout(() => {
-        document.body.removeChild(a);
+        a.remove();
         URL.revokeObjectURL(url);
-      }, 100);
+      }, 1000);
     } catch (error) {
       console.error('Error downloading all audio:', error);
-      alert(t('narration.downloadError', `Error downloading audio files: ${error.message}`));
+      alert(t('narration.downloadAllError', 'Error downloading audio files: {{error}}', { error: error.message }));
     } finally {
       // Remove loading indicator
       document.body.removeChild(loadingIndicator);
@@ -1067,14 +1067,14 @@ const useNarrationHandlers = ({
 
       // Check if the response is successful
       if (!response.ok) {
-        // Try to parse error message if it's JSON
+        let errorMessage = `Failed to download aligned audio: ${response.status} ${response.statusText}`;
         try {
           const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to download aligned audio');
-        } catch (jsonError) {
-          // If it's not JSON, use the status text
-          throw new Error(`Failed to download aligned audio: ${response.statusText}`);
+          if (errorData.error) errorMessage = errorData.error;
+        } catch {
+          // Keep the HTTP status if the server returned a non-JSON response.
         }
+        throw new Error(errorMessage);
       }
 
       // Get the blob from the response
@@ -1122,7 +1122,7 @@ const useNarrationHandlers = ({
   };
 
   // Retry narration generation for a specific subtitle
-  const retryF5TTSNarration = async (subtitleId) => {
+  const retryF5TTSNarration = async (subtitleId, textOverride) => {
     const needsReferenceAudio = vieneuVoiceMode === 'reference';
     if (needsReferenceAudio && !referenceAudio) {
       setError(t('narration.noReferenceAudioError', 'Please upload or record reference audio first'));
@@ -1146,7 +1146,7 @@ const useNarrationHandlers = ({
 
     // Find the subtitle with the given ID
     const subtitleToRetry = selectedSubtitles.find(subtitle =>
-      (subtitle.id || subtitle.index) === subtitleId
+      String(subtitle.id || subtitle.index) === String(subtitleId)
     );
 
     if (!subtitleToRetry) {
@@ -1175,6 +1175,7 @@ const useNarrationHandlers = ({
       const subtitleWithId = {
         ...subtitleToRetry,
         id: subtitleToRetry.id || subtitleToRetry.index || subtitleId,
+        ...(typeof textOverride === 'string' ? { text: textOverride, translated_text: textOverride } : {}),
         // Add a flag to force regeneration of aligned narration
         forceRegenerate: true
       };
@@ -1211,6 +1212,7 @@ const useNarrationHandlers = ({
       };
 
       const handleResult = (result) => {
+        if (typeof textOverride === 'string') result.text = textOverride;
         if (standaloneTextMode) {
           result.generation_id = apiSettings.generationId;
           result.standaloneText = true;
@@ -1224,7 +1226,9 @@ const useNarrationHandlers = ({
         // Update the results array by replacing the old result with the new one
         setGenerationResults(prevResults => {
           const updatedResults = prevResults.map(prevResult =>
-            prevResult.subtitle_id === subtitleId ? result : prevResult
+            String(prevResult.subtitle_id) === String(subtitleId)
+              ? { ...prevResult, ...result, ...(typeof textOverride === 'string' ? { text: textOverride } : {}) }
+              : prevResult
           );
 
           // Update the global narration references to ensure video player uses the latest version

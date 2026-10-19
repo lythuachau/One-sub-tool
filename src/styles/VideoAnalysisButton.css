@@ -1,0 +1,209 @@
+.video-analysis-buttons-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.video-analysis-button {
+  box-sizing: border-box;
+  min-width: 145px;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--md-shape-pill, 999px);
+  background: var(--md-secondary, #82b1ff);
+  color: var(--md-on-secondary, #00315f);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.video-analysis-button:hover:not(:disabled) {
+  background: var(--md-secondary-container, #d2e4ff);
+  transform: translateY(-1px);
+}
+
+.video-analysis-button.has-analysis {
+  background: var(--md-primary, #b9b2ff);
+  color: var(--md-on-primary, #201b52);
+  border-color: transparent;
+}
+
+.video-analysis-button:disabled,
+.clear-analysis-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.video-analysis-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.video-analysis-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.video-analysis-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: video-analysis-spin 700ms linear infinite;
+}
+
+@keyframes video-analysis-spin {
+  to { transform: rotate(360deg); }
+}
+
+.clear-analysis-button {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--md-outline, rgba(255, 255, 255, 0.2));
+  border-radius: 50%;
+  background: var(--md-error-container, #54211f);
+  color: var(--md-on-error-container, #ffd8d4);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.clear-analysis-button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+@media (max-width: 700px) {
+  .video-analysis-button {
+    min-height: 44px;
+    padding: 9px 12px;
+  }
+}
+
+.buttons-container {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.buttons-container .srt-upload-buttons-group,
+.buttons-container .add-subtitles-buttons-group {
+  flex: 0 0 auto;
+  height: 52px;
+  margin: 0;
+}
+
+.buttons-container .srt-upload-button,
+.buttons-container .add-subtitles-button {
+  box-sizing: border-box;
+  height: 52px;
+  min-height: 52px;
+  white-space: nowrap;
+}
+
+.buttons-container .srt-upload-button {
+  padding: 12px 18px;
+}
+
+.buttons-container .add-subtitles-button {
+  padding: 12px 18px;
+}
+
+.generation-actions-group {
+  display: flex;
+  flex: 1 1 560px;
+  align-items: center;
+  justify-content: stretch;
+  gap: 12px;
+  min-width: min(100%, 560px);
+  flex-wrap: nowrap;
+}
+
+.generation-actions-group > .generate-btn,
+.generation-actions-group > .retry-gemini-btn {
+  box-sizing: border-box;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 52px;
+  height: 52px;
+  padding: 12px 14px;
+  gap: 8px;
+  font-size: var(--md-label-large-size);
+  letter-spacing: normal;
+  overflow: hidden;
+}
+
+.generation-actions-group > .generate-btn.semi-auto {
+  flex-grow: 1.05;
+}
+
+.generation-actions-group > .retry-gemini-btn.auto-generate {
+  flex-grow: 1.1;
+}
+
+.generation-actions-group .video-analysis-button {
+  flex: 0 1 185px;
+  min-width: 145px;
+}
+
+.generation-action-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.generation-action-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .generation-actions-group {
+    flex-basis: 100%;
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .buttons-container {
+    align-items: stretch;
+  }
+
+  .buttons-container .srt-upload-buttons-group,
+  .buttons-container .add-subtitles-buttons-group {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .generation-actions-group {
+    width: 100%;
+    flex: 1 1 100%;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
+  }
+
+  .generation-actions-group > .generate-btn,
+  .generation-actions-group > .retry-gemini-btn,
+  .generation-actions-group .video-analysis-button {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+}

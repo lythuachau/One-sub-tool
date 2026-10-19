@@ -18,6 +18,7 @@ import '../../styles/TranscriptionRulesEditor.css';
 import '../../styles/OnboardingBanner.css';
 import '../../styles/spinner-fix.css'; // Fix for loading spinners not rotating
 import '../../styles/lyrics/save-message.css'; // Audio alignment notification styles
+import '../../styles/VideoAnalysisButton.css';
 
 /**
  * Main App component

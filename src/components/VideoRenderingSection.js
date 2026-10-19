@@ -566,6 +566,11 @@ const VideoRenderingSection = ({
           })
         });
 
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          throw new Error(errorData?.error || `Failed to generate aligned audio: ${response.status} ${response.statusText}`);
+        }
+
         if (response.ok) {
           // Check for audio alignment notification
           const { checkAudioAlignmentFromResponse } = await import('../utils/audioAlignmentNotification.js');
@@ -732,17 +737,11 @@ const VideoRenderingSection = ({
       }
 
       if (!response.ok) {
-        const errorText = await response.text();
-        try {
-          const errorJson = JSON.parse(errorText);
-          if (errorJson.error && errorJson.error.includes('Audio file not found')) {
-            throw new Error(`Some narration files are missing. Please regenerate narrations before refreshing.`);
-          } else {
-            throw new Error(`Failed to generate aligned audio: ${errorJson.error || response.statusText}`);
-          }
-        } catch (jsonError) {
-          throw new Error(`Failed to generate aligned audio: ${errorText || response.statusText}`);
+        const errorData = await response.json().catch(() => null);
+        if (errorData?.error?.includes('Audio file not found')) {
+          throw new Error('Some narration files are missing. Please regenerate narrations before refreshing.');
         }
+        throw new Error(errorData?.error || `Failed to generate aligned audio: ${response.status} ${response.statusText}`);
       }
 
       // Get the blob from the response

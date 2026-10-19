@@ -1,6 +1,6 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { SERVER_URL } from '../../../config';
-import { saveAudioBlobToServer } from '../../../services/narrationService';
+import { getNarrationSubtitlesForSource, groupedSubtitlesMatchSource } from '../../../utils/narrationSubtitleSource';
 
 /**
  * Custom hook for Edge TTS narration generation
@@ -55,23 +55,20 @@ const useEdgeTTSNarration = ({
   /**
    * Get the appropriate subtitles based on source and grouping
    */
+  const getSourceSubtitles = useCallback(() => getNarrationSubtitlesForSource({
+    subtitleSource, originalSubtitles, translatedSubtitles, subtitles
+  }), [subtitleSource, originalSubtitles, translatedSubtitles, subtitles]);
+  const isUsingCurrentGroups = useCallback(() =>
+    useGroupedSubtitles && groupedSubtitlesMatchSource(groupedSubtitles, getSourceSubtitles()),
+  [getSourceSubtitles, groupedSubtitles, useGroupedSubtitles]);
+
   const getSubtitlesForGeneration = useCallback(() => {
-    // If using grouped subtitles, return them instead of individual subtitles
-    if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+    if (isUsingCurrentGroups()) {
       console.log(`Edge TTS: Using ${groupedSubtitles.length} grouped subtitles`);
       return groupedSubtitles;
     }
-
-    // Otherwise, return individual subtitles based on source
-    if (subtitleSource === 'original' && originalSubtitles?.length > 0) {
-      return originalSubtitles;
-    } else if (subtitleSource === 'translated' && translatedSubtitles?.length > 0) {
-      return translatedSubtitles;
-    } else if (subtitles?.length > 0) {
-      return subtitles;
-    }
-    return [];
-  }, [subtitleSource, originalSubtitles, translatedSubtitles, subtitles, useGroupedSubtitles, groupedSubtitles]);
+    return getSourceSubtitles();
+  }, [groupedSubtitles, getSourceSubtitles, isUsingCurrentGroups]);
 
   /**
    * Handle Edge TTS narration generation
@@ -191,6 +188,7 @@ const useEdgeTTSNarration = ({
                     // Create cache entry with narrations
                     const cacheEntry = {
                       mediaId,
+                      subtitleSource,
                       timestamp: Date.now(),
                       narrations: finalResults.map(result => ({
                         subtitle_id: result.subtitle_id,
@@ -216,7 +214,7 @@ const useEdgeTTSNarration = ({
                 }
 
                 // Handle grouped narrations storage and cleanup
-                if (useGroupedSubtitles && groupedSubtitles && groupedSubtitles.length > 0) {
+                if (isUsingCurrentGroups()) {
                   // Store as grouped narrations in window object
                   window.groupedNarrations = [...finalResults];
                   window.useGroupedSubtitles = true;
@@ -261,6 +259,9 @@ const useEdgeTTSNarration = ({
     setError,
     setGenerationResults,
     setGenerationStatus,
+    setUseGroupedSubtitles,
+    subtitleSource,
+    isUsingCurrentGroups,
     t
   ]);
 
@@ -279,9 +280,12 @@ const useEdgeTTSNarration = ({
   /**
    * Retry Edge TTS narration for a specific subtitle
    */
-  const retryEdgeTTSNarration = useCallback(async (subtitleId) => {
+  const retryEdgeTTSNarration = useCallback(async (subtitleId, textOverride) => {
     const subtitlesToProcess = getSubtitlesForGeneration();
-    const subtitle = subtitlesToProcess.find(sub => sub.id === subtitleId);
+    const sourceSubtitle = subtitlesToProcess.find(sub => String(sub.id) === String(subtitleId));
+    const subtitle = sourceSubtitle && typeof textOverride === 'string'
+      ? { ...sourceSubtitle, text: textOverride, translated_text: textOverride }
+      : sourceSubtitle;
     
     if (!subtitle) {
       setError(t('narration.subtitleNotFoundError', 'Subtitle not found for retry.'));
@@ -336,12 +340,15 @@ const useEdgeTTSNarration = ({
               const data = JSON.parse(line.slice(6));
               
               if (data.status === 'completed' && data.results?.length > 0) {
-                const newResult = data.results[0];
+                const newResult = {
+                  ...data.results[0],
+                  ...(typeof textOverride === 'string' ? { text: textOverride } : {})
+                };
                 
                 // Update the specific result in the generation results
                 setGenerationResults(prev => 
                   prev.map(result => 
-                    result.subtitle_id === subtitleId ? newResult : result
+                    String(result.subtitle_id) === String(subtitleId) ? { ...result, ...newResult } : result
                   )
                 );
               }
@@ -475,7 +482,7 @@ const useEdgeTTSNarration = ({
   // Listen for cached narrations loaded event
   useEffect(() => {
     const handleCachedNarrationsLoaded = (event) => {
-      if (event.detail && event.detail.narrations) {
+      if (event.detail?.subtitleSource === subtitleSource && event.detail.narrations) {
         console.log('Edge TTS: Received cached narrations from cache hook');
         setGenerationResults(event.detail.narrations);
         setGenerationStatus(t('narration.loadedFromCache', 'Loaded Edge TTS narrations from previous session'));
@@ -496,7 +503,7 @@ const useEdgeTTSNarration = ({
     return () => {
       window.removeEventListener('edge-tts-narrations-loaded-from-cache', handleCachedNarrationsLoaded);
     };
-  }, [setGenerationResults, setGenerationStatus, t, setSelectedVoice, setRate, setVolume, setPitch]);
+  }, [setGenerationResults, setGenerationStatus, t, setSelectedVoice, setRate, setVolume, setPitch, subtitleSource]);
 
   return {
     handleEdgeTTSNarration,

@@ -62,9 +62,17 @@ const MaterialSwitch = ({
 
   // Update checked state when prop changes
   useEffect(() => {
-    if (switchRef.current) {
-      switchRef.current.selected = checked;
-    }
+    const switchElement = switchRef.current;
+    if (!switchElement) return;
+
+    switchElement.selected = checked;
+    Promise.resolve(switchElement.updateComplete).then(() => {
+      if (switchElement.selected !== checked) return;
+      const nativeInput = switchElement.shadowRoot?.querySelector('input[type="checkbox"]');
+      if (nativeInput && nativeInput.checked !== checked) {
+        nativeInput.checked = checked;
+      }
+    });
   }, [checked]);
 
   // Update disabled state when prop changes

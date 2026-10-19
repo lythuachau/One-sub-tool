@@ -131,7 +131,8 @@ export const useAppEffects = (props) => {
     const handleVideoAnalysisStarted = () => {
       // Only show the modal if the flag is set in localStorage AND video analysis is enabled
       const useVideoAnalysis = localStorage.getItem('use_video_analysis') !== 'false';
-      if (localStorage.getItem('show_video_analysis') === 'true' && useVideoAnalysis) {
+      const analysisWasRequested = sessionStorage.getItem('force_video_analysis_modal') === 'true';
+      if (analysisWasRequested || (localStorage.getItem('show_video_analysis') === 'true' && useVideoAnalysis)) {
         setShowVideoAnalysis(true);
       }
     };
@@ -140,7 +141,8 @@ export const useAppEffects = (props) => {
     const handleVideoAnalysisComplete = (event) => {
       // Only update the result if the flag is set in localStorage AND video analysis is enabled
       const useVideoAnalysis = localStorage.getItem('use_video_analysis') !== 'false';
-      if (event.detail && localStorage.getItem('show_video_analysis') === 'true' && useVideoAnalysis) {
+      const analysisWasRequested = sessionStorage.getItem('force_video_analysis_modal') === 'true';
+      if (event.detail && (analysisWasRequested || (localStorage.getItem('show_video_analysis') === 'true' && useVideoAnalysis))) {
         setVideoAnalysisResult(event.detail);
         // Store current timestamp to allow for stale data detection
         localStorage.setItem('video_analysis_timestamp', Date.now().toString());

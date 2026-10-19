@@ -175,6 +175,24 @@
   border-left-color: var(--md-primary);
 }
 
+.gemini-result-item.timing-overlapped {
+  border: 1px solid var(--md-error);
+  border-left: 4px solid var(--md-error);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--md-error) 55%, transparent);
+  background-color: color-mix(in srgb, var(--md-error-container) 24%, var(--md-surface-2));
+}
+
+.gemini-result-item.narration-editing {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.65rem;
+  height: auto;
+  min-height: 170px;
+  border-radius: 20px;
+}
+
 .gemini-result-text {
   flex: 1;
   margin-right: 1rem;
@@ -184,6 +202,19 @@
   font-weight: bold;
   margin-right: 0.5rem;
   color: var(--md-primary);
+}
+
+.narration-editing .gemini-result-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+  margin-right: 0;
+}
+
+.narration-editing .audio-controls {
+  justify-content: flex-end;
 }
 
 .gemini-error-message {
